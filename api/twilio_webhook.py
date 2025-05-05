@@ -11,7 +11,8 @@ from api.modules.assistant_rag.supabase_client import (
 )
 
 from api.modules.assistant_rag.rag_pipeline import ask_question
-import config.config
+from api.config import config
+
 
 router = APIRouter()
 

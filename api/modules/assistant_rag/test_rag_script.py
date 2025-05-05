@@ -1,7 +1,8 @@
 # test_rag_script.py
 
 import os
-import config.config  # Asegura que la API key está cargada
+from api.config import config
+
 from api.modules.assistant_rag.rag_pipeline import (
     load_document,
     chunk_documents,
