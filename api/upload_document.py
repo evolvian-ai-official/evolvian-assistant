@@ -9,7 +9,7 @@ import logging
 import re
 import unicodedata
 from api.config.config import supabase
-from modules.document_processor import process_file
+from api.modules.document_processor import process_file
 
 router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
