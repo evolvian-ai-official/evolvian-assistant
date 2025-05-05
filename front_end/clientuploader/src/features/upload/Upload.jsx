@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useClientId } from "../../hooks/useClientId";
+import { useLanguage } from "../../contexts/LanguageContext";
 
 export default function Upload() {
   const [file, setFile] = useState(null);
@@ -7,6 +8,7 @@ export default function Upload() {
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [limitReached, setLimitReached] = useState(false);
   const clientId = useClientId();
+  const { t } = useLanguage();
 
   const fetchFiles = async () => {
     if (!clientId) return;
@@ -28,12 +30,12 @@ export default function Upload() {
     e.preventDefault();
 
     if (!clientId || clientId === "undefined" || clientId.trim() === "") {
-      setMessage("❌ No se puede subir archivo: client_id inválido.");
+      setMessage(`❌ ${t("invalid_client_id")}`);
       return;
     }
 
     if (!file) {
-      setMessage("⚠️ Por favor selecciona un archivo.");
+      setMessage(`⚠️ ${t("please_select_file")}`);
       return;
     }
 
@@ -42,20 +44,28 @@ export default function Upload() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("http://localhost:8000/upload", {
+      const res = await fetch("http://localhost:8000/upload_document", {
         method: "POST",
         body: formData,
       });
 
       if (res.status === 403) {
         const errorData = await res.json();
+        const detail = errorData?.detail || "";
         setLimitReached(true);
-        throw new Error(errorData.error || "Has alcanzado el límite de tu plan.");
+
+        if (detail === "limit_reached") {
+          setMessage(`🚫 ${t("limit_reached_error")}`);
+        } else {
+          setMessage(`🚫 ${detail || t("unknown_upload_error")}`);
+        }
+
+        return;
       }
 
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.error || "Error desconocido al subir archivo.");
+        throw new Error(errorData.detail || t("unknown_upload_error"));
       }
 
       const data = await res.json();
@@ -93,19 +103,13 @@ export default function Upload() {
         }}
       >
         <h1 style={{ fontSize: "1.8rem", marginBottom: "1rem", color: "#f5a623" }}>
-          📤 Subir Documento
+          📤 {t("upload_document")}
         </h1>
-
-        {limitReached && (
-          <p style={{ color: "#f87171", marginBottom: "1rem", fontWeight: "bold" }}>
-            🚫 Has alcanzado el límite de documentos permitidos en tu plan actual.
-          </p>
-        )}
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: "1.2rem" }}>
             <label style={{ display: "block", marginBottom: "0.5rem", color: "#ededed" }}>
-              📎 Archivo (.pdf o .txt):
+              📎 {t("select_file_label")}
             </label>
             <input
               type="file"
@@ -138,7 +142,7 @@ export default function Upload() {
               transition: "background 0.3s ease",
             }}
           >
-            Subir archivo
+            {t("upload_file")}
           </button>
         </form>
 
@@ -148,11 +152,11 @@ export default function Upload() {
 
         {uploadedFiles.length > 0 && (
           <div style={{ marginTop: "2rem" }}>
-            <h3 style={{ color: "#f5a623", marginBottom: "0.75rem" }}>📂 Archivos subidos:</h3>
+            <h3 style={{ color: "#f5a623", marginBottom: "0.75rem" }}>📂 {t("uploaded_files")}</h3>
             <ul style={{ listStyleType: "none", paddingLeft: 0 }}>
               {uploadedFiles.map((file, idx) => (
                 <li key={idx} style={{ marginBottom: "0.5rem", color: "#ededed" }}>
-                  📄 {file}
+                  📄 {file.name} – {file.size_kb} KB
                 </li>
               ))}
             </ul>

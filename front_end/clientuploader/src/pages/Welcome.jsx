@@ -1,7 +1,9 @@
+// src/pages/Welcome.jsx
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useTermsAcceptance } from "../hooks/useTermsAcceptance";
 import { useClientId } from "../hooks/useClientId";
+import { supabase } from "../lib/supabaseClient";
 
 export default function Welcome() {
   const navigate = useNavigate();
@@ -21,6 +23,12 @@ export default function Welcome() {
         });
         const result = await res.json();
         console.log("✅ Respuesta de clear_new_user_flag:", result);
+
+        console.log("🔄 Refrescando sesión después de limpiar bandera...");
+        await supabase.auth.refreshSession();
+
+        // 🧠 Muy importante: eliminar alreadyRedirected
+        sessionStorage.removeItem("alreadyRedirected");
       } else {
         console.warn("⚠️ user_id no está disponible en localStorage");
       }
@@ -32,11 +40,12 @@ export default function Welcome() {
 
       console.log("➡️ Redirigiendo a /dashboard...");
       navigate("/dashboard", { replace: true });
-      window.location.reload();
+
     } catch (err) {
-      console.error("❌ Error al limpiar flag o aceptar términos:", err);
-      navigate("/dashboard");
-      window.location.reload();
+      console.error("❌ Error en Welcome:", err);
+      navigate("/dashboard", { replace: true });
+    } finally {
+      setLoading(false);
     }
   };
 

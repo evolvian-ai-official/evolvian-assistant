@@ -6,10 +6,17 @@
     return;
   }
 
-  // 🔧 Fuerza entorno local para pruebas
-  const baseUrl = "http://localhost:5173"; // ✅ Solo para desarrollo
+  // 🔥 Detectar si estamos en local o en producción
+  const isLocalhost = window.location.hostname.includes("localhost") || window.location.hostname.includes("127.0.0.1");
 
-  // Crear wrapper flotante (👇 POSICIÓN DERECHA)
+  const baseUrl = isLocalhost
+    ? "http://localhost:5173"    // 🛠️ Para desarrollo local
+    : "https://evolvian.app";    // 🚀 Para producción real
+
+  console.log("🌐 Evolvian Widget baseUrl:", baseUrl);
+  console.log("📦 public_client_id:", clientId);
+
+  // Crear wrapper flotante
   const wrapper = document.createElement("div");
   wrapper.id = "evolvian-widget-wrapper";
   Object.assign(wrapper.style, {
@@ -41,7 +48,7 @@
   });
   wrapper.appendChild(button);
 
-  // Crear contenedor del widget
+  // Crear contenedor para el iframe
   const widgetContainer = document.createElement("div");
   widgetContainer.id = "evolvian-chat-widget";
   Object.assign(widgetContainer.style, {
@@ -57,17 +64,16 @@
   });
   wrapper.appendChild(widgetContainer);
 
-  // Toggle visibilidad
+  // Toggle abrir/cerrar widget
   let visible = false;
   button.addEventListener("click", () => {
     visible = !visible;
     widgetContainer.style.display = visible ? "block" : "none";
   });
 
-  // Insertar iframe del widget
+  // Crear iframe con public_client_id
   const iframe = document.createElement("iframe");
-  iframe.src = `${baseUrl}/chat-widget?client_id=${clientId}`;
-  console.log("📦 clientId en embed.js:", clientId);
+  iframe.src = `${baseUrl}/chat-widget?public_client_id=${clientId}`;
   Object.assign(iframe.style, {
     width: "100%",
     height: "100%",

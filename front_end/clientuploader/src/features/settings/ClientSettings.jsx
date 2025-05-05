@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
+import { useLanguage } from "../../contexts/LanguageContext"; // ✅ agregado el import
+
 
 export default function ClientSettings() {
   const clientId = useClientId();
+  const { t } = useLanguage(); // ✅ hook para traducir
   console.log("🧠 clientId:", clientId);
 
   const [formData, setFormData] = useState({
@@ -20,7 +23,7 @@ export default function ClientSettings() {
   const [status, setStatus] = useState({ message: "", type: "" });
   const [loading, setLoading] = useState(true);
 
-  const DEFAULT_PROMPT = "Eres un asistente de IA diseñado para ayudar con preguntas sobre los documentos cargados por el cliente. Responde de forma clara, útil y en el idioma del usuario.";
+  const DEFAULT_PROMPT = t("default_prompt") || "Eres un asistente de IA diseñado para ayudar con preguntas sobre los documentos cargados por el cliente. Responde de forma clara, útil y en el idioma del usuario.";
   const MAX_PROMPT_LENGTH = 2000;
   const promptLength = (formData.custom_prompt || DEFAULT_PROMPT).length;
   const isPromptTooLong = promptLength > MAX_PROMPT_LENGTH;
@@ -54,6 +57,7 @@ export default function ClientSettings() {
     fetchSettings();
   }, [clientId]);
 
+
   const handleChange = (e) => {
     const { name, type, checked, value } = e.target;
     const newValue = type === "checkbox" ? checked : value;
@@ -66,7 +70,7 @@ export default function ClientSettings() {
     setStatus({ message: "", type: "" });
 
     if (formData.custom_prompt?.length > MAX_PROMPT_LENGTH) {
-      setStatus({ message: "❌ El prompt personalizado supera el límite de 2000 caracteres.", type: "error" });
+      setStatus({ message: `❌ ${t("prompt_too_long")}`, type: "error" });
       return;
     }
 
@@ -91,9 +95,9 @@ export default function ClientSettings() {
 
       const data = await res.json();
       console.log("📥 Respuesta del backend:", data);
-      if (!res.ok) throw new Error(data.error || "Error al guardar");
+      if (!res.ok) throw new Error(data.error || t("error_saving"));
 
-      setStatus({ message: "✅ Configuración guardada con éxito", type: "success" });
+      setStatus({ message: `✅ ${t("settings_saved")}`, type: "success" });
     } catch (err) {
       console.error("❌ Error en la petición:", err);
       setStatus({ message: `❌ ${err.message}`, type: "error" });
@@ -122,9 +126,9 @@ export default function ClientSettings() {
   const getRequiredPlan = (featureKey) => {
     const plans = featurePlans[featureKey];
     if (!plans || plans.length === 0) return "—";
-    if (plans.includes("free")) return "Free";
-    if (plans.includes("starter")) return "Starter";
-    if (plans.includes("premium")) return "Premium";
+    if (plans.includes("free")) return t("free");
+    if (plans.includes("starter")) return t("starter");
+    if (plans.includes("premium")) return t("premium");
     return plans[0];
   };
 
@@ -134,16 +138,16 @@ export default function ClientSettings() {
       : f?.feature?.toLowerCase()?.replace(/\s+/g, "_") === "custom_prompt_editing"
   );
 
-  if (!clientId) return <p style={{ padding: "1rem", color: "red" }}>⚠️ No se ha identificado el cliente.</p>;
-  if (loading) return <p style={{ padding: "1rem" }}>🔄 Cargando configuración...</p>;
+  if (!clientId) return <p style={{ padding: "1rem", color: "red" }}>⚠️ {t("client_not_identified")}</p>;
+  if (loading) return <p style={{ padding: "1rem" }}>🔄 {t("loading_settings")}</p>;
 
   return (
     <div style={{ padding: "2rem", maxWidth: "700px", margin: "0 auto", fontFamily: "sans-serif" }}>
-      <h2 style={{ fontSize: "1.8rem", color: "#274472", marginBottom: "1.5rem" }}>⚙️ Configuración del Cliente</h2>
+      <h2 style={{ fontSize: "1.8rem", color: "#274472", marginBottom: "1.5rem" }}>⚙️ {t("client_settings")}</h2>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
         <div>
-          <label>Nombre del asistente</label>
+          <label>{t("assistant_name")}</label>
           <input
             name="assistant_name"
             value={formData.assistant_name || ""}
@@ -153,7 +157,7 @@ export default function ClientSettings() {
         </div>
 
         <div>
-          <label>Prompt personalizado</label>
+          <label>{t("custom_prompt")}</label>
           <textarea
             name="custom_prompt"
             value={formData.custom_prompt || DEFAULT_PROMPT}
@@ -172,30 +176,30 @@ export default function ClientSettings() {
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px" }}>
             {!hasPromptFeature && (
               <p style={{ color: "#888", fontSize: "0.85rem" }}>
-                Este prompt solo es editable con planes Premium o superiores.
+                {t("custom_prompt_locked")}
               </p>
             )}
             <p style={{ fontSize: "0.85rem", color: isPromptTooLong ? "#e53935" : "#666" }}>
-              {promptLength} / {MAX_PROMPT_LENGTH} caracteres
+              {promptLength} / {MAX_PROMPT_LENGTH} {t("characters")}
             </p>
           </div>
         </div>
-
-        <div>
-          <label>Idioma</label>
+{/*
+        <div> 
+          <label>{t("language")}</label>
           <select
             name="language"
             value={formData.language || "es"}
             onChange={handleChange}
             style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #ccc", marginTop: "4px" }}
           >
-            <option value="es">Español</option>
-            <option value="en">Inglés</option>
+            <option value="es">{t("spanish")}</option>
+            <option value="en">{t("english")}</option>
           </select>
         </div>
 
         <div>
-          <label>Creatividad (temperature)</label>
+          <label>{t("creativity")}</label>
           <input
             type="number"
             step="0.1"
@@ -215,7 +219,7 @@ export default function ClientSettings() {
               name="require_email"
               checked={formData.require_email}
               onChange={handleChange}
-            /> Solicitar email en el widget
+            /> {t("require_email")}
           </label>
         </div>
 
@@ -226,7 +230,7 @@ export default function ClientSettings() {
               name="require_phone"
               checked={formData.require_phone}
               onChange={handleChange}
-            /> Solicitar teléfono en el widget
+            /> {t("require_phone")}
           </label>
         </div>
 
@@ -237,10 +241,10 @@ export default function ClientSettings() {
               name="require_terms"
               checked={formData.require_terms}
               onChange={handleChange}
-            /> Mostrar Términos y Condiciones
+            /> {t("require_terms")}
           </label>
         </div>
-
+*/}
         <button
           type="submit"
           disabled={isPromptTooLong}
@@ -255,7 +259,7 @@ export default function ClientSettings() {
             width: "fit-content"
           }}
         >
-          Guardar configuración
+          {t("save_settings")}
         </button>
       </form>
 
@@ -269,59 +273,59 @@ export default function ClientSettings() {
         </p>
       )}
 
-      
+    {/* PLAN ACTUAL */}
+<div style={{
+  marginTop: "2rem",
+  backgroundColor: "white",
+  border: "1px solid #4a90e2",
+  borderRadius: "16px",
+  padding: "1.5rem",
+  boxShadow: "0 4px 10px rgba(0,0,0,0.08)"
+}}>
+  <div style={{
+    display: "flex", justifyContent: "space-between",
+    alignItems: "center", marginBottom: "1rem"
+  }}>
+    <h3 style={{ color: "#274472", fontSize: "1.2rem", fontWeight: "bold" }}>
+      🧾 {t("your_current_plan")}
+    </h3>
+    <span style={{
+      backgroundColor: "#4a90e2", color: "white", padding: "4px 12px",
+      borderRadius: "999px", fontSize: "0.85rem", textTransform: "capitalize"
+    }}>
+      {formData.plan?.name || formData.plan_id || "—"}
+    </span>
+  </div>
+
+  <ul style={{ fontSize: "0.95rem", paddingLeft: "1rem", marginBottom: "1rem", lineHeight: "1.8" }}>
+    <li><strong style={{ color: "#4a90e2" }}>💬 {t("messages")}:</strong>{" "}
+      <span style={{ color: "#1b2a41" }}>
+        {formData.plan?.is_unlimited ? t("unlimited") : formData.plan?.max_messages ?? "—"}
+      </span>
+    </li>
+    <li><strong style={{ color: "#4a90e2" }}>📄 {t("documents")}:</strong>{" "}
+      <span style={{ color: "#1b2a41" }}>
+        {formData.plan?.is_unlimited ? t("unlimited") : formData.plan?.max_documents ?? "—"}
+      </span>
+    </li>
+    <li><strong style={{ color: "#4a90e2" }}>🔖 {t("branding_active")}:</strong>{" "}
+      <span style={{ color: "#1b2a41" }}>
+        {formData.show_powered_by ? t("yes") : t("no")}
+      </span>
+    </li>
+  </ul>
+
+  <div style={{ textAlign: "right" }}>
+    <a href="/settings" style={{
+      color: "#f5a623", fontWeight: "bold", fontSize: "0.9rem"
+    }}>
+      🔁 {t("change_or_update_plan")}
+    </a>
+  </div>
+</div>
 
 
 
-
-      {/* PLAN ACTUAL */}
-      <div style={{
-        marginTop: "2rem",
-        backgroundColor: "white",
-        border: "1px solid #4a90e2",
-        borderRadius: "16px",
-        padding: "1.5rem",
-        boxShadow: "0 4px 10px rgba(0,0,0,0.08)"
-      }}>
-        <div style={{
-          display: "flex", justifyContent: "space-between",
-          alignItems: "center", marginBottom: "1rem"
-        }}>
-          <h3 style={{ color: "#274472", fontSize: "1.2rem", fontWeight: "bold" }}>🧾 Tu plan actual</h3>
-          <span style={{
-            backgroundColor: "#4a90e2", color: "white", padding: "4px 12px",
-            borderRadius: "999px", fontSize: "0.85rem", textTransform: "capitalize"
-          }}>
-            {formData.plan?.name || formData.plan?.id || "—"}
-          </span>
-        </div>
-
-        <ul style={{ fontSize: "0.95rem", paddingLeft: "1rem", marginBottom: "1rem", lineHeight: "1.8" }}>
-          <li><strong style={{ color: "#4a90e2" }}>💬 Mensajes incluidos:</strong>{" "}
-            <span style={{ color: "#1b2a41" }}>
-              {formData.plan?.is_unlimited ? "Ilimitados" : formData.plan?.max_messages ?? "—"}
-            </span>
-          </li>
-          <li><strong style={{ color: "#4a90e2" }}>📄 Documentos permitidos:</strong>{" "}
-            <span style={{ color: "#1b2a41" }}>
-              {formData.plan?.is_unlimited ? "Ilimitados" : formData.plan?.max_documents ?? "—"}
-            </span>
-          </li>
-          <li><strong style={{ color: "#4a90e2" }}>🔖 Branding activo:</strong>{" "}
-            <span style={{ color: "#1b2a41" }}>
-              {formData.show_powered_by ? "Sí" : "No"}
-            </span>
-          </li>
-        </ul>
-
-        <div style={{ textAlign: "right" }}>
-          <a href="/settings" style={{
-            color: "#f5a623", fontWeight: "bold", fontSize: "0.9rem"
-          }}>
-            🔁 Cambiar o actualizar plan
-          </a>
-        </div>
-      </div>
 
       {/* FUNCIONALIDADES INCLUIDAS */}
       <div style={{
@@ -336,16 +340,16 @@ export default function ClientSettings() {
           fontSize: "1.1rem", fontWeight: "bold",
           color: "#274472", marginBottom: "1rem"
         }}>
-          🧩 Funcionalidades incluidas
+          🧩 {t("included_features")}
         </h4>
 
         <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "0.95rem" }}>
           {[
-            { key: "chat_widget", label: "Widget de chat", icon: "💬" },
-            { key: "email_support", label: "Soporte por correo", icon: "✉️" },
-            { key: "whatsapp_integration", label: "WhatsApp", icon: "📱" },
-            { key: "custom_greeting", label: "Mensaje personalizado", icon: "👋" },
-            { key: "white_labeling", label: "White-label sin branding", icon: "🏷️" }
+            { key: "chat_widget", label: t("chat_widget"), icon: "💬" },
+            { key: "email_support", label: t("email_support"), icon: "✉️" },
+            { key: "whatsapp_integration", label: t("whatsapp_integration"), icon: "📱" },
+            { key: "custom_greeting", label: t("custom_greeting"), icon: "👋" },
+            { key: "white_labeling", label: t("white_labeling"), icon: "🏷️" }
           ].map((feature) => {
             const isIncluded = isFeatureIncludedByPlan(feature.key, currentPlanId);
             return (
@@ -361,7 +365,7 @@ export default function ClientSettings() {
                   color: "#1b2a41", fontSize: "0.7rem", padding: "2px 6px",
                   borderRadius: "999px", fontWeight: "bold"
                 }}>
-                  {isIncluded ? "Incluido en tu plan" : `Desde ${getRequiredPlan(feature.key)}`}
+                  {isIncluded ? t("included_in_plan") : `${t("available_from")} ${getRequiredPlan(feature.key)}`}
                 </span>
               </li>
             );
@@ -369,7 +373,6 @@ export default function ClientSettings() {
         </ul>
       </div>
 
-      
     </div>
   );
 }

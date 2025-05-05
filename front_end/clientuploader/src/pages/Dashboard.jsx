@@ -1,150 +1,132 @@
 import { useEffect, useState } from "react";
 import { useClientId } from "../hooks/useClientId";
 import { supabase } from "../lib/supabaseClient";
+import { useLanguage } from "../contexts/LanguageContext";
+import WelcomeModal from "../components/WelcomeModal";
 
 export default function Dashboard() {
   const [dashboardData, setDashboardData] = useState(null);
   const [user, setUser] = useState(null);
+  const [showWelcome, setShowWelcome] = useState(false);
   const clientId = useClientId();
+  const { t } = useLanguage();
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user);
-    });
+    const fetchUser = async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) console.error("❌ Error obteniendo usuario:", error);
+      if (data?.user) setUser(data.user);
+      else setUser(null);
+    };
+    fetchUser();
   }, []);
 
   useEffect(() => {
-    const fetchDashboard = async () => {
+    const fetchDashboardData = async () => {
       if (!clientId) return;
-      const res = await fetch(`http://localhost:8000/dashboard_summary?client_id=${clientId}`);
-      const data = await res.json();
-      if (res.ok) setDashboardData(data);
+      try {
+        const res = await fetch(`http://localhost:8000/dashboard_summary?client_id=${clientId}`);
+        const data = await res.json();
+        if (res.ok) setDashboardData(data);
+        else console.error("❌ Error en respuesta de dashboard_summary:", data);
+      } catch (err) {
+        console.error("❌ Error de red al obtener dashboard:", err);
+      }
     };
 
-    fetchDashboard();
+    fetchDashboardData();
   }, [clientId]);
 
-  if (!user || !dashboardData) return null;
+  useEffect(() => {
+    if (sessionStorage.getItem("alreadyRedirected") !== "true") {
+      setShowWelcome(true);
+    }
+  }, []);
+
+  if (!user || !dashboardData) {
+    return (
+      <div style={{ color: "white", padding: "2rem" }}>
+        {t("loading")}
+      </div>
+    );
+  }
 
   const { plan, usage, history_preview, documents_preview, assistant_config } = dashboardData;
-
   const normalize = (str) => str.toLowerCase().replace(/\s+/g, "_");
-  const activeFeatures = plan.plan_features?.map(f => normalize(f.feature)) || [];
-
-  const isFeatureActive = (featureKey) => activeFeatures.includes(featureKey);
+  const activeFeatures = plan?.plan_features?.map(f => normalize(f)) || [];
 
   return (
     <div style={{
-      backgroundColor: "#0f1c2e",
+      backgroundColor: showWelcome ? "rgba(15,28,46,0.7)" : "#0f1c2e",
       minHeight: "100vh",
       padding: "2rem",
       fontFamily: "system-ui, sans-serif",
-      color: "white"
+      color: "white",
+      overflow: "hidden",
     }}>
-      <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#f5a623", marginBottom: "0.25rem" }}>
-        👋 Bienvenido, {user.email}
+      {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} />}
+
+      <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#f5a623", marginBottom: "0.5rem" }}>
+        👋 {t("welcome")}, {user.email}
       </h1>
       <p style={{ color: "#ededed", marginBottom: "2rem" }}>
-        Soy <strong style={{ color: "#a3d9b1" }}>{assistant_config.assistant_name}</strong>, tu asistente Evolvian.
+        {t("assistant_intro")} <strong style={{ color: "#a3d9b1" }}>{assistant_config?.assistant_name || t("your_assistant")}</strong>.
       </p>
 
-      {/* PLAN */}
-      <div style={cardStyle}>
-        <h2 style={sectionTitle}>🧾 Tu Plan: <span style={{ color: "#a3d9b1" }}>{plan.name}</span></h2>
-        <p>💬 Mensajes usados: <strong>{usage.messages_used}</strong> / {plan.is_unlimited ? "Ilimitados" : plan.max_messages}</p>
-        <p>📄 Documentos subidos: <strong>{usage.documents_uploaded}</strong> / {plan.is_unlimited ? "Ilimitados" : plan.max_documents}</p>
-        <p>🕒 Último uso: {new Date(usage.last_used_at).toLocaleString()}</p>
-      </div>
+{/* 🧾 Plan Actual */}
+<div style={cardStyle}>
+  <h2 style={cardTitle}>{t("your_plan")}</h2>
+  <p><strong>{plan.name}</strong></p>
+  <p>{t("messages")}: {plan.is_unlimited ? "∞" : plan.max_messages}</p>
+  <p>{t("documents")}: {plan.max_documents}</p>
+</div>
 
-      {/* FEATURES ACTIVOS */}
+
+
+      {/* ⚙️ Funcionalidades Activas */}
       <div style={cardStyle}>
-        <h2 style={sectionTitle}>🔧 Funcionalidades Activas</h2>
-        <ul style={{ lineHeight: "1.8" }}>
-          {[
-            { label: "🧠 Chat Widget", key: "chat_widget" },
-            { label: "✉️ Soporte por Email", key: "email_support" },
-            { label: "💬 WhatsApp", key: "whatsapp_integration" },
-            { label: "🚀 Límites aumentados", key: "increased_limits" },
-            { label: "❌ Sin Branding", key: "remove_branding" }
-          ].map(({ label, key }) => (
-            <li key={key}>
-              {label}: {isFeatureActive(key) ? "✅ Activo" : "⛔ Inactivo"}
-            </li>
-          ))}
+        <h2 style={cardTitle}>{t("active_features")}</h2>
+        <ul>
+          {activeFeatures.length > 0 ? (
+            activeFeatures.map(f => (
+              <li key={f} style={{ marginBottom: "0.5rem" }}>✅ {t(f)}</li>
+            ))
+          ) : (
+            <li>{t("no_features")}</li>
+          )}
         </ul>
       </div>
 
-      {/* HISTORIAL PREVIEW */}
+      {/* 🕑 Historial */}
       <div style={cardStyle}>
-        <h2 style={sectionTitle}>📚 Últimas preguntas</h2>
-        {history_preview.length === 0 ? (
-          <p style={{ color: "#ededed" }}>Aún no hay preguntas registradas.</p>
-        ) : (
-          <ul style={{ lineHeight: "1.8" }}>
-            {history_preview.map((h, idx) => (
-              <li key={idx}>
-                <strong>{h.channel}:</strong> {h.question} <br />
-                <span style={{ fontSize: "0.8rem", color: "#a3d9b1" }}>
-                  {new Date(h.timestamp).toLocaleString()}
-                </span>
+        <h2 style={cardTitle}>{t("recent_activity")}</h2>
+        {history_preview && history_preview.length > 0 ? (
+          <ul>
+            {history_preview.map((item, idx) => (
+              <li key={idx} style={{ marginBottom: "0.5rem" }}>
+                {item.question} ({new Date(item.timestamp).toLocaleDateString()})
               </li>
             ))}
           </ul>
+        ) : (
+          <p>{t("no_history")}</p>
         )}
       </div>
 
-      {/* DOCUMENTOS PREVIEW */}
+      {/* 📄 Documentos */}
       <div style={cardStyle}>
-        <h2 style={sectionTitle}>📄 Documentos recientes</h2>
-        {documents_preview.length === 0 ? (
-          <p style={{ color: "#ededed" }}>No se han subido documentos todavía.</p>
-        ) : (
-          <ul style={{ lineHeight: "1.8" }}>
+        <h2 style={cardTitle}>{t("recent_documents")}</h2>
+        {documents_preview && documents_preview.length > 0 ? (
+          <ul>
             {documents_preview.map((doc, idx) => (
-              <li key={idx}>
-                📄 {doc.filename} <br />
-                <span style={{ fontSize: "0.8rem", color: "#a3d9b1" }}>
-                  {new Date(doc.uploaded_at).toLocaleString()}
-                </span>
+              <li key={idx} style={{ marginBottom: "0.5rem" }}>
+                {doc.filename} {doc.uploaded_at ? `(${new Date(doc.uploaded_at).toLocaleDateString()})` : ""}
               </li>
             ))}
           </ul>
+        ) : (
+          <p>{t("no_documents")}</p>
         )}
-      </div>
-
-      {/* ACCIONES RÁPIDAS */}
-      <div style={{
-        marginTop: "2rem",
-        display: "flex",
-        justifyContent: "center",
-        gap: "1.5rem"
-      }}>
-        <a
-          href="/history"
-          style={{
-            backgroundColor: "#4a90e2",
-            color: "white",
-            padding: "0.75rem 1.5rem",
-            borderRadius: "10px",
-            textDecoration: "none",
-            fontWeight: "bold"
-          }}
-        >
-          📚 Ver historial completo
-        </a>
-        <a
-          href="/upload"
-          style={{
-            backgroundColor: "#f5a623",
-            color: "#1b2a41",
-            padding: "0.75rem 1.5rem",
-            borderRadius: "10px",
-            textDecoration: "none",
-            fontWeight: "bold"
-          }}
-        >
-          📄 Subir nuevo documento
-        </a>
       </div>
     </div>
   );
@@ -152,14 +134,16 @@ export default function Dashboard() {
 
 const cardStyle = {
   backgroundColor: "#1b2a41",
-  padding: "1.5rem",
-  borderRadius: "16px",
   border: "1px solid #274472",
-  marginBottom: "2rem"
+  borderRadius: "1rem",
+  padding: "1.5rem",
+  marginBottom: "2rem",
+  boxShadow: "0 4px 10px rgba(0,0,0,0.2)",
 };
 
-const sectionTitle = {
-  fontSize: "1.25rem",
+const cardTitle = {
+  fontSize: "1.3rem",
   color: "#4a90e2",
-  marginBottom: "1rem"
+  marginBottom: "1rem",
+  fontWeight: "bold",
 };

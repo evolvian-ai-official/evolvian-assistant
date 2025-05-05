@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import { useClientId } from "../hooks/useClientId";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
+import { useLanguage } from "../contexts/LanguageContext";
+import LanguageSwitcher from "../components/LanguageSwitcher";
 
 export default function Sidebar() {
   const navigate = useNavigate();
   const clientId = useClientId();
+  const { t } = useLanguage();
   const [features, setFeatures] = useState([]);
   const [hovered, setHovered] = useState(null);
 
@@ -38,33 +41,23 @@ export default function Sidebar() {
   const isEnabled = (feature) => features.includes(feature);
 
   return (
-    <aside style={{
-      width: "240px",
-      background: "#274472",
-      color: "white",
-      padding: "2rem 1.5rem",
-      minHeight: "100vh",
-      display: "flex",
-      flexDirection: "column",
-    }}>
+    <aside style={asideStyle}>
       <div>
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <img
-            src="/logo-evolvian.svg"
-            alt="Evolvian Logo"
-            style={{ width: "60px", margin: "0 auto" }}
-          />
+        <div style={logoContainer}>
+          <img src="/logo-evolvian.svg" alt="Evolvian Logo" style={{ width: "60px", margin: "0 auto" }} />
+          <LanguageSwitcher />
         </div>
 
-        <nav style={{ display: "flex", flexDirection: "column" }}>
-          <HoverLink label="📊 Dashboard" to="/dashboard" hovered={hovered} setHovered={setHovered} id="dashboard" />
-          <HoverLink label="📤 Subir documento" to="/upload" hovered={hovered} setHovered={setHovered} id="upload" />
-          <HoverLink label="📚 Ver historial" to="/history" hovered={hovered} setHovered={setHovered} id="history" />
+        <nav style={navStyle}>
+          <HoverLink label={`📊 ${t("dashboard")}`} to="/dashboard" hovered={hovered} setHovered={setHovered} id="dashboard" />
+          <HoverLink label={`📤 ${t("upload")}`} to="/upload" hovered={hovered} setHovered={setHovered} id="upload" />
+          <HoverLink label={`📚 ${t("history")}`} to="/history" hovered={hovered} setHovered={setHovered} id="history" />
 
           {[
-            { label: "🧠 Chat Assistant", path: "/services/chat", feature: "chat_widget" },
-            { label: "✉️ Email", path: "/services/email", feature: "email_support" },
-            { label: "💬 WhatsApp", path: "/services/whatsapp", feature: "whatsapp_integration" },
+            { label: `🧠 ${t("chat_assistant")}`, path: "/services/chat", feature: "chat_widget" },
+            // 🚫 Email desactivado temporalmente para producción:
+           // { label: `✉️ ${t("email")}`, path: "/services/email", feature: "email_support" },
+            { label: `💬 ${t("whatsapp")}`, path: "/services/whatsapp", feature: "whatsapp_integration" },
           ].map(({ label, path, feature }) => {
             const enabled = isEnabled(feature);
             const id = path;
@@ -80,7 +73,7 @@ export default function Sidebar() {
                   }}
                   onMouseEnter={() => setHovered(id)}
                   onMouseLeave={() => setHovered(null)}
-                  title={enabled ? "" : "Disponible en planes premium"}
+                  title={enabled ? "" : t("premium_only")}
                 >
                   {label}
                 </Link>
@@ -91,23 +84,11 @@ export default function Sidebar() {
             );
           })}
 
-          <HoverLink label="⚙️ Configuración" to="/settings" hovered={hovered} setHovered={setHovered} id="settings" />
+          <HoverLink label={`⚙️ ${t("settings")}`} to="/settings" hovered={hovered} setHovered={setHovered} id="settings" />
 
           <div style={{ ...navItemBlock, marginTop: "1.5rem" }}>
-            <button
-              onClick={handleLogout}
-              style={{
-                backgroundColor: "#f5a623",
-                color: "white",
-                border: "none",
-                borderRadius: "8px",
-                padding: "0.5rem 1rem",
-                cursor: "pointer",
-                fontWeight: "bold",
-                width: "100%",
-              }}
-            >
-              Cerrar sesión
+            <button onClick={handleLogout} style={logoutButtonStyle}>
+              {t("logout")}
             </button>
           </div>
         </nav>
@@ -116,7 +97,6 @@ export default function Sidebar() {
   );
 }
 
-// Link con hover y separación
 function HoverLink({ to, label, hovered, setHovered, id }) {
   return (
     <div style={navItemBlock}>
@@ -135,7 +115,25 @@ function HoverLink({ to, label, hovered, setHovered, id }) {
   );
 }
 
-// Estilos visuales
+const asideStyle = {
+  width: "240px",
+  background: "#274472",
+  color: "white",
+  padding: "2rem 1.5rem",
+  minHeight: "100vh",
+  display: "flex",
+  flexDirection: "column",
+};
+
+const logoContainer = {
+  textAlign: "center",
+  marginBottom: "2rem",
+};
+
+const navStyle = {
+  display: "flex",
+  flexDirection: "column",
+};
 
 const navItemBlock = {
   padding: "0.4rem 0.6rem",
@@ -160,4 +158,15 @@ const premiumBadge = {
   borderRadius: "999px",
   fontWeight: "bold",
   verticalAlign: "middle",
+};
+
+const logoutButtonStyle = {
+  backgroundColor: "#f5a623",
+  color: "white",
+  border: "none",
+  borderRadius: "8px",
+  padding: "0.5rem 1rem",
+  cursor: "pointer",
+  fontWeight: "bold",
+  width: "100%",
 };

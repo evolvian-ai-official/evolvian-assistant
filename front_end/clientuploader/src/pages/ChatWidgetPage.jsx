@@ -1,11 +1,12 @@
+// src/pages/ChatWidgetPage.jsx
 import { useSearchParams } from "react-router-dom";
 import ChatWidget from "../components/ChatWidget";
 
 export default function ChatWidgetPage() {
   const [searchParams] = useSearchParams();
-  const clientId = searchParams.get("client_id");
+  const publicClientId = searchParams.get("public_client_id"); // ✅ CAMBIO
 
-  if (!clientId) {
+  if (!publicClientId) {
     return (
       <div
         style={{
@@ -15,7 +16,7 @@ export default function ChatWidgetPage() {
           textAlign: "center",
         }}
       >
-        ⚠️ No se proporcionó un client_id.
+        ⚠️ No se proporcionó un public_client_id.
       </div>
     );
   }
@@ -45,7 +46,7 @@ export default function ChatWidgetPage() {
           overflow: "hidden",
         }}
       >
-        <ChatWidget clientId={clientId} />
+        <ChatWidget clientId={publicClientId} /> {/* ✅ CAMBIO */}
       </div>
     </div>
   );

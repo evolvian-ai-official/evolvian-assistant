@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { useClientId } from "../../hooks/useClientId";
+import { useLanguage } from "../../contexts/LanguageContext"; // ✅ Importar traducción
 
 export default function History() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const clientId = useClientId();
+  const { t } = useLanguage(); // ✅ Usar traducción
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -51,13 +53,13 @@ export default function History() {
         }}
       >
         <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#f5a623", marginBottom: "1.5rem" }}>
-          📚 Historial de Preguntas
+          📚 {t("question_history")}
         </h2>
 
         {loading ? (
-          <p style={{ color: "#ededed" }}>🔄 Cargando historial...</p>
+          <p style={{ color: "#ededed" }}>🔄 {t("loading_history")}</p>
         ) : history.length === 0 ? (
-          <p style={{ color: "#ededed" }}>Aún no has hecho ninguna pregunta.</p>
+          <p style={{ color: "#ededed" }}>{t("no_questions_yet")}</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             {history.map((item) => (
@@ -73,10 +75,10 @@ export default function History() {
                 }}
               >
                 <p style={{ marginBottom: "0.5rem" }}>
-                  <strong>🧠 Pregunta:</strong> {item.question}
+                  <strong>🧠 {t("question")}:</strong> {item.question}
                 </p>
                 <p style={{ marginBottom: "0.5rem" }}>
-                  <strong>🤖 Respuesta:</strong> {item.answer}
+                  <strong>🤖 {t("answer")}:</strong> {item.answer}
                 </p>
                 <p style={{ fontSize: "0.85rem", color: "#4a90e2" }}>
                   🕒 {new Date(item.created_at).toLocaleString()}

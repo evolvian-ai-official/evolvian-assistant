@@ -1,10 +1,11 @@
+// src/components/InternalSupportWidget.jsx
 import { useState } from "react";
 import ChatWidget from "./ChatWidget";
-import { INTERNAL_CLIENT_ID } from "../constants/clientIds";
+import { INTERNAL_PUBLIC_CLIENT_ID } from "../constants/clientIds"; // ✅ (crear este archivo)
 
 export default function InternalSupportWidget() {
   const [isOpen, setIsOpen] = useState(false);
-  const clientId = INTERNAL_CLIENT_ID; // ✅ UUID real importado
+  const publicClientId = INTERNAL_PUBLIC_CLIENT_ID;
 
   return (
     <>
@@ -30,7 +31,7 @@ export default function InternalSupportWidget() {
 
       {isOpen && (
         <div style={styles.container}>
-          <ChatWidget clientId={clientId} />
+          <ChatWidget clientId={publicClientId} />
         </div>
       )}
     </>

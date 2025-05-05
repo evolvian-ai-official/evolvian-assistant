@@ -1,16 +1,18 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import { useClientId } from "../../hooks/useClientId";
+import { useLanguage } from "../../contexts/LanguageContext"; // ✅ Importar traducción
 
 export default function EmailSetup() {
   const [email, setEmail] = useState("");
   const [saved, setSaved] = useState(false);
   const clientId = useClientId();
+  const { t } = useLanguage(); // ✅ Usar traducción
 
   useEffect(() => {
     const fetchEmail = async () => {
       if (!clientId) return;
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("clients")
         .select("email_forward")
         .eq("id", clientId)
@@ -34,97 +36,125 @@ export default function EmailSetup() {
   };
 
   return (
-    <div style={{
-      backgroundColor: "#0f1c2e",
-      minHeight: "100vh",
-      padding: "2rem",
-      fontFamily: "system-ui, sans-serif",
-      color: "white",
-      display: "flex",
-      justifyContent: "center"
-    }}>
-      <div style={{
-        backgroundColor: "#1b2a41",
-        padding: "2rem",
-        borderRadius: "16px",
-        maxWidth: "600px",
-        width: "100%",
-        boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
-        border: "1px solid #274472"
-      }}>
-        <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#f5a623", marginBottom: "1.5rem" }}>
-          ✉️ Configurar Email Assistant
+    <div style={pageStyle}>
+      <div style={cardStyle}>
+        <h2 style={titleStyle}>
+          ✉️ {t("setup_email_assistant")}
         </h2>
 
-        <p style={{ marginBottom: "1rem" }}>
-          Tu asistente puede responder correos automáticamente si los reenvías a una dirección como esta:
+        <p style={paragraphStyle}>
+          {t("email_instructions_intro")}
         </p>
 
-        <code style={{
-          backgroundColor: "#ededed",
-          color: "#274472",
-          padding: "0.6rem 1rem",
-          borderRadius: "8px",
-          display: "block",
-          marginBottom: "1.5rem"
-        }}>
+        <code style={codeBoxStyle}>
           contacto@tudominio.com → evolvian@correo.evolvian.app
         </code>
 
-        <p style={{ marginBottom: "1rem" }}>
-          Aquí puedes guardar la dirección de correo que deseas conectar con tu asistente Evolvian:
+        <p style={paragraphStyle}>
+          {t("save_email_instruction")}
         </p>
 
         <input
           type="email"
-          placeholder="tucorreo@empresa.com"
+          placeholder={t("email_placeholder")}
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
             setSaved(false);
           }}
-          style={{
-            width: "100%",
-            padding: "0.6rem",
-            borderRadius: "8px",
-            border: "1px solid #4a90e2",
-            marginBottom: "1rem",
-            backgroundColor: "#0f1c2e",
-            color: "white"
-          }}
+          style={inputStyle}
         />
 
         <button
           onClick={handleSave}
-          style={{
-            backgroundColor: "#4a90e2",
-            color: "white",
-            padding: "0.7rem 1.2rem",
-            borderRadius: "8px",
-            fontWeight: "bold",
-            border: "none",
-            cursor: "pointer",
-            marginBottom: "1rem"
-          }}
+          style={buttonStyle}
         >
-          Guardar dirección
+          {t("save_address")}
         </button>
 
         {saved && (
           <p style={{ color: "#a3d9b1", fontSize: "0.95rem" }}>
-            ✅ Dirección guardada exitosamente.
+            ✅ {t("address_saved")}
           </p>
         )}
 
         <div style={{ marginTop: "2rem", fontSize: "0.9rem", color: "#ededed" }}>
-          <p><strong>¿Cómo funciona?</strong></p>
-          <ul style={{ marginTop: "0.5rem", paddingLeft: "1.2rem", lineHeight: "1.7" }}>
-            <li>1️⃣ Cualquier correo que reenvíes a <strong>evolvian@correo.evolvian.app</strong> será procesado.</li>
-            <li>2️⃣ Tu asistente generará una respuesta con inteligencia artificial.</li>
-            <li>3️⃣ Puedes personalizar la respuesta o dejar que se envíe automáticamente.</li>
+          <p><strong>{t("how_it_works")}</strong></p>
+          <ul style={ulStyle}>
+            <li>1️⃣ {t("step1")}</li>
+            <li>2️⃣ {t("step2")}</li>
+            <li>3️⃣ {t("step3")}</li>
           </ul>
         </div>
       </div>
     </div>
   );
 }
+
+// 🎨 Estilos
+const pageStyle = {
+  backgroundColor: "#0f1c2e",
+  minHeight: "100vh",
+  padding: "2rem",
+  fontFamily: "system-ui, sans-serif",
+  color: "white",
+  display: "flex",
+  justifyContent: "center"
+};
+
+const cardStyle = {
+  backgroundColor: "#1b2a41",
+  padding: "2rem",
+  borderRadius: "16px",
+  maxWidth: "600px",
+  width: "100%",
+  boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
+  border: "1px solid #274472"
+};
+
+const titleStyle = {
+  fontSize: "1.8rem",
+  fontWeight: "bold",
+  color: "#f5a623",
+  marginBottom: "1.5rem"
+};
+
+const paragraphStyle = {
+  marginBottom: "1rem"
+};
+
+const codeBoxStyle = {
+  backgroundColor: "#ededed",
+  color: "#274472",
+  padding: "0.6rem 1rem",
+  borderRadius: "8px",
+  display: "block",
+  marginBottom: "1.5rem"
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "0.6rem",
+  borderRadius: "8px",
+  border: "1px solid #4a90e2",
+  marginBottom: "1rem",
+  backgroundColor: "#0f1c2e",
+  color: "white"
+};
+
+const buttonStyle = {
+  backgroundColor: "#4a90e2",
+  color: "white",
+  padding: "0.7rem 1.2rem",
+  borderRadius: "8px",
+  fontWeight: "bold",
+  border: "none",
+  cursor: "pointer",
+  marginBottom: "1rem"
+};
+
+const ulStyle = {
+  marginTop: "0.5rem",
+  paddingLeft: "1.2rem",
+  lineHeight: "1.7"
+};

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import axios from "axios";
 import { useClientId } from "../../hooks/useClientId";
+import { useLanguage } from "../../contexts/LanguageContext"; // ✅ Importar traducción
 
 export default function WhatsAppSetup() {
   const [phone, setPhone] = useState("");
@@ -9,6 +10,7 @@ export default function WhatsAppSetup() {
   const [session, setSession] = useState(null);
   const [status, setStatus] = useState({ message: "", type: "" });
   const clientId = useClientId();
+  const { t } = useLanguage(); // ✅ Usar traducción
 
   const twilioSandbox = "+14155238886";
 
@@ -31,12 +33,12 @@ export default function WhatsAppSetup() {
 
     try {
       const res = await axios.post("http://localhost:8000/link_whatsapp", payload);
-      setStatus({ message: "✅ WhatsApp vinculado correctamente.", type: "success" });
+      setStatus({ message: `✅ ${t("whatsapp_linked_success")}`, type: "success" });
       setStep(3);
     } catch (err) {
       console.error(err);
       setStatus({
-        message: "❌ Error al vincular WhatsApp. Intenta de nuevo.",
+        message: `❌ ${t("whatsapp_link_error")}`,
         type: "error",
       });
     }
@@ -46,73 +48,40 @@ export default function WhatsAppSetup() {
   const handleBack = () => setStep(step - 1);
 
   return (
-    <div style={{
-      padding: "2rem",
-      fontFamily: "system-ui, sans-serif",
-      backgroundColor: "#0f1c2e",
-      color: "white",
-      minHeight: "100vh",
-      display: "flex",
-      justifyContent: "center"
-    }}>
-      <div style={{
-        backgroundColor: "#1b2a41",
-        padding: "2rem",
-        borderRadius: "16px",
-        maxWidth: "600px",
-        width: "100%",
-        boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
-        border: "1px solid #274472"
-      }}>
-        <h2 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#f5a623", marginBottom: "2rem" }}>
-          💬 Configurar WhatsApp con Evolvian
+    <div style={pageStyle}>
+      <div style={cardStyle}>
+        <h2 style={titleStyle}>
+          💬 {t("setup_whatsapp")}
         </h2>
 
         {step === 1 && (
           <>
-            <p style={{ marginBottom: "1rem" }}>
-              <strong>Paso 1:</strong> Guarda el siguiente número en tu teléfono:
+            <p style={paragraphStyle}>
+              <strong>{t("step1")}:</strong> {t("save_number_instruction")}
             </p>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: "bold", color: "#a3d9b1", marginBottom: "1rem" }}>
-              {twilioSandbox}
-            </h3>
-            <p style={{ marginBottom: "1rem" }}>
-              <strong>Paso 2:</strong> Envía el siguiente mensaje desde WhatsApp:
+            <h3 style={numberStyle}>{twilioSandbox}</h3>
+            <p style={paragraphStyle}>
+              <strong>{t("step2")}:</strong> {t("send_message_instruction")}
             </p>
-            <code style={{
-              backgroundColor: "#ededed",
-              color: "#274472",
-              padding: "0.5rem 1rem",
-              borderRadius: "8px",
-              display: "inline-block",
-              marginBottom: "1.5rem"
-            }}>
+            <code style={codeBoxStyle}>
               join come-science
             </code>
             <br />
-            <button onClick={handleNext} style={btnStyle}>✅ Ya lo hice</button>
+            <button onClick={handleNext} style={btnStyle}>✅ {t("already_done")}</button>
           </>
         )}
 
         {step === 2 && (
           <>
-            <p style={{ marginBottom: "1rem" }}>
-              <strong>Paso 3:</strong> Ingresa el número de WhatsApp que acabas de usar:
+            <p style={paragraphStyle}>
+              <strong>{t("step3")}:</strong> {t("enter_whatsapp_number")}
             </p>
             <input
               type="text"
               placeholder="+52XXXXXXXXXX"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "0.6rem",
-                borderRadius: "8px",
-                border: "1px solid #4a90e2",
-                marginBottom: "1.5rem",
-                backgroundColor: "#0f1c2e",
-                color: "white"
-              }}
+              style={inputStyle}
             />
             <div style={{ display: "flex", gap: "1rem" }}>
               <button
@@ -121,18 +90,18 @@ export default function WhatsAppSetup() {
                 style={{
                   ...btnStyle,
                   opacity: phone ? 1 : 0.5,
-                  cursor: phone ? "pointer" : "not-allowed"
+                  cursor: phone ? "pointer" : "not-allowed",
                 }}
               >
-                📲 Vincular número
+                📲 {t("link_number")}
               </button>
-              <button onClick={handleBack} style={backBtnStyle}>🔙 Atrás</button>
+              <button onClick={handleBack} style={backBtnStyle}>🔙 {t("back")}</button>
             </div>
             {status.message && (
               <p style={{
                 marginTop: "1rem",
                 fontWeight: "bold",
-                color: status.type === "error" ? "#f87171" : "#a3d9b1"
+                color: status.type === "error" ? "#f87171" : "#a3d9b1",
               }}>
                 {status.message}
               </p>
@@ -142,36 +111,26 @@ export default function WhatsAppSetup() {
 
         {step === 3 && (
           <>
-            <p style={{ marginBottom: "1rem" }}>🎉 ¡Listo! Tu número está vinculado:</p>
-            <p style={{ fontWeight: "bold", color: "#a3d9b1" }}>{phone}</p>
-            <p style={{ fontSize: "0.85rem", color: "#ededed", marginTop: "0.75rem" }}>
-              Ahora puedes empezar a conversar con tu asistente.
+            <p style={paragraphStyle}>🎉 {t("number_linked_success")}</p>
+            <p style={linkedNumberStyle}>{phone}</p>
+            <p style={noteStyle}>
+              {t("start_chatting_instruction")}
             </p>
 
             <a
               href={`https://wa.me/${phone.replace("+", "")}?text=Hola,%20quiero%20probar%20mi%20asistente%20Evolvian`}
               target="_blank"
               rel="noopener noreferrer"
-              style={{
-                marginTop: "1.5rem",
-                display: "inline-block",
-                backgroundColor: "#2eb39a",
-                color: "white",
-                padding: "0.7rem 1.2rem",
-                borderRadius: "8px",
-                fontWeight: "bold",
-                textDecoration: "none",
-                marginRight: "1rem"
-              }}
+              style={linkButtonStyle}
             >
-              🔁 Probar asistente en WhatsApp
+              🔁 {t("test_assistant")}
             </a>
 
             <button
               onClick={() => setStep(2)}
               style={{ ...backBtnStyle, marginTop: "1.5rem" }}
             >
-              ✏️ Cambiar número
+              ✏️ {t("change_number")}
             </button>
           </>
         )}
@@ -180,7 +139,64 @@ export default function WhatsAppSetup() {
   );
 }
 
-// ✅ Estilos de botones
+// 🎨 Estilos
+const pageStyle = {
+  padding: "2rem",
+  fontFamily: "system-ui, sans-serif",
+  backgroundColor: "#0f1c2e",
+  color: "white",
+  minHeight: "100vh",
+  display: "flex",
+  justifyContent: "center",
+};
+
+const cardStyle = {
+  backgroundColor: "#1b2a41",
+  padding: "2rem",
+  borderRadius: "16px",
+  maxWidth: "600px",
+  width: "100%",
+  boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
+  border: "1px solid #274472",
+};
+
+const titleStyle = {
+  fontSize: "1.8rem",
+  fontWeight: "bold",
+  color: "#f5a623",
+  marginBottom: "2rem",
+};
+
+const paragraphStyle = {
+  marginBottom: "1rem",
+};
+
+const numberStyle = {
+  fontSize: "1.25rem",
+  fontWeight: "bold",
+  color: "#a3d9b1",
+  marginBottom: "1rem",
+};
+
+const codeBoxStyle = {
+  backgroundColor: "#ededed",
+  color: "#274472",
+  padding: "0.5rem 1rem",
+  borderRadius: "8px",
+  display: "inline-block",
+  marginBottom: "1.5rem",
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "0.6rem",
+  borderRadius: "8px",
+  border: "1px solid #4a90e2",
+  marginBottom: "1.5rem",
+  backgroundColor: "#0f1c2e",
+  color: "white",
+};
+
 const btnStyle = {
   backgroundColor: "#4a90e2",
   color: "white",
@@ -199,4 +215,27 @@ const backBtnStyle = {
   fontWeight: "bold",
   border: "none",
   cursor: "pointer",
+};
+
+const linkedNumberStyle = {
+  fontWeight: "bold",
+  color: "#a3d9b1",
+};
+
+const noteStyle = {
+  fontSize: "0.85rem",
+  color: "#ededed",
+  marginTop: "0.75rem",
+};
+
+const linkButtonStyle = {
+  marginTop: "1.5rem",
+  display: "inline-block",
+  backgroundColor: "#2eb39a",
+  color: "white",
+  padding: "0.7rem 1.2rem",
+  borderRadius: "8px",
+  fontWeight: "bold",
+  textDecoration: "none",
+  marginRight: "1rem",
 };
