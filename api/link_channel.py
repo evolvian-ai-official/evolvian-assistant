@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from modules.assistant_rag.supabase_client import (
+from api.modules.assistant_rag.supabase_client import (
     get_or_create_user,
     get_or_create_client_id,
     link_channel_to_client

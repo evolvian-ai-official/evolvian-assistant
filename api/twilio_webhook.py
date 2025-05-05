@@ -4,13 +4,13 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import Response
 from twilio.twiml.messaging_response import MessagingResponse
 
-from modules.assistant_rag.supabase_client import (
+from api.modules.assistant_rag.supabase_client import (
     get_client_id_by_channel,
     save_history,
     track_usage
 )
 
-from modules.assistant_rag.rag_pipeline import ask_question
+from api.modules.assistant_rag.rag_pipeline import ask_question
 import config.config
 
 router = APIRouter()

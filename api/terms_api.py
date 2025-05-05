@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from datetime import datetime
-from modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.supabase_client import supabase
 
 # Inicialización del router de FastAPI
 router = APIRouter()

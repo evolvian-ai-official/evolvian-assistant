@@ -1,6 +1,6 @@
 from datetime import datetime
 from fastapi import HTTPException
-from modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.supabase_client import supabase
 
 def check_and_increment_usage(client_id: str, usage_type: str):
     """

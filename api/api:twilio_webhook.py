@@ -3,8 +3,8 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import PlainTextResponse
 from twilio.twiml.messaging_response import MessagingResponse
-from modules.assistant_rag.rag_pipeline import ask_question
-from modules.assistant_rag.supabase_client import get_client_id_by_channel, save_history
+from api.modules.assistant_rag.rag_pipeline import ask_question
+from api.modules.assistant_rag.supabase_client import get_client_id_by_channel, save_history
 
 app = FastAPI()
 

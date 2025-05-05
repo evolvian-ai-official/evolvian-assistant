@@ -2,7 +2,7 @@
 
 import os
 import config.config  # Asegura que la API key está cargada
-from modules.assistant_rag.rag_pipeline import (
+from api.modules.assistant_rag.rag_pipeline import (
     load_document,
     chunk_documents,
     embed_and_store,

@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from modules.assistant_rag.supabase_client import supabase
-from modules.assistant_rag.rag_pipeline import ask_question
+from api.modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.rag_pipeline import ask_question
 from utils.usage_limiter import check_and_increment_usage
 
 router = APIRouter()

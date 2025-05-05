@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
-from modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.supabase_client import supabase
 
 DEFAULT_PROMPT = "You are a helpful assistant. Provide relevant answers based only on the uploaded documents."
 

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
-from modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.supabase_client import supabase
 import os
 import logging
 

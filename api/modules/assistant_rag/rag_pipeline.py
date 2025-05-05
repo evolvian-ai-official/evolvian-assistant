@@ -12,7 +12,7 @@ from langchain_community.llms import OpenAI
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 
-from modules.assistant_rag.supabase_client import supabase, save_history, list_documents_with_signed_urls
+from api.modules.assistant_rag.supabase_client import supabase, save_history, list_documents_with_signed_urls
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

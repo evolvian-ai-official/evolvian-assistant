@@ -2,7 +2,7 @@ import requests
 from io import BytesIO
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from modules.chroma_indexer import save_to_chroma
+from api.modules.chroma_indexer import save_to_chroma
 import logging
 import tempfile
 import os

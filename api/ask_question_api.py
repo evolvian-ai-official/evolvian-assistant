@@ -4,8 +4,8 @@ from fastapi import APIRouter, Form
 from fastapi.responses import JSONResponse
 from datetime import datetime
 import config.config
-from modules.assistant_rag.rag_pipeline import ask_question
-from modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.rag_pipeline import ask_question
+from api.modules.assistant_rag.supabase_client import supabase
 
 router = APIRouter()
 
