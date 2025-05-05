@@ -89,3 +89,8 @@ app.include_router(accept_terms_router)
 app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
+
+
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
