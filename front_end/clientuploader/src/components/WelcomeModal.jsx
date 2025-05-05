@@ -213,7 +213,6 @@ export default function WelcomeModal({ onClose }) {
 }
 
 
-
 // Estilos los tienes ya completos como antes, no hay cambios.
 
 

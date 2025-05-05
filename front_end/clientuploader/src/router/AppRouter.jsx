@@ -20,6 +20,7 @@ import ClientSettings from "../features/settings/ClientSettings";
 import MainLayout from "../layouts/MainLayout";
 import PrivateRoutes from "./PrivateRoutes";
 import WidgetPreview from "../pages/WidgetPreview"; // ✅ NUEVO
+import Terms from "../pages/Terms"; // ✅ NUEVA PÁGINA
 
 export default function AppRouter() {
   const location = useLocation();
@@ -27,7 +28,8 @@ export default function AppRouter() {
   const publicRoutes = [
     "/", "/login", "/register", "/confirm",
     "/forgot-password", "/reset-password", "/verify-mfa",
-    "/welcome", "/chat-widget", "/widget", "/widget-preview" // ✅ Incluido en rutas públicas
+    "/welcome", "/chat-widget", "/widget", "/widget-preview", 
+    "/terms" // ✅ NUEVA RUTA PÚBLICA
   ];
   const isPublicRoute = publicRoutes.includes(location.pathname);
 
@@ -42,9 +44,10 @@ export default function AppRouter() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-mfa" element={<VerifyMfa />} />
       <Route path="/welcome" element={<Welcome />} />
+      <Route path="/terms" element={<Terms />} /> {/* ✅ Términos y Condiciones */}
       <Route path="/chat-widget" element={<ChatWidgetPage />} />
-      <Route path="/widget" element={<ClientWidget />} /> {/* ✅ Ruta para widget embebido */}
-      <Route path="/widget-preview" element={<WidgetPreview />} /> {/* ✅ NUEVA RUTA PARA DEBUG */}
+      <Route path="/widget" element={<ClientWidget />} />
+      <Route path="/widget-preview" element={<WidgetPreview />} />
 
       {/* Rutas protegidas */}
       <Route path="/dashboard" element={

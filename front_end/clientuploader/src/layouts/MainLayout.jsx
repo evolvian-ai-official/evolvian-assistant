@@ -26,6 +26,10 @@ export default function MainLayout({ children }) {
           Version v1.0 —{" "}
           <a href="https://evolvian.com" target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", color: "#a3d9b1" }}>
             Visit Public Site
+          </a>{" "}
+          |{" "}
+          <a href="/terms" style={{ textDecoration: "underline", color: "#a3d9b1" }}>
+            Terms & Conditions
           </a>
         </div>
       </footer>
