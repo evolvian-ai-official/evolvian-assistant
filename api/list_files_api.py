@@ -1,7 +1,7 @@
 # api/list_files_api.py
 
 from fastapi import APIRouter, Query, HTTPException
-from config.config import supabase
+from api.config.config import supabase
 import os
 
 router = APIRouter()

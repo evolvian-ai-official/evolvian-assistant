@@ -1,6 +1,6 @@
 # src/modules/assistant_rag/supabase_client.py
 
-from config.config import supabase
+from api.config.config import supabase
 import uuid
 from datetime import datetime
 

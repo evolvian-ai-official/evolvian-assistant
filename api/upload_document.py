@@ -8,7 +8,7 @@ import requests
 import logging
 import re
 import unicodedata
-from config.config import supabase
+from api.config.config import supabase
 from modules.document_processor import process_file
 
 router = APIRouter()
