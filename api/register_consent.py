@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from supabase import create_client
-from utils.supabase_client import supabase
+from api.utils.supabase_client import supabase
 
 from uuid import UUID
 from datetime import datetime
