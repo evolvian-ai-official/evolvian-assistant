@@ -8,13 +8,13 @@ import jwt
 load_dotenv()
 print("🔄 Variables de entorno cargadas desde .env")
 
-# ✅ Verificar contenido real de la SUPABASE_KEY
-supabase_key = os.getenv("SUPABASE_KEY")
+# ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # CORREGIDO
 
 if not supabase_key:
-    print("❌ SUPABASE_KEY no está definida en .env ni en el entorno")
+    print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env ni en el entorno")
 else:
-    print(f"🔑 Prefijo SUPABASE_KEY: {supabase_key[:10]}...")
+    print(f"🔑 Prefijo SUPABASE_SERVICE_ROLE_KEY: {supabase_key[:10]}...")
 
     try:
         decoded = jwt.decode(supabase_key, options={"verify_signature": False})
@@ -27,7 +27,7 @@ else:
         else:
             print("✅ Supabase configurado con la Service Role Key")
     except Exception as e:
-        print("❌ No se pudo decodificar SUPABASE_KEY:", str(e))
+        print("❌ No se pudo decodificar SUPABASE_SERVICE_ROLE_KEY:", str(e))
 
 # Routers principales
 from api.upload_document import router as upload_router
@@ -60,7 +60,7 @@ app = FastAPI()
 # Middleware CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Cambiar en producción
+    allow_origins=["*"],  # Cambiar en producción si necesitas limitar dominios
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,11 +85,10 @@ app.include_router(clear_new_user_flag_router)
 app.include_router(client_profile_router)
 app.include_router(accept_terms_router)
 
-# Nuevos routers para gestión de archivos y chunks
+# Routers para gestión de archivos y chunks
 app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
-
 
 @app.get("/healthz")
 def health_check():
