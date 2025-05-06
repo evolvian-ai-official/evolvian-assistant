@@ -99,8 +99,8 @@ def initialize_user(payload: InitUserPayload):
             raise Exception("El campo 'created_at' está vacío o inválido")
 
         now = datetime.now(timezone.utc)
-      created_at = datetime.fromisoformat(created_at_str).astimezone(timezone.utc)
-     is_new_user = user_record.data.get("is_new_user", False)
+        created_at = datetime.fromisoformat(created_at_str).astimezone(timezone.utc)
+        is_new_user = user_record.data.get("is_new_user", False)
 
         if now - created_at < timedelta(minutes=5):
             if not is_new_user:
