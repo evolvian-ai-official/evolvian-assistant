@@ -40,7 +40,6 @@ def get_or_create_user(auth_user_id: str, email: str) -> str:
         print(f"❌ Error en get_or_create_user: {e}")
         raise
 
-
 def get_or_create_client_id(user_id: str, email: str) -> str:
     try:
         print(f"🔍 Buscando client_id para user_id: {user_id}")
@@ -55,8 +54,11 @@ def get_or_create_client_id(user_id: str, email: str) -> str:
             return response.data["id"]
 
         name = email.split("@")[0]
-        print(f"🆕 Creando cliente para user_id: {user_id}")
+        new_id = str(uuid.uuid4())
+        print(f"🆕 Creando cliente para user_id: {user_id} con ID: {new_id}")
+
         insert = supabase.table("clients").insert({
+            "id": new_id,
             "user_id": user_id,
             "name": name
         }).execute()
