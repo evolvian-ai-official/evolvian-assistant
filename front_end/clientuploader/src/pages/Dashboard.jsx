@@ -23,12 +23,18 @@ export default function Dashboard() {
 
   useEffect(() => {
     const fetchDashboardData = async () => {
-      if (!clientId) return;
+      if (!clientId) {
+        console.warn("⚠️ client_id no disponible aún");
+        return;
+      }
       try {
-        const res = await fetch(`http://localhost:8000/dashboard_summary?client_id=${clientId}`);
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/dashboard_summary?client_id=${clientId}`);
         const data = await res.json();
-        if (res.ok) setDashboardData(data);
-        else console.error("❌ Error en respuesta de dashboard_summary:", data);
+        if (res.ok) {
+          setDashboardData(data);
+        } else {
+          console.error("❌ Error en respuesta de dashboard_summary:", data);
+        }
       } catch (err) {
         console.error("❌ Error de red al obtener dashboard:", err);
       }
@@ -73,15 +79,13 @@ export default function Dashboard() {
         {t("assistant_intro")} <strong style={{ color: "#a3d9b1" }}>{assistant_config?.assistant_name || t("your_assistant")}</strong>.
       </p>
 
-{/* 🧾 Plan Actual */}
-<div style={cardStyle}>
-  <h2 style={cardTitle}>{t("your_plan")}</h2>
-  <p><strong>{plan.name}</strong></p>
-  <p>{t("messages")}: {plan.is_unlimited ? "∞" : plan.max_messages}</p>
-  <p>{t("documents")}: {plan.max_documents}</p>
-</div>
-
-
+      {/* 🧾 Plan Actual */}
+      <div style={cardStyle}>
+        <h2 style={cardTitle}>{t("your_plan")}</h2>
+        <p><strong>{plan.name}</strong></p>
+        <p>{t("messages")}: {plan.is_unlimited ? "∞" : plan.max_messages}</p>
+        <p>{t("documents")}: {plan.max_documents}</p>
+      </div>
 
       {/* ⚙️ Funcionalidades Activas */}
       <div style={cardStyle}>
@@ -132,6 +136,7 @@ export default function Dashboard() {
   );
 }
 
+// 🎨 Estilos
 const cardStyle = {
   backgroundColor: "#1b2a41",
   border: "1px solid #274472",

@@ -12,19 +12,6 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState("");
   const navigate = useNavigate();
 
-  const handleGoogleLogin = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/dashboard`,
-        queryParams: {
-          prompt: "select_account",
-        },
-      },
-    });
-    if (error) console.error("❌ Google login error:", error);
-  };
-
   const handleEmailLogin = async (e) => {
     e.preventDefault();
     setErrorMsg("");
@@ -32,6 +19,7 @@ export default function Login() {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
+      console.error("❌ Error de login:", error.message);
       setErrorMsg(t("wrong_credentials"));
       return;
     }
@@ -41,16 +29,36 @@ export default function Login() {
       return;
     }
 
-    await fetch("http://localhost:8000/initialize_user", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        auth_user_id: data.session.user.id,
-        email: data.session.user.email,
-      }),
-    });
+    const apiUrl = `${import.meta.env.VITE_API_URL}/initialize_user`;
+    console.log("📡 Llamando a:", apiUrl); // ← Aquí está el log para depurar
 
-    navigate("/dashboard");
+    try {
+      const res = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          auth_user_id: data.session.user.id,
+          email: data.session.user.email,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("❌ Error al inicializar usuario");
+      }
+
+      const initData = await res.json();
+      console.log("✅ Datos de /initialize_user:", initData);
+
+      localStorage.setItem("client_id", initData.client_id);
+      localStorage.setItem("public_client_id", initData.public_client_id);
+      localStorage.setItem("user_id", data.session.user.id);
+
+      console.log("🔁 Redirigiendo a /dashboard");
+      navigate("/dashboard");
+    } catch (err) {
+      console.error(err);
+      setErrorMsg("Hubo un problema al iniciar sesión. Intenta de nuevo.");
+    }
   };
 
   return (
@@ -70,6 +78,7 @@ export default function Login() {
               onChange={(e) => setEmail(e.target.value)}
               required
               style={{ ...inputStyle, border: "none", flex: 1 }}
+              autoComplete="email"
             />
           </div>
 
@@ -81,6 +90,7 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
               required
               style={{ ...inputStyle, border: "none", flex: 1 }}
+              autoComplete="current-password"
             />
             <div
               style={eyeIconWrapperStyle}
@@ -118,26 +128,17 @@ export default function Login() {
           <div style={lineStyle} />
         </div>
 
-        {/* Desactivado temporalmente
-        <button onClick={handleGoogleLogin} style={googleButtonStyle}>
+        {/* <button onClick={handleGoogleLogin} style={googleButtonStyle}>
           <FaGoogle />
           {t("login_with_google")}
-        </button>
-        */}
-
-        {/* Registro deshabilitado para Friends & Family */}
-        {/*
-        <p style={footerTextStyle}>
-          {t("no_account")}{" "}
-          <Link to="/register" style={registerLinkStyle}>
-            {t("register_here")}
-          </Link>
-        </p>
-        */}
+        </button> */}
       </div>
     </div>
   );
 }
+
+// 🎨 Estilos omitidos aquí porque ya los tienes definidos igual.
+
 
 // 🎨 Estilos
 const containerStyle = {
@@ -238,17 +239,4 @@ const googleButtonStyle = {
   color: "white",
   cursor: "pointer",
   fontSize: "1rem",
-};
-
-const footerTextStyle = {
-  textAlign: "center",
-  fontSize: "0.875rem",
-  color: "#bbb",
-  marginTop: "2rem",
-};
-
-const registerLinkStyle = {
-  color: "#f5a623",
-  fontWeight: "bold",
-  textDecoration: "underline",
 };
