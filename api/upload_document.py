@@ -57,7 +57,7 @@ async def upload_document(
         storage_path = f"{client_id}/{filename}"
 
         supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
         upload_url = f"{supabase_url}/storage/v1/object/{BUCKET_NAME}/{storage_path}?upsert=true"
         headers = {
