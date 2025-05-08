@@ -44,7 +44,9 @@ export default function Dashboard() {
   }, [clientId]);
 
   useEffect(() => {
-    if (sessionStorage.getItem("alreadyRedirected") !== "true") {
+    const redirected = sessionStorage.getItem("alreadyRedirected");
+    console.log("🔄 alreadyRedirected:", redirected);
+    if (redirected !== "true") {
       setShowWelcome(true);
     }
   }, []);
@@ -70,7 +72,12 @@ export default function Dashboard() {
       color: "white",
       overflow: "hidden",
     }}>
-      {showWelcome && <WelcomeModal onClose={() => setShowWelcome(false)} />}
+      {showWelcome && (
+        <WelcomeModal onClose={() => {
+          console.log("📴 Cerrando WelcomeModal");
+          setShowWelcome(false);
+        }} />
+      )}
 
       <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#f5a623", marginBottom: "0.5rem" }}>
         👋 {t("welcome")}, {user.email}
