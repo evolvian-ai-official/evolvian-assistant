@@ -220,6 +220,7 @@ export default function WelcomeModal({ onClose }) {
     </div>
   );
 }
+
 // Estilos los tienes ya completos como antes, no hay cambios.
 
 
