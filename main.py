@@ -84,8 +84,6 @@ app.include_router(terms_router)
 app.include_router(clear_new_user_flag_router)
 app.include_router(client_profile_router)
 app.include_router(accept_terms_router)
-
-# Routers para gestión de archivos y chunks
 app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
@@ -93,3 +91,12 @@ app.include_router(delete_chunks_router)
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
+
+# ✅ Ruta temporal para verificar si /chat está registrada
+@app.get("/test_chat_route")
+def test_chat_route():
+    registered_routes = [route.path for route in app.routes]
+    return {
+        "chat_router_loaded": "/chat" in registered_routes,
+        "available_routes": registered_routes
+    }
