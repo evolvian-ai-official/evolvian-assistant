@@ -21,6 +21,7 @@ export default function WelcomeModal({ onClose }) {
     companySize: "",
   });
   const [settings, setSettings] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     async function fetchClientSettings() {
@@ -53,13 +54,19 @@ export default function WelcomeModal({ onClose }) {
   };
 
   const handleNext = async () => {
+    setError(null);
+
     if (currentStep === 3) {
       try {
-        await fetch(`${import.meta.env.VITE_API_URL}/save_client_profile`, {
+        const clientId = localStorage.getItem("client_id");
+        if (!clientId) throw new Error("No se encontró client_id");
+
+        console.log("📝 Guardando perfil del cliente...");
+        const profileRes = await fetch(`${import.meta.env.VITE_API_URL}/save_client_profile`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            client_id: localStorage.getItem("client_id"),
+            client_id: clientId,
             industry: formData.industry,
             role: formData.role,
             country: formData.country,
@@ -68,17 +75,34 @@ export default function WelcomeModal({ onClose }) {
           }),
         });
 
-        await fetch(`${import.meta.env.VITE_API_URL}/accept_terms`, {
+        const profileData = await profileRes.text();
+        console.log("📦 Respuesta perfil:", profileRes.status, profileData);
+        if (!profileRes.ok) throw new Error("Error al guardar el perfil del cliente");
+
+        console.log("✅ Perfil guardado. Ahora aceptando términos...");
+        const termsRes = await fetch(`${import.meta.env.VITE_API_URL}/accept_terms`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: localStorage.getItem("client_id") }),
+          body: JSON.stringify({ client_id: clientId }),
+        });
+
+        const termsData = await termsRes.text();
+        console.log("📦 Respuesta términos:", termsRes.status, termsData);
+        if (!termsRes.ok) throw new Error("Error al aceptar los términos y condiciones");
+
+        console.log("✅ Consentimiento completo. Avanzando al paso final...");
+        setCurrentStep((prev) => {
+          const nextStep = Math.min(prev + 1, steps.length);
+          console.log("➡️ Paso actualizado a:", nextStep);
+          return nextStep;
         });
       } catch (error) {
-        console.error("❌ Error guardando perfil o aceptando términos:", error);
+        console.error("❌ Error en paso 3:", error);
+        setError("Hubo un problema guardando tu consentimiento. Por favor, intenta de nuevo.");
       }
+    } else {
+      setCurrentStep((prev) => Math.min(prev + 1, steps.length));
     }
-
-    setCurrentStep((prev) => Math.min(prev + 1, steps.length));
   };
 
   const handleBack = () => setCurrentStep((prev) => Math.max(prev - 1, 1));
@@ -149,14 +173,15 @@ export default function WelcomeModal({ onClose }) {
             <p style={textStyle}>
               {t("terms_description")} <a href="/terms" target="_blank" rel="noopener noreferrer" style={linkStyle}>{t("terms_and_conditions")}</a>.
             </p>
+            {error && <p style={{ color: "red", marginTop: "1rem" }}>{error}</p>}
           </>
         );
       case 4:
+        console.log("🧭 Entrando al paso 4 (plan), settings:", settings);
         return settings && (
           <>
             <h2 style={titleStyle}>{t("your_plan_title")}</h2>
             <p style={textStyle}>{t("current_plan")} <strong>{settings.plan?.name || "Free"}</strong></p>
-            {/* Plan cards omitted for brevity */}
           </>
         );
       default:
@@ -195,9 +220,6 @@ export default function WelcomeModal({ onClose }) {
     </div>
   );
 }
-
-
-
 // Estilos los tienes ya completos como antes, no hay cambios.
 
 
