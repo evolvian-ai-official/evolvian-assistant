@@ -11,7 +11,6 @@ export default function ChatWidget({
   const [clientId, setClientId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  const [showTooltip, setShowTooltip] = useState(false);
   const [showConsentForm, setShowConsentForm] = useState(true);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -24,7 +23,6 @@ export default function ChatWidget({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlClientId = params.get("public_client_id");
-
     if (propClientId) setClientId(propClientId);
     else if (urlClientId) setClientId(urlClientId);
     else console.error("❌ Client ID no encontrado ni en props ni en URL.");
@@ -57,20 +55,42 @@ export default function ChatWidget({
   };
 
   const sendMessage = async () => {
-    if (!input.trim() || !clientId) return;
+    if (!input.trim() || !clientId) {
+      console.warn("⚠️ No hay input o clientId no definido:", { input, clientId });
+      return;
+    }
 
     const userMsg = { from: "user", text: input };
     setMessages((prev) => [...prev, userMsg]);
     setSending(true);
 
     try {
-      const res = await fetch("http://localhost:8000/chat", {
+      const apiUrl = "https://evolvian.onrender.com";
+      console.log("🔍 Enviando mensaje al backend...");
+      console.log("🌐 Endpoint:", `${apiUrl}/chat`);
+      console.log("📨 Payload:", {
+        public_client_id: clientId,
+        message: input,
+      });
+
+      const res = await fetch(`${apiUrl}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ public_client_id: clientId, message: input }),
       });
+
+      console.log("📥 Respuesta cruda:", res);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error(`❌ Error HTTP (${res.status}):`, errorText);
+        throw new Error(`Backend error ${res.status}`);
+      }
+
       const data = await res.json();
-      const botMsg = { from: "bot", text: data.answer };
+      console.log("✅ Respuesta del backend:", data);
+
+      const botMsg = { from: "bot", text: data.answer || "(respuesta vacía)" };
       setMessages((prev) => [...prev, botMsg]);
     } catch (err) {
       console.error("❌ Error al enviar mensaje:", err);
@@ -109,30 +129,14 @@ export default function ChatWidget({
         <div style={styles.header}><strong>💬 Evolvian</strong></div>
         <div style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
           {requireEmail && (
-            <input
-              type="email"
-              placeholder={t("enter_email")}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={styles.input}
-            />
+            <input type="email" placeholder={t("enter_email")} value={email} onChange={(e) => setEmail(e.target.value)} style={styles.input} />
           )}
           {requirePhone && (
-            <input
-              type="tel"
-              placeholder={t("enter_phone")}
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              style={styles.input}
-            />
+            <input type="tel" placeholder={t("enter_phone")} value={phone} onChange={(e) => setPhone(e.target.value)} style={styles.input} />
           )}
           {requireTerms && (
             <label style={{ fontSize: "0.8rem", color: "#555" }}>
-              <input
-                type="checkbox"
-                checked={acceptedTerms}
-                onChange={(e) => setAcceptedTerms(e.target.checked)}
-              /> {t("accept_terms")} <a href="https://evolvian.app/terms" target="_blank" rel="noopener noreferrer">{t("terms_link")}</a>
+              <input type="checkbox" checked={acceptedTerms} onChange={(e) => setAcceptedTerms(e.target.checked)} /> {t("accept_terms")} <a href="https://evolvian.app/terms" target="_blank" rel="noopener noreferrer">{t("terms_link")}</a>
             </label>
           )}
           <button onClick={handleConsentSubmit} style={styles.button}>{t("continue")}</button>
@@ -177,14 +181,84 @@ export default function ChatWidget({
 }
 
 const styles = {
-  wrapper: { width: "100%", height: "100%", backgroundColor: "#ffffff", fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", display: "flex", flexDirection: "column" },
-  header: { padding: "1rem", borderBottom: "1px solid #ededed", color: "#274472", backgroundColor: "#f7f9fa", display: "flex", alignItems: "center" },
-  messages: { flex: 1, overflowY: "auto", padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem", backgroundColor: "#fafafa" },
-  message: { padding: "0.75rem 1rem", borderRadius: "16px", maxWidth: "75%", wordBreak: "break-word", whiteSpace: "pre-line", fontSize: "0.95rem", lineHeight: "1.4" },
-  userMessage: { alignSelf: "flex-end", backgroundColor: "#a3d9b1", color: "#1b2a41" },
-  botMessage: { alignSelf: "flex-start", backgroundColor: "#ededed", color: "#1b2a41" },
-  inputContainer: { borderTop: "1px solid #ededed", padding: "1rem", backgroundColor: "#ffffff" },
-  textarea: { width: "100%", resize: "none", borderRadius: "10px", padding: "0.6rem 0.75rem", border: "1px solid #ccc", fontSize: "0.95rem", fontFamily: "inherit", outline: "none", color: "#1b2a41", backgroundColor: "#ffffff", maxHeight: "120px", overflowY: "auto" },
-  input: { padding: "0.5rem", borderRadius: "8px", border: "1px solid #ccc", fontSize: "0.9rem" },
-  button: { backgroundColor: "#4a90e2", color: "white", border: "none", padding: "0.6rem", borderRadius: "10px", fontWeight: "bold", fontSize: "0.95rem", cursor: "pointer", transition: "background 0.2s" },
+  wrapper: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#ffffff",
+    fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+    display: "flex",
+    flexDirection: "column",
+  },
+  header: {
+    padding: "1rem",
+    borderBottom: "1px solid #ededed",
+    color: "#274472",
+    backgroundColor: "#f7f9fa",
+    display: "flex",
+    alignItems: "center",
+  },
+  messages: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "1rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.75rem",
+    backgroundColor: "#fafafa",
+  },
+  message: {
+    padding: "0.75rem 1rem",
+    borderRadius: "16px",
+    maxWidth: "75%",
+    wordBreak: "break-word",
+    whiteSpace: "pre-line",
+    fontSize: "0.95rem",
+    lineHeight: "1.4",
+  },
+  userMessage: {
+    alignSelf: "flex-end",
+    backgroundColor: "#a3d9b1",
+    color: "#1b2a41",
+  },
+  botMessage: {
+    alignSelf: "flex-start",
+    backgroundColor: "#ededed",
+    color: "#1b2a41",
+  },
+  inputContainer: {
+    borderTop: "1px solid #ededed",
+    padding: "1rem",
+    backgroundColor: "#ffffff",
+  },
+  textarea: {
+    width: "100%",
+    resize: "none",
+    borderRadius: "10px",
+    padding: "0.6rem 0.75rem",
+    border: "1px solid #ccc",
+    fontSize: "0.95rem",
+    fontFamily: "inherit",
+    outline: "none",
+    color: "#1b2a41",
+    backgroundColor: "#ffffff",
+    maxHeight: "120px",
+    overflowY: "auto",
+  },
+  input: {
+    padding: "0.5rem",
+    borderRadius: "8px",
+    border: "1px solid #ccc",
+    fontSize: "0.9rem",
+  },
+  button: {
+    backgroundColor: "#4a90e2",
+    color: "white",
+    border: "none",
+    padding: "0.6rem",
+    borderRadius: "10px",
+    fontWeight: "bold",
+    fontSize: "0.95rem",
+    cursor: "pointer",
+    transition: "background 0.2s",
+  },
 };
