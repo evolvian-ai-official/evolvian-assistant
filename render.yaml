@@ -6,7 +6,7 @@ services:
     staticPublishPath: front_end/clientuploader/dist
     routes:
       - type: rewrite
-        source: /.*
+        source: /*
         destination: /index.html
 
   - type: web
