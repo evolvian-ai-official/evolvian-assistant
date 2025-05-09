@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useNavigate, Link } from "react-router-dom";
 import { FaGoogle, FaEye, FaEyeSlash } from "react-icons/fa";
@@ -10,7 +10,20 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [checkingSession, setCheckingSession] = useState(true);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session) {
+        console.log("✅ Sesión detectada, redirigiendo...");
+        navigate("/dashboard");
+      }
+      setCheckingSession(false);
+    };
+    checkSession();
+  }, []);
 
   const handleEmailLogin = async (e) => {
     e.preventDefault();
@@ -30,7 +43,7 @@ export default function Login() {
     }
 
     const apiUrl = `${import.meta.env.VITE_API_URL}/initialize_user`;
-    console.log("📡 Llamando a:", apiUrl); // ← Aquí está el log para depurar
+    console.log("📡 Llamando a:", apiUrl);
 
     try {
       const res = await fetch(apiUrl, {
@@ -60,6 +73,14 @@ export default function Login() {
       setErrorMsg("Hubo un problema al iniciar sesión. Intenta de nuevo.");
     }
   };
+
+  if (checkingSession) {
+    return (
+      <div style={containerStyle}>
+        <p style={{ color: "#ededed", fontSize: "1.1rem" }}>Cargando sesión...</p>
+      </div>
+    );
+  }
 
   return (
     <div style={containerStyle}>
@@ -136,6 +157,7 @@ export default function Login() {
     </div>
   );
 }
+
 
 // 🎨 Estilos omitidos aquí porque ya los tienes definidos igual.
 
