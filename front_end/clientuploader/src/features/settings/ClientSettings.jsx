@@ -35,7 +35,8 @@ export default function ClientSettings() {
         return;
       }
       try {
-        const res = await fetch(`http://localhost:8000/client_settings?client_id=${clientId}`);
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings?client_id=${clientId}`);
+
         const data = await res.json();
         console.log("📥 Respuesta del backend:", data);
         if (res.ok) {
@@ -87,7 +88,7 @@ export default function ClientSettings() {
 
     console.log("📤 Payload a enviar:", payload);
     try {
-      const res = await fetch("http://localhost:8000/client_settings", {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
