@@ -9,7 +9,7 @@ load_dotenv()
 print("🔄 Variables de entorno cargadas desde .env")
 
 # ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # CORREGIDO
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 if not supabase_key:
     print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env ni en el entorno")
@@ -47,11 +47,12 @@ from api.terms_api import router as terms_router
 from api.clear_new_user_flag import router as clear_new_user_flag_router
 from api.client_profile_api import router as client_profile_router
 from api.accept_terms_api import router as accept_terms_router
-
-# Routers nuevos: archivos y chunks
 from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
+
+# ✅ Nuevo router para servir embed.js con headers correctos
+from api.public.embed import router as embed_router
 
 print("🚀 Routers importados correctamente")
 
@@ -60,7 +61,7 @@ app = FastAPI()
 # Middleware CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://clientuploader.onrender.com"],  # Cambiar en producción si necesitas limitar dominios
+    allow_origins=["https://clientuploader.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,12 +88,12 @@ app.include_router(accept_terms_router)
 app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
+app.include_router(embed_router)  # ✅ Incluir embed.js servido desde FastAPI
 
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
 
-# ✅ Ruta temporal para verificar si /chat está registrada
 @app.get("/test_chat_route")
 def test_chat_route():
     registered_routes = [route.path for route in app.routes]
