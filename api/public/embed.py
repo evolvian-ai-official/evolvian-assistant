@@ -1,4 +1,3 @@
-# api/public/embed.py
 from fastapi import APIRouter, Response
 
 router = APIRouter()
@@ -13,14 +12,7 @@ def serve_embed_js():
     return;
   }
 
-  // Detectar entorno
-  const isLocalhost =
-    window.location.hostname.includes("localhost") ||
-    window.location.hostname.includes("127.0.0.1");
-
-  const baseUrl = isLocalhost
-    ? "http://localhost:5173"
-    : "https://clientuploader.onrender.com";
+  const baseUrl = "https://clientuploader.onrender.com"; // ✅ Siempre producción
 
   console.log("📦 public_client_id:", clientId);
   console.log("🌐 Evolvian baseUrl:", baseUrl);
@@ -98,7 +90,7 @@ def serve_embed_js():
 """
     return Response(
         content=js_content,
-        media_type="application/javascript; charset=utf-8",  # ✅ Aquí está el fix
+        media_type="application/javascript; charset=utf-8",
         headers={
             "Access-Control-Allow-Origin": "*",
             "Cross-Origin-Resource-Policy": "cross-origin"
