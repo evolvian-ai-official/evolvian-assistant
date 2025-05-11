@@ -18,7 +18,7 @@ export default function Welcome() {
 
     try {
       if (userId) {
-        const res = await fetch(`http://localhost:8000/clear_new_user_flag?user_id=${userId}`, {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/clear_new_user_flag?user_id=${userId}`, {
           method: "POST",
         });
         const result = await res.json();

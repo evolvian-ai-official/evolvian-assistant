@@ -7,7 +7,7 @@ export default function ClientWidget() {
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const id = urlParams.get("client_id");
+    const id = urlParams.get("client_id") || urlParams.get("public_client_id"); // ✅ Arreglado
     if (id) setClientId(id);
   }, []);
 

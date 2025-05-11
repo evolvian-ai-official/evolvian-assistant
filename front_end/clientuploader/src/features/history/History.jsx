@@ -15,7 +15,7 @@ export default function History() {
       if (!clientId) return;
       setLoading(true);
       try {
-        const res = await axios.get(`http://localhost:8000/history?client_id=${clientId}`);
+        const res = await axios.get(`${import.meta.env.VITE_API_URL}/history?client_id=${clientId}`);
         setHistory(res.data.history || []);
       } catch (err) {
         console.error("Error cargando historial", err);

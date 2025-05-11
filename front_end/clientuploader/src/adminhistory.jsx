@@ -17,7 +17,7 @@ function AdminHistory() {
         setUser(session.user);
 
         try {
-          const res = await axios.post("http://localhost:8000/create_or_get_client", {
+          const res = await axios.post(${import.meta.env.VITE_API_URL}/create_or_get_client", {
             auth_user_id: id,
             email: email,
           });
@@ -38,7 +38,7 @@ function AdminHistory() {
     const fetchHistory = async () => {
       if (!clientId) return;
       try {
-        const res = await axios.get(`http://localhost:8000/history?client_id=${clientId}`);
+        const res = await axios.get(`${import.meta.env.VITE_API_URL}/history?client_id=${clientId}`);
         setHistory(res.data.history || []);
       } catch (err) {
         console.error("❌ Error al obtener el historial:", err);

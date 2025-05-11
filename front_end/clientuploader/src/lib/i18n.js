@@ -137,6 +137,8 @@ es: {
   invalid_client_id: "No se puede subir archivo: client_id inválido.",
   limit_reached_error: "Has alcanzado el límite de tu plan.",
   unknown_upload_error: "Error desconocido al subir archivo.",
+  file_uploaded_success: "Archivo subido exitosamente",
+
 
   // History
   question_history: "Historial de Preguntas",
@@ -200,6 +202,8 @@ es: {
   select_country: "Selecciona tu país",
   interested_channels: "Canales de interés:",
   select_company_size: "Selecciona el tamaño de tu empresa",
+  your_plan_title:"Tu plan",
+  current_plan:"Tu plan es",
 
   // Terms
   terms_title: "Términos y Condiciones",
@@ -435,6 +439,8 @@ en: {
   select_country: "Select your country",
   interested_channels: "Interested Channels:",
   select_company_size: "Select your company size",
+  your_plan_title:"Your plan",
+  current_plan:"Current plan is",
 
   // Terms
   terms_title: "Terms & Conditions",

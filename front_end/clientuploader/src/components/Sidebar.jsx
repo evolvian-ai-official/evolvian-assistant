@@ -16,7 +16,7 @@ export default function Sidebar() {
     const fetchFeatures = async () => {
       if (!clientId) return;
       try {
-        const res = await fetch(`http://localhost:8000/client_settings?client_id=${clientId}`);
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings?client_id=${clientId}`);
         const data = await res.json();
         if (res.ok) {
           const normalize = (str) => str.toLowerCase().replace(/\s+/g, "_");

@@ -18,7 +18,7 @@ export default function WidgetPreview() {
 
     const fetchSettings = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/client_settings?public_client_id=${publicClientId}`); // ✅
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings?public_client_id=${publicClientId}`); // ✅
         const data = await res.json();
         console.log("⚙️ Settings cargados desde backend (crudo):\n", JSON.stringify(data, null, 2));
 

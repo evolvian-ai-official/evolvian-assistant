@@ -8,7 +8,7 @@ export function useTermsAcceptance(clientId) {
 
     const checkAcceptance = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/accepted_terms?client_id=${clientId}`);
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/accepted_terms?client_id=${clientId}`);
         const data = await res.json();
         setHasAccepted(data.has_accepted); // ✅ usa la clave que devuelve el backend
       } catch (err) {
@@ -22,7 +22,8 @@ export function useTermsAcceptance(clientId) {
 
   const acceptTerms = async () => {
     try {
-      const res = await fetch("http://localhost:8000/accept_terms", {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/accept_terms`, {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

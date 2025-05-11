@@ -32,7 +32,7 @@ export default function WhatsAppSetup() {
     };
 
     try {
-      const res = await axios.post("http://localhost:8000/link_whatsapp", payload);
+      const res = await axios.post(`${import.meta.env.VITE_API_URL}/link_whatsapp`, payload);
       setStatus({ message: `✅ ${t("whatsapp_linked_success")}`, type: "success" });
       setStep(3);
     } catch (err) {

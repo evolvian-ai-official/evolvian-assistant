@@ -13,7 +13,7 @@ export default function Upload() {
   const fetchFiles = async () => {
     if (!clientId) return;
     try {
-      const res = await fetch(`http://localhost:8000/list_files?client_id=${clientId}`);
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/list_files?client_id=${clientId}`);
       const data = await res.json();
       setUploadedFiles(data.files || []);
     } catch (err) {
@@ -44,7 +44,7 @@ export default function Upload() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("http://localhost:8000/upload_document", {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/upload_document`, {
         method: "POST",
         body: formData,
       });
@@ -69,7 +69,8 @@ export default function Upload() {
       }
 
       const data = await res.json();
-      setMessage(`✅ ${data.message}`);
+      console.log("📥 Respuesta backend:", data);
+      setMessage(`✅ ${data.message || t("file_uploaded_success")}`);
       setFile(null);
       fetchFiles();
     } catch (err) {

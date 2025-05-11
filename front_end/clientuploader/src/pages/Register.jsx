@@ -28,7 +28,7 @@ export default function Register() {
     }
 
     try {
-      const checkRes = await fetch("http://localhost:8000/check_email_exists", {
+      const checkRes = await fetch(`${import.meta.env.VITE_API_URL}/check_email_exists`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -53,7 +53,7 @@ export default function Register() {
         return;
       }
 
-      const initRes = await fetch("http://localhost:8000/initialize_user", {
+      const initRes = await fetch(`${import.meta.env.VITE_API_URL}/initialize_user`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

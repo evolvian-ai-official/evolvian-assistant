@@ -13,7 +13,7 @@ export default function Register() {
 
     try {
       // Verifica si el email ya existe
-      const res = await fetch("http://localhost:8000/check_email_exists", {
+      const res = await fetch(${import.meta.env.VITE_API_URL}/check_email_exists", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -38,7 +38,7 @@ export default function Register() {
       } = await supabase.auth.getSession();
 
       // Llama a /initialize_user
-      await fetch("http://localhost:8000/initialize_user", {
+      await fetch(${import.meta.env.VITE_API_URL}/initialize_user", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

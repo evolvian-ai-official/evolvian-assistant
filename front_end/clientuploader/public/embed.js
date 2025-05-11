@@ -1,3 +1,4 @@
+<script>
 (function () {
   const clientId = document.currentScript.getAttribute("data-client-id");
 
@@ -6,17 +7,19 @@
     return;
   }
 
-  // 🔥 Detectar si estamos en local o en producción
-  const isLocalhost = window.location.hostname.includes("localhost") || window.location.hostname.includes("127.0.0.1");
+  // 🌐 Base URL definida por entorno
+  const isLocalhost =
+    window.location.hostname.includes("localhost") ||
+    window.location.hostname.includes("127.0.0.1");
 
   const baseUrl = isLocalhost
-    ? "http://localhost:5173"    // 🛠️ Para desarrollo local
-    : "https://evolvian.app";    // 🚀 Para producción real
+    ? "http://localhost:5173" // Desarrollo local
+    : "https://clientuploader.onrender.com"; // Producción
 
   console.log("🌐 Evolvian Widget baseUrl:", baseUrl);
   console.log("📦 public_client_id:", clientId);
 
-  // Crear wrapper flotante
+  // Crear contenedor flotante
   const wrapper = document.createElement("div");
   wrapper.id = "evolvian-widget-wrapper";
   Object.assign(wrapper.style, {
@@ -48,7 +51,7 @@
   });
   wrapper.appendChild(button);
 
-  // Crear contenedor para el iframe
+  // Crear contenedor del iframe
   const widgetContainer = document.createElement("div");
   widgetContainer.id = "evolvian-chat-widget";
   Object.assign(widgetContainer.style, {
@@ -64,14 +67,14 @@
   });
   wrapper.appendChild(widgetContainer);
 
-  // Toggle abrir/cerrar widget
+  // Mostrar/ocultar widget
   let visible = false;
   button.addEventListener("click", () => {
     visible = !visible;
     widgetContainer.style.display = visible ? "block" : "none";
   });
 
-  // Crear iframe con public_client_id
+  // Crear iframe
   const iframe = document.createElement("iframe");
   iframe.src = `${baseUrl}/chat-widget?public_client_id=${clientId}`;
   Object.assign(iframe.style, {
@@ -80,5 +83,10 @@
     border: "none",
     borderRadius: "12px",
   });
+  iframe.setAttribute("title", "Evolvian AI Widget");
+  iframe.setAttribute("allow", "clipboard-write; microphone");
+  iframe.setAttribute("loading", "lazy");
+
   widgetContainer.appendChild(iframe);
 })();
+</script>
