@@ -1,0 +1,12 @@
+{
+  "routes": [
+    {
+      "src": "/embed.js",
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/javascript",
+        "Cross-Origin-Resource-Policy": "cross-origin"
+      }
+    }
+  ]
+}

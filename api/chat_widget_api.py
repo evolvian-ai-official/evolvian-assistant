@@ -1,18 +1,20 @@
-# api/chat_widget.py
-
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from pathlib import Path
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.assistant_rag.rag_pipeline import ask_question
 from api.utils.usage_limiter import check_and_increment_usage
 
 router = APIRouter()
 
+# 🔹 MODELO DE ENTRADA PARA /chat
 class ChatRequest(BaseModel):
     public_client_id: str
     message: str
     channel: str = "chat"
 
+# 🔹 ENDPOINT POST PARA MENSAJES DEL WIDGET
 @router.post("/chat")
 async def chat_widget(request: Request):
     try:
@@ -21,7 +23,6 @@ async def chat_widget(request: Request):
         body = await request.json()
         print("📦 Body recibido:", body)
 
-        # Validar que los campos necesarios están presentes
         if "public_client_id" not in body or "message" not in body:
             print("❌ Faltan campos obligatorios en el body")
             raise HTTPException(status_code=400, detail="public_client_id y message son obligatorios")
@@ -72,3 +73,37 @@ async def chat_widget(request: Request):
     except Exception as e:
         print(f"❌ Error inesperado en /chat:", str(e))
         raise HTTPException(status_code=500, detail="Error al procesar el mensaje.")
+
+
+# 🔹 ENDPOINT GET PARA CARGAR EL HTML DEL WIDGET (iframe)
+@router.get("/chat-widget", response_class=HTMLResponse)
+def serve_chat_widget(public_client_id: str):
+    try:
+        print("🌐 Petición recibida en /chat-widget con public_client_id:", public_client_id)
+
+        # (Opcional) Validación básica en Supabase
+        client_res = supabase.table("clients") \
+            .select("id") \
+            .eq("public_client_id", public_client_id) \
+            .maybe_single() \
+            .execute()
+
+        if not client_res or not client_res.data:
+            print("❌ Cliente no encontrado en Supabase")
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+        # Servir HTML generado por Vite
+        html_path = Path("dist/chat-widget.html")
+        if not html_path.exists():
+            print("❌ HTML del widget no encontrado")
+            raise HTTPException(status_code=500, detail="Archivo HTML no encontrado")
+
+        html_content = html_path.read_text()
+        return HTMLResponse(content=html_content, status_code=200)
+
+    except HTTPException as he:
+        print(f"⚠️ Error controlado en /chat-widget ({he.status_code}):", he.detail)
+        raise he
+    except Exception as e:
+        print("❌ Error inesperado en /chat-widget:", str(e))
+        raise HTTPException(status_code=500, detail="Error al cargar el widget.")
