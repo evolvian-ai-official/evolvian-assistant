@@ -12,7 +12,7 @@ def serve_embed_js():
     return;
   }
 
-  const baseUrl = "https://www.evolvianai.com"; // ✅ Siempre producción
+  const baseUrl = "redirectTo: "https://www.evolvianai.com/"; // ✅ Siempre producción
 
   console.log("📦 public_client_id:", clientId);
   console.log("🌐 Evolvian baseUrl:", baseUrl);
@@ -96,3 +96,4 @@ def serve_embed_js():
             "Cross-Origin-Resource-Policy": "cross-origin"
         }
     )
+
