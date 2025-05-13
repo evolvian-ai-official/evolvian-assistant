@@ -50,9 +50,8 @@ from api.accept_terms_api import router as accept_terms_router
 from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
-
-# ✅ Nuevo router para servir embed.js con headers correctos
 from api.public.embed import router as embed_router
+from api.meta_webhook import router as meta_webhook_router  # ✅ NUEVO
 
 print("🚀 Routers importados correctamente")
 
@@ -88,7 +87,8 @@ app.include_router(accept_terms_router)
 app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
-app.include_router(embed_router)  # ✅ Incluir embed.js servido desde FastAPI
+app.include_router(embed_router)
+app.include_router(meta_webhook_router)  # ✅ NUEVO: Webhook Meta
 
 @app.get("/healthz")
 def health_check():

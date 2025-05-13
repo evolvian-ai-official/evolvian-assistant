@@ -13,19 +13,23 @@ router = APIRouter()
 
 VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolviansecret2025")
 
-@router.get("/meta_webhook")
+# ✅ Verificación del webhook de Meta
+@router.get("/webhooks/meta")
 def verify_webhook(request: Request):
     params = request.query_params
     if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == VERIFY_TOKEN:
+        print("✅ Webhook Meta verificado correctamente")
         return PlainTextResponse(content=params.get("hub.challenge"), status_code=200)
+    print("❌ Token inválido o modo incorrecto en la verificación")
     return PlainTextResponse(content="Verification token mismatch", status_code=403)
 
-@router.post("/meta_webhook")
+# ✅ Recepción y procesamiento de mensajes
+@router.post("/webhooks/meta")
 async def receive_whatsapp_message(request: Request):
-    data = await request.json()
-    print("📥 Webhook recibido:", data)
-
     try:
+        data = await request.json()
+        print("📥 Webhook recibido:", data)
+
         entry = data.get("entry", [])[0]
         change = entry.get("changes", [])[0]
         value = change.get("value", {})
