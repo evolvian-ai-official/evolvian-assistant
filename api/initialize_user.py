@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import random
 import string
+import uuid
 from api.modules.assistant_rag.supabase_client import (
     get_or_create_user,
     get_or_create_client_id,
@@ -20,7 +21,6 @@ class InitUserPayload(BaseModel):
 def generate_unique_public_client_id(length=12):
     chars = string.ascii_lowercase + string.digits
     max_attempts = 10
-
     for attempt in range(max_attempts):
         candidate = ''.join(random.choice(chars) for _ in range(length))
         existing = supabase.table("clients").select("id").eq("public_client_id", candidate).maybe_single().execute()
@@ -62,17 +62,11 @@ def initialize_user(payload: InitUserPayload):
 
         # 4. Verificar o crear configuración inicial del cliente + asignar plan 'free'
         print(f"🔎 Verificando configuración del cliente {client_id}")
-        settings_res = supabase.table("client_settings")\
-            .select("client_id, plan_id")\
-            .eq("client_id", client_id)\
-            .maybe_single()\
-            .execute()
-
+        settings_res = supabase.table("client_settings").select("client_id, plan_id").eq("client_id", client_id).maybe_single().execute()
         print("📤 Resultado crudo de client_settings:", settings_res)
 
         if not settings_res or not hasattr(settings_res, "data"):
-            print(f"❌ Supabase no devolvió data para client_settings (raw response: {settings_res})")
-            raise Exception("client_settings_select_failed")
+            raise Exception("❌ Supabase no devolvió data para client_settings")
 
         if not settings_res.data:
             print(f"⚠️ client_settings vacío. Creando nuevo registro...")
@@ -96,9 +90,19 @@ def initialize_user(payload: InitUserPayload):
         usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).maybe_single().execute()
         if not usage_res or not usage_res.data:
             supabase.table("client_usage").insert({
+                "id": str(uuid.uuid4()),
                 "client_id": client_id,
-                "messages_used": 0,
-                "documents_uploaded": 0,
+                "channel": "chat",
+                "type": "question",
+                "value": 0,
+                "last_used_at": datetime.utcnow().isoformat()
+            }).execute()
+            supabase.table("client_usage").insert({
+                "id": str(uuid.uuid4()),
+                "client_id": client_id,
+                "channel": "chat",
+                "type": "document",
+                "value": 0,
                 "last_used_at": datetime.utcnow().isoformat()
             }).execute()
             print(f"📈 Uso inicial creado para client_id: {client_id}")
