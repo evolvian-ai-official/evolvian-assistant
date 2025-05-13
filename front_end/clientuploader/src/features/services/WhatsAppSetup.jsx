@@ -86,7 +86,7 @@ export default function WhatsAppSetup() {
 
             <input
               type="text"
-              placeholder="+52XXXXXXXXXX"
+              placeholder="+52XXXXXXXXXXX"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               style={inputStyle}
