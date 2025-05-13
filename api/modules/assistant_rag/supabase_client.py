@@ -215,3 +215,28 @@ def list_documents_with_signed_urls(client_id: str, bucket_name: str = "evolvian
     except Exception as e:
         print(f"❌ Error en list_documents_with_signed_urls: {e}")
         return []
+
+
+
+
+        def get_whatsapp_credentials(client_id: str) -> dict:
+    try:
+        response = supabase.table("channels")\
+            .select("wa_phone_id, wa_token")\
+            .eq("client_id", client_id)\
+            .eq("type", "whatsapp")\
+            .maybe_single()\
+            .execute()
+
+        if not response.data:
+            raise Exception("❌ No se encontraron credenciales de WhatsApp para este cliente.")
+
+        return {
+            "wa_phone_id": response.data["wa_phone_id"],
+            "wa_token": response.data["wa_token"]
+        }
+
+    except Exception as e:
+        print(f"❌ Error en get_whatsapp_credentials: {e}")
+        raise
+
