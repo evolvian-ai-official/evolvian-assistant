@@ -141,9 +141,8 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
     try:
         print(f"✪ Buscando client_id para canal {channel_type}: {value}")
 
-        # Normaliza el valor (por ejemplo: whatsapp:+5215525... → whatsapp_5215525...)
         if channel_type == "whatsapp":
-            value = f"whatsapp_{value.lstrip('+').lstrip('whatsapp:')}"
+            value = f"whatsapp_{value.lstrip('+').replace('whatsapp:', '')}"
 
         response = supabase.table("channels")\
             .select("client_id")\
@@ -152,13 +151,17 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
             .maybe_single()\
             .execute()
 
-        if response and response.data:
+        if response and hasattr(response, "data") and response.data:
             return response.data["client_id"]
-        return None
+        else:
+            print("⚠️ No se encontró ningún canal para ese número")
+            return None
 
     except Exception as e:
         print(f"❌ Error en get_client_id_by_channel: {e}")
         return None
+
+
 
 
 def link_channel_to_client(client_id: str, channel_type: str, value: str):
