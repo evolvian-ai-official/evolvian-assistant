@@ -37,12 +37,16 @@ def initialize_user(payload: InitUserPayload):
         print(f"🚀 Versión initialize_user.py cargada correctamente.")
         print(f"🔵 Inicializando usuario: auth_user_id={payload.auth_user_id}, email={payload.email}")
 
+        # 1. Crear o encontrar usuario
         user_id = get_or_create_user(payload.auth_user_id, payload.email)
         print(f"✅ User ID obtenido o creado: {user_id}")
 
+        # 2. Crear o encontrar cliente
         client_id = get_or_create_client_id(user_id, payload.email)
         print(f"✅ Client ID obtenido o creado: {client_id}")
 
+        # 3. Verificar o asignar public_client_id
+        print("🔍 Consultando public_client_id...")
         client_response = supabase.table("clients").select("public_client_id").eq("id", client_id).maybe_single().execute()
         public_client_id = client_response.data.get("public_client_id") if client_response and client_response.data else None
 
@@ -57,8 +61,11 @@ def initialize_user(payload: InitUserPayload):
                 raise Exception("❌ No se pudo guardar el public_client_id en la base de datos.")
             print(f"🆕 Public client ID generado y guardado: {public_client_id}")
 
+        # 4. Verificar o crear configuración inicial del cliente + asignar plan 'free'
+        print("🧩 Verificando configuración inicial en client_settings...")
         settings_res = supabase.table("client_settings").select("client_id, plan_id").eq("client_id", client_id).maybe_single().execute()
         if not settings_res or not settings_res.data:
+            print("🔧 No existe configuración previa. Creando...")
             supabase.table("client_settings").insert({
                 "client_id": client_id,
                 "assistant_name": "Evolvian",
@@ -70,12 +77,16 @@ def initialize_user(payload: InitUserPayload):
             print(f"🛠 Configuración creada para client_id: {client_id} con plan 'free'")
         else:
             current_plan = settings_res.data.get("plan_id")
+            print(f"📦 Configuración ya existente. plan_id: {current_plan}")
             if not current_plan:
+                print(f"🔁 Asignando plan 'free'...")
                 supabase.table("client_settings").update({"plan_id": "free"}).eq("client_id", client_id).execute()
-                print(f"🔁 Plan 'free' asignado automáticamente a client_id: {client_id}")
 
+        # 5. Verificar o crear uso inicial
+        print("📊 Verificando uso inicial en client_usage...")
         usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).maybe_single().execute()
         if not usage_res or not usage_res.data:
+            print("🆕 No hay uso previo. Insertando valores iniciales...")
             supabase.table("client_usage").insert({
                 "client_id": client_id,
                 "messages_used": 0,
@@ -84,33 +95,29 @@ def initialize_user(payload: InitUserPayload):
             }).execute()
             print(f"📈 Uso inicial creado para client_id: {client_id}")
 
-        # 🧠 Nuevo bloque protegido para calcular is_new_user
-        is_new_user = False
-        try:
-            user_record = supabase.table("users").select("created_at, is_new_user").eq("id", payload.auth_user_id).maybe_single().execute()
-            print("🧪 Resultado user_record:", user_record)
+        # 6. Calcular si es usuario nuevo
+        print("🧠 Verificando si es usuario nuevo...")
+        user_record = supabase.table("users").select("created_at, is_new_user").eq("id", payload.auth_user_id).maybe_single().execute()
+        if not user_record or not user_record.data:
+            raise Exception("No se encontró el usuario en tabla 'users' al calcular is_new_user")
 
-            if not user_record or not user_record.data:
-                raise Exception("No se encontró el usuario en tabla 'users' al calcular is_new_user")
+        created_at_str = user_record.data.get("created_at")
+        if not created_at_str:
+            raise Exception("El campo 'created_at' está vacío o inválido")
 
-            created_at_str = user_record.data.get("created_at")
-            if not created_at_str:
-                raise Exception("El campo 'created_at' está vacío o inválido")
+        now = datetime.now(timezone.utc)
+        created_at = datetime.fromisoformat(created_at_str).astimezone(timezone.utc)
+        is_new_user = user_record.data.get("is_new_user", False)
 
-            now = datetime.now(timezone.utc)
-            created_at = datetime.fromisoformat(created_at_str).astimezone(timezone.utc)
-            is_new_user = user_record.data.get("is_new_user", False)
+        if now - created_at < timedelta(minutes=5):
+            if not is_new_user:
+                print("🔁 Marcando como nuevo usuario...")
+                supabase.table("users").update({"is_new_user": True}).eq("id", payload.auth_user_id).execute()
+                print(f"🆕 Marcado como nuevo usuario: {payload.auth_user_id}")
+            is_new_user = True
 
-            if now - created_at < timedelta(minutes=5):
-                if not is_new_user:
-                    supabase.table("users").update({"is_new_user": True}).eq("id", payload.auth_user_id).execute()
-                    print(f"🆕 Marcado como nuevo usuario: {payload.auth_user_id}")
-                is_new_user = True
-
-        except Exception as calc_err:
-            print(f"⚠️ No se pudo calcular is_new_user: {calc_err}")
-            is_new_user = False
-
+        # 7. Devolver respuesta final
+        print("✅ Proceso de inicialización completado exitosamente")
         return {
             "user_id": user_id,
             "client_id": client_id,

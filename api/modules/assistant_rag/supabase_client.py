@@ -110,9 +110,15 @@ def get_client_plan(client_id: str) -> str:
         print(f"❌ Error en get_client_plan: {e}")
         return "free"
 
+def is_valid_uuid(val: str) -> bool:
+    try:
+        uuid.UUID(str(val))
+        return True
+    except ValueError:
+        return False
+
 def track_usage(client_id: str, channel: str, type: str = "question", value: int = 1):
     try:
-        # Validación: solo permitir UUIDs reales
         if not is_valid_uuid(client_id):
             print(f"⚠️ ID inválido (no UUID): {client_id}")
             return
@@ -139,13 +145,6 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
 
     except Exception as e:
         print(f"❌ Error en track_usage: {e}")
-
-def is_valid_uuid(val: str) -> bool:
-    try:
-        uuid.UUID(str(val))
-        return True
-    except ValueError:
-        return False
 
 # -------------------------------
 # CANALES
