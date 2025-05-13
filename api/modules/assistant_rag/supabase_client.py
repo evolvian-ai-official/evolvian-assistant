@@ -119,36 +119,45 @@ def is_valid_uuid(val: str) -> bool:
 
 def track_usage(client_id: str, channel: str, type: str = "question", value: int = 1):
     try:
-        # Validación: solo permitir UUIDs reales
         if not is_valid_uuid(client_id):
             print(f"⚠️ ID inválido (no UUID): {client_id}")
             return
 
         print(f"✪ Actualizando uso para cliente {client_id}")
         usage_res = supabase.table("client_usage")\
-            .select("value")\
+            .select("id, value")\
             .eq("client_id", client_id)\
             .eq("type", type)\
             .eq("channel", channel)\
             .maybe_single()\
             .execute()
 
-        current = usage_res.data["value"] if usage_res and usage_res.data else 0
-        new_value = current + value
+        now = datetime.utcnow().isoformat()
 
-        upsert_payload = {
-            "id": str(uuid.uuid4()),  # 🧩 Añadimos el UUID requerido
-            "client_id": client_id,
-            "channel": channel,
-            "type": type,
-            "value": new_value,
-            "last_used_at": datetime.utcnow().isoformat()
-        }
+        if usage_res and usage_res.data:
+            usage_id = usage_res.data["id"]
+            current_value = usage_res.data.get("value", 0)
+            new_value = current_value + value
 
-        supabase.table("client_usage").upsert(upsert_payload, on_conflict="client_id").execute()
+            supabase.table("client_usage").update({
+                "value": new_value,
+                "last_used_at": now
+            }).eq("id", usage_id).execute()
+            print(f"🔁 Uso actualizado. Nuevo valor: {new_value}")
+        else:
+            supabase.table("client_usage").insert({
+                "id": str(uuid.uuid4()),  # ✅ Obligatorio
+                "client_id": client_id,
+                "channel": channel,
+                "type": type,
+                "value": value,
+                "last_used_at": now
+            }).execute()
+            print(f"🆕 Registro de uso creado con valor: {value}")
 
     except Exception as e:
         print(f"❌ Error en track_usage: {e}")
+
 
 
 # -------------------------------
