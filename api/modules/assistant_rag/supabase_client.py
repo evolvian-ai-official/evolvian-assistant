@@ -141,8 +141,10 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
     try:
         print(f"✪ Buscando client_id para canal {channel_type}: {value}")
 
-        if channel_type == "whatsapp":
-           value = f"whatsapp:{value.lstrip('+').replace('whatsapp:', '')}"
+     if channel_type == "whatsapp":
+    value = value.replace("whatsapp:", "").lstrip("+")
+    value = f"whatsapp_{value}"
+
 
         response = supabase.table("channels")\
             .select("client_id")\
