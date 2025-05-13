@@ -119,6 +119,7 @@ def is_valid_uuid(val: str) -> bool:
 
 def track_usage(client_id: str, channel: str, type: str = "question", value: int = 1):
     try:
+        # Validación: solo permitir UUIDs reales
         if not is_valid_uuid(client_id):
             print(f"⚠️ ID inválido (no UUID): {client_id}")
             return
@@ -135,16 +136,20 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
         current = usage_res.data["value"] if usage_res and usage_res.data else 0
         new_value = current + value
 
-        supabase.table("client_usage").upsert({
+        upsert_payload = {
+            "id": str(uuid.uuid4()),  # 🧩 Añadimos el UUID requerido
             "client_id": client_id,
             "channel": channel,
             "type": type,
             "value": new_value,
             "last_used_at": datetime.utcnow().isoformat()
-        }, on_conflict="client_id").execute()
+        }
+
+        supabase.table("client_usage").upsert(upsert_payload, on_conflict="client_id").execute()
 
     except Exception as e:
         print(f"❌ Error en track_usage: {e}")
+
 
 # -------------------------------
 # CANALES
