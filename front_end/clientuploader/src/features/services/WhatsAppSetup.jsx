@@ -263,3 +263,7 @@ const linkButtonStyle = {
   textDecoration: "none",
   marginRight: "1rem",
 };
+// 🔄 Trigger build con cambio menor
+// ⚡ Trigger build
+// 🔁 Forzar redeploy frontend
+// 🔁 Forzar build desde monorepo
