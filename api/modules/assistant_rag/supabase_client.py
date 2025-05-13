@@ -143,7 +143,7 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
         response = supabase.table("channels")\
             .select("client_id")\
             .eq("type", channel_type)\
-            .eq("value", value)\
+            .eq("value", str(value))\
             .maybe_single()\
             .execute()
 
