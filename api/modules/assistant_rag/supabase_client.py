@@ -1,5 +1,3 @@
-# src/modules/assistant_rag/supabase_client.py
-
 from api.config.config import supabase
 import uuid
 from datetime import datetime
@@ -216,10 +214,11 @@ def list_documents_with_signed_urls(client_id: str, bucket_name: str = "evolvian
         print(f"❌ Error en list_documents_with_signed_urls: {e}")
         return []
 
+# -------------------------------
+# WHATSAPP (Meta Cloud API)
+# -------------------------------
 
-
-
-        def get_whatsapp_credentials(client_id: str) -> dict:
+def get_whatsapp_credentials(client_id: str) -> dict:
     try:
         response = supabase.table("channels")\
             .select("wa_phone_id, wa_token")\
@@ -239,4 +238,3 @@ def list_documents_with_signed_urls(client_id: str, bucket_name: str = "evolvian
     except Exception as e:
         print(f"❌ Error en get_whatsapp_credentials: {e}")
         raise
-
