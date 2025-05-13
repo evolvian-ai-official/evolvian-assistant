@@ -142,7 +142,7 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
         print(f"✪ Buscando client_id para canal {channel_type}: {value}")
 
         if channel_type == "whatsapp":
-            value = f"whatsapp_{value.lstrip('+').replace('whatsapp:', '')}"
+           value = f"whatsapp:{value.lstrip('+').replace('whatsapp:', '')}"
 
         response = supabase.table("channels")\
             .select("client_id")\
@@ -229,16 +229,19 @@ def list_documents_with_signed_urls(client_id: str, bucket_name: str = "evolvian
 
 def get_whatsapp_credentials(client_id: str) -> dict:
     try:
+        print(f"🔐 Buscando credenciales WhatsApp para client_id={client_id}")
+
         response = supabase.table("channels")\
             .select("wa_phone_id, wa_token")\
-            .eq("client_id", client_id)\
-            .eq("type", "whatsapp")\
+            .filter("client_id", "eq", client_id)\
+            .filter("type", "eq", "whatsapp")\
             .maybe_single()\
             .execute()
 
-        if not response.data:
+        if not response or not response.data:
             raise Exception("❌ No se encontraron credenciales de WhatsApp para este cliente.")
 
+        print("✅ Credenciales WhatsApp encontradas.")
         return {
             "wa_phone_id": response.data["wa_phone_id"],
             "wa_token": response.data["wa_token"]
@@ -247,3 +250,4 @@ def get_whatsapp_credentials(client_id: str) -> dict:
     except Exception as e:
         print(f"❌ Error en get_whatsapp_credentials: {e}")
         raise
+
