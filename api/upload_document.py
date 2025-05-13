@@ -10,6 +10,7 @@ import re
 import unicodedata
 from api.config.config import supabase
 from api.modules.document_processor import process_file
+from api.modules.assistant_rag.supabase_client import track_usage  # ✅ nuevo
 
 router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
@@ -97,6 +98,9 @@ async def upload_document(
         logging.info("🧠 Procesando documento...")
         chunks = process_file(file_url=signed_url, client_id=client_id)
         logging.info(f"✅ Documento procesado correctamente para {client_id}: {filename}")
+
+        # ✅ Registrar en client_usage
+        track_usage(client_id=client_id, channel="chat", type="document", value=1)
 
         return {
             "message": "Documento subido y procesado correctamente",

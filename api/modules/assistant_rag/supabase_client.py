@@ -108,12 +108,13 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
         new_value = current + value
 
         supabase.table("client_usage").upsert({
-            "client_id": client_id,
-            "channel": channel,
-            "type": type,
-            "value": new_value,
-            "last_used_at": datetime.utcnow().isoformat()
-        }, on_conflict="client_id").execute()
+    "client_id": client_id,
+    "channel": channel,
+    "type": type,
+    "value": new_value,
+    "last_used_at": datetime.utcnow().isoformat()
+}, on_conflict=["client_id", "channel", "type"]).execute()
+
     except Exception as e:
         print(f"❌ Error en track_usage: {e}")
 
