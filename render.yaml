@@ -6,6 +6,9 @@ services:
     staticPublishPath: front_end/clientuploader/dist
     routes:
       - type: rewrite
+        source: /chat-widget.html
+        destination: /chat-widget.html
+      - type: rewrite
         source: /*
         destination: /index.html
 
