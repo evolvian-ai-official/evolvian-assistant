@@ -8,7 +8,7 @@ router = APIRouter()
 class WhatsAppLinkPayload(BaseModel):
     auth_user_id: str
     email: str
-    phone: str  # sin whatsapp: al inicio
+    phone: str  # Puede venir como 'whatsapp:+...' o solo el número
     provider: str = "meta"
     wa_phone_id: str | None = None
     wa_token: str | None = None
@@ -44,12 +44,12 @@ def link_whatsapp(payload: WhatsAppLinkPayload):
         client_id = client_res.data["id"]
         print(f"✅ Cliente asociado: {client_id}")
 
-        # 3. Formatear número en formato estándar: whatsapp:+5215525277660
-        sanitized_number = payload.phone.lstrip('+').replace('whatsapp:', '')
-        full_value = f"whatsapp:+{sanitized_number}"
+        # 3. Sanitizar número y usar formato oficial
+        number = payload.phone.replace("whatsapp:", "").lstrip("+")
+        full_value = f"whatsapp:+{number}"
         print(f"📞 Formato final del número: {full_value}")
 
-        # 4. Buscar si ya existe ese canal
+        # 4. Buscar canal existente
         existing = supabase.table("channels")\
             .select("id, client_id")\
             .eq("type", "whatsapp")\
@@ -66,7 +66,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload):
                     detail="Este número de WhatsApp ya está vinculado a otro cliente"
                 )
 
-            print("🔁 Canal existente para este cliente. Actualizando...")
+            print("🔁 Canal existente. Actualizando credenciales...")
             supabase.table("channels")\
                 .update({
                     "provider": payload.provider,

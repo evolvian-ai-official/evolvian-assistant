@@ -121,14 +121,19 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
 # CANALES
 # -------------------------------
 
-def get_client_id_by_channel(channel_type: str, value: str) -> str:
+def get_client_id_by_channel(channel_type: str, value: str) -> str | None:
     try:
         print(f"✪ Buscando client_id para canal {channel_type}: {value}")
 
-        response = supabase.table("channels").select("client_id")\
-            .eq("type", channel_type).eq("value", value).maybe_single().execute()
+        # ✅ No modificamos el valor, se espera que venga en formato: whatsapp:+15551845822
+        response = supabase.table("channels")\
+            .select("client_id")\
+            .eq("type", channel_type)\
+            .eq("value", value)\
+            .maybe_single()\
+            .execute()
 
-        if response and hasattr(response, "data") and response.data:
+        if response and response.data:
             return response.data["client_id"]
         else:
             print("⚠️ No se encontró ningún canal para ese número")
@@ -137,6 +142,8 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
     except Exception as e:
         print(f"❌ Error en get_client_id_by_channel: {e}")
         return None
+
+
 
 def link_channel_to_client(client_id: str, channel_type: str, value: str):
     try:
