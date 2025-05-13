@@ -1,5 +1,3 @@
-# src/api/initialize_user.py
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
@@ -21,6 +19,7 @@ class InitUserPayload(BaseModel):
 def generate_unique_public_client_id(length=12):
     chars = string.ascii_lowercase + string.digits
     max_attempts = 10
+
     for attempt in range(max_attempts):
         candidate = ''.join(random.choice(chars) for _ in range(length))
         existing = supabase.table("clients").select("id").eq("public_client_id", candidate).maybe_single().execute()
@@ -62,11 +61,17 @@ def initialize_user(payload: InitUserPayload):
 
         # 4. Verificar o crear configuración inicial del cliente + asignar plan 'free'
         print(f"🔎 Verificando configuración del cliente {client_id}")
-        settings_res = supabase.table("client_settings").select("client_id, plan_id").eq("client_id", client_id).maybe_single().execute()
+        settings_res = supabase.table("client_settings")\
+            .select("client_id, plan_id")\
+            .eq("client_id", client_id)\
+            .maybe_single()\
+            .execute()
+
         print("📤 Resultado crudo de client_settings:", settings_res)
 
         if not settings_res or not hasattr(settings_res, "data"):
-            raise Exception("❌ Supabase no devolvió data para client_settings")
+            print(f"❌ Supabase no devolvió data para client_settings (raw response: {settings_res})")
+            raise Exception("client_settings_select_failed")
 
         if not settings_res.data:
             print(f"⚠️ client_settings vacío. Creando nuevo registro...")
@@ -80,11 +85,14 @@ def initialize_user(payload: InitUserPayload):
             }).execute()
             print(f"🛠 Configuración creada para client_id: {client_id} con plan 'free'")
         else:
-            current_plan = settings_res.data.get("plan_id")
-            print(f"✅ Configuración existente encontrada: plan={current_plan}")
-            if not current_plan:
-                supabase.table("client_settings").update({"plan_id": "free"}).eq("client_id", client_id).execute()
-                print(f"🔁 Plan 'free' asignado automáticamente a client_id: {client_id}")
+            if isinstance(settings_res.data, dict):
+                current_plan = settings_res.data.get("plan_id")
+                print(f"✅ Configuración existente encontrada: plan={current_plan}")
+                if not current_plan:
+                    supabase.table("client_settings").update({"plan_id": "free"}).eq("client_id", client_id).execute()
+                    print(f"🔁 Plan 'free' asignado automáticamente a client_id: {client_id}")
+            else:
+                raise Exception(f"⚠️ client_settings devolvió un tipo inesperado: {type(settings_res.data)} -> {settings_res.data}")
 
         # 5. Verificar o crear uso inicial
         usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).maybe_single().execute()
