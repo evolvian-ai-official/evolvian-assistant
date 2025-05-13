@@ -46,7 +46,6 @@ def initialize_user(payload: InitUserPayload):
         print(f"✅ Client ID obtenido o creado: {client_id}")
 
         # 3. Verificar o asignar public_client_id
-        print("🔍 Consultando public_client_id...")
         client_response = supabase.table("clients").select("public_client_id").eq("id", client_id).maybe_single().execute()
         public_client_id = client_response.data.get("public_client_id") if client_response and client_response.data else None
 
@@ -62,10 +61,21 @@ def initialize_user(payload: InitUserPayload):
             print(f"🆕 Public client ID generado y guardado: {public_client_id}")
 
         # 4. Verificar o crear configuración inicial del cliente + asignar plan 'free'
-        print("🧩 Verificando configuración inicial en client_settings...")
-        settings_res = supabase.table("client_settings").select("client_id, plan_id").eq("client_id", client_id).maybe_single().execute()
-        if not settings_res or not settings_res.data:
-            print("🔧 No existe configuración previa. Creando...")
+        print(f"🔎 Verificando configuración del cliente {client_id}")
+        settings_res = supabase.table("client_settings")\
+            .select("client_id, plan_id")\
+            .eq("client_id", client_id)\
+            .maybe_single()\
+            .execute()
+
+        print("📤 Resultado crudo de client_settings:", settings_res)
+
+        if not settings_res or not hasattr(settings_res, "data"):
+            print(f"❌ Supabase no devolvió data para client_settings (raw response: {settings_res})")
+            raise Exception("client_settings_select_failed")
+
+        if not settings_res.data:
+            print(f"⚠️ client_settings vacío. Creando nuevo registro...")
             supabase.table("client_settings").insert({
                 "client_id": client_id,
                 "assistant_name": "Evolvian",
@@ -77,16 +87,14 @@ def initialize_user(payload: InitUserPayload):
             print(f"🛠 Configuración creada para client_id: {client_id} con plan 'free'")
         else:
             current_plan = settings_res.data.get("plan_id")
-            print(f"📦 Configuración ya existente. plan_id: {current_plan}")
+            print(f"✅ Configuración existente encontrada: plan={current_plan}")
             if not current_plan:
-                print(f"🔁 Asignando plan 'free'...")
                 supabase.table("client_settings").update({"plan_id": "free"}).eq("client_id", client_id).execute()
+                print(f"🔁 Plan 'free' asignado automáticamente a client_id: {client_id}")
 
         # 5. Verificar o crear uso inicial
-        print("📊 Verificando uso inicial en client_usage...")
         usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).maybe_single().execute()
         if not usage_res or not usage_res.data:
-            print("🆕 No hay uso previo. Insertando valores iniciales...")
             supabase.table("client_usage").insert({
                 "client_id": client_id,
                 "messages_used": 0,
@@ -96,7 +104,6 @@ def initialize_user(payload: InitUserPayload):
             print(f"📈 Uso inicial creado para client_id: {client_id}")
 
         # 6. Calcular si es usuario nuevo
-        print("🧠 Verificando si es usuario nuevo...")
         user_record = supabase.table("users").select("created_at, is_new_user").eq("id", payload.auth_user_id).maybe_single().execute()
         if not user_record or not user_record.data:
             raise Exception("No se encontró el usuario en tabla 'users' al calcular is_new_user")
@@ -111,13 +118,11 @@ def initialize_user(payload: InitUserPayload):
 
         if now - created_at < timedelta(minutes=5):
             if not is_new_user:
-                print("🔁 Marcando como nuevo usuario...")
                 supabase.table("users").update({"is_new_user": True}).eq("id", payload.auth_user_id).execute()
                 print(f"🆕 Marcado como nuevo usuario: {payload.auth_user_id}")
             is_new_user = True
 
         # 7. Devolver respuesta final
-        print("✅ Proceso de inicialización completado exitosamente")
         return {
             "user_id": user_id,
             "client_id": client_id,
