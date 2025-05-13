@@ -16,6 +16,7 @@ VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolviansecret2025")
 # ✅ Verificación del webhook de Meta
 @router.get("/webhooks/meta")
 def verify_webhook(request: Request):
+     print("🧪 Entró a verify_webhook")
     params = request.query_params
     if params.get("hub.mode") == "subscribe" and params.get("hub.verify_token") == VERIFY_TOKEN:
         print("✅ Webhook Meta verificado correctamente")
