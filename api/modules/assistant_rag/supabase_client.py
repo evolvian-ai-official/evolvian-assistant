@@ -41,11 +41,7 @@ def get_or_create_user(auth_user_id: str, email: str) -> str:
 def get_or_create_client_id(user_id: str, email: str) -> str:
     try:
         print(f"🔍 Buscando client_id para user_id: {user_id}")
-        response = supabase.table("clients")\
-            .select("id")\
-            .eq("user_id", user_id)\
-            .maybe_single()\
-            .execute()
+        response = supabase.table("clients").select("id").eq("user_id", user_id).maybe_single().execute()
 
         if response and response.data:
             print(f"✅ Cliente encontrado: {response.data['id']}")
@@ -94,16 +90,10 @@ def save_history(client_id: str, question: str, answer: str, channel: str = "cha
 def get_client_plan(client_id: str) -> str:
     try:
         print(f"✪ Buscando plan para cliente {client_id}")
-        response = supabase.table("client_settings")\
-            .select("plan")\
-            .eq("client_id", client_id)\
-            .maybe_single()\
-            .execute()
-
+        response = supabase.table("client_settings").select("plan").eq("client_id", client_id).maybe_single().execute()
         if response.data:
             return response.data["plan"]
         return "free"
-
     except Exception as e:
         print(f"❌ Error en get_client_plan: {e}")
         return "free"
@@ -111,13 +101,8 @@ def get_client_plan(client_id: str) -> str:
 def track_usage(client_id: str, channel: str, type: str = "question", value: int = 1):
     try:
         print(f"✪ Actualizando uso para cliente {client_id}")
-        usage_res = supabase.table("client_usage")\
-            .select("value")\
-            .eq("client_id", client_id)\
-            .eq("type", type)\
-            .eq("channel", channel)\
-            .maybe_single()\
-            .execute()
+        usage_res = supabase.table("client_usage").select("value")\
+            .eq("client_id", client_id).eq("type", type).eq("channel", channel).maybe_single().execute()
 
         current = usage_res.data["value"] if usage_res.data else 0
         new_value = current + value
@@ -129,7 +114,6 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
             "value": new_value,
             "last_used_at": datetime.utcnow().isoformat()
         }, on_conflict="client_id").execute()
-
     except Exception as e:
         print(f"❌ Error en track_usage: {e}")
 
@@ -141,17 +125,8 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
     try:
         print(f"✪ Buscando client_id para canal {channel_type}: {value}")
 
-        if channel_type == "whatsapp":
-            # Limpia cualquier prefijo extraño y lo normaliza
-            value = value.replace("whatsapp:", "").lstrip("+")
-            value = f"whatsapp_{value}"
-
-        response = supabase.table("channels")\
-            .select("client_id")\
-            .eq("type", channel_type)\
-            .eq("value", value)\
-            .maybe_single()\
-            .execute()
+        response = supabase.table("channels").select("client_id")\
+            .eq("type", channel_type).eq("value", value).maybe_single().execute()
 
         if response and hasattr(response, "data") and response.data:
             return response.data["client_id"]
@@ -163,18 +138,11 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
         print(f"❌ Error en get_client_id_by_channel: {e}")
         return None
 
-
-
-
 def link_channel_to_client(client_id: str, channel_type: str, value: str):
     try:
         print(f"✪ Vinculando canal {channel_type}: {value} para cliente {client_id}")
-        response = supabase.table("channels")\
-            .select("id")\
-            .eq("type", channel_type)\
-            .eq("value", value)\
-            .maybe_single()\
-            .execute()
+        response = supabase.table("channels").select("id")\
+            .eq("type", channel_type).eq("value", value).maybe_single().execute()
 
         if response.data:
             return response.data["id"]
@@ -187,7 +155,6 @@ def link_channel_to_client(client_id: str, channel_type: str, value: str):
         }).execute()
 
         return insert.data[0]["id"]
-
     except Exception as e:
         print(f"❌ Error en link_channel_to_client: {e}")
         return None
@@ -232,7 +199,6 @@ def list_documents_with_signed_urls(client_id: str, bucket_name: str = "evolvian
 def get_whatsapp_credentials(client_id: str) -> dict:
     try:
         print(f"🔐 Buscando credenciales WhatsApp para client_id={client_id}")
-
         response = supabase.table("channels")\
             .select("wa_phone_id, wa_token")\
             .filter("client_id", "eq", client_id)\
@@ -252,4 +218,3 @@ def get_whatsapp_credentials(client_id: str) -> dict:
     except Exception as e:
         print(f"❌ Error en get_whatsapp_credentials: {e}")
         raise
-
