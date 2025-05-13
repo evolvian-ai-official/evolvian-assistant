@@ -7,7 +7,7 @@ from api.modules.assistant_rag.supabase_client import (
     save_history
 )
 from api.modules.assistant_rag.rag_pipeline import ask_question
-from api.modules.whatsapp.send_wa_message import send_whatsapp_message  # ✅ actualizado
+from api.modules.whatsapp.send_wa_message import send_whatsapp_message
 
 router = APIRouter()
 
@@ -40,12 +40,20 @@ async def receive_whatsapp_message(request: Request):
             return JSONResponse(content={"status": "no_message"}, status_code=200)
 
         msg = messages[0]
-        phone = msg["from"]
+        user_phone = msg["from"]
         text = msg["text"]["body"]
 
-        print(f"📞 Mensaje de {phone}: {text}")
+        print(f"📞 Mensaje de {user_phone}: {text}")
 
-        client_id = get_client_id_by_channel("whatsapp", phone)
+        # 🟢 En lugar de buscar por el número del usuario, usamos el número del negocio
+        business_phone = value.get("metadata", {}).get("display_phone_number")
+        if not business_phone:
+            print("❌ No se pudo extraer el número del negocio")
+            return JSONResponse(status_code=400, content={"error": "Número del negocio no encontrado"})
+
+        formatted_value = f"whatsapp_{business_phone.lstrip('+')}"
+        client_id = get_client_id_by_channel("whatsapp", formatted_value)
+
         if not client_id:
             print("❌ client_id no encontrado para este número de WhatsApp")
             return JSONResponse(status_code=404, content={"error": "Cliente no encontrado"})
@@ -58,7 +66,7 @@ async def receive_whatsapp_message(request: Request):
 
         # Enviar respuesta usando las credenciales del cliente
         send_whatsapp_message(
-            to_number=phone,
+            to_number=user_phone,
             message=response,
             token=credentials["wa_token"],
             phone_id=credentials["wa_phone_id"]
