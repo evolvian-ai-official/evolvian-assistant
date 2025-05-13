@@ -51,7 +51,7 @@ async def receive_whatsapp_message(request: Request):
             print("❌ No se pudo extraer el número del negocio")
             return JSONResponse(status_code=400, content={"error": "Número del negocio no encontrado"})
 
-        formatted_value = f"whatsapp_{business_phone.lstrip('+')}"
+        formatted_value = f"whatsapp:+{business_phone.lstrip('+')}"
         client_id = get_client_id_by_channel("whatsapp", formatted_value)
 
         if not client_id:
