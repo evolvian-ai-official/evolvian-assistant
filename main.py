@@ -88,12 +88,14 @@ app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
 app.include_router(embed_router)
-app.include_router(meta_webhook_router)  # ✅ NUEVO: Webhook Meta
+app.include_router(meta_webhook_router)  # ✅ Webhook Meta
 
+# Healthcheck
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
 
+# Diagnóstico rutas activas
 @app.get("/test_chat_route")
 def test_chat_route():
     registered_routes = [route.path for route in app.routes]
@@ -101,3 +103,8 @@ def test_chat_route():
         "chat_router_loaded": "/chat" in registered_routes,
         "available_routes": registered_routes
     }
+
+# 🔍 Diagnóstico general de rutas
+@app.get("/test_routes")
+def test_routes():
+    return [route.path for route in app.routes]
