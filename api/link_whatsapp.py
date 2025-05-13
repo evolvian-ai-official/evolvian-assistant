@@ -44,9 +44,10 @@ def link_whatsapp(payload: WhatsAppLinkPayload):
         client_id = client_res.data["id"]
         print(f"✅ Cliente asociado: {client_id}")
 
-        # 3. Formatear número de forma segura (evita ':' y '+')
-        full_value = f"whatsapp_{payload.phone.lstrip('+')}"
-        print(f"📞 Formato seguro del número: {full_value}")
+        # 3. Formatear número en formato estándar: whatsapp:+5215525277660
+        sanitized_number = payload.phone.lstrip('+').replace('whatsapp:', '')
+        full_value = f"whatsapp:+{sanitized_number}"
+        print(f"📞 Formato final del número: {full_value}")
 
         # 4. Buscar si ya existe ese canal
         existing = supabase.table("channels")\
