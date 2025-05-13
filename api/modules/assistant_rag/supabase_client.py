@@ -11,11 +11,11 @@ def get_or_create_user(auth_user_id: str, email: str) -> str:
         print(f"🔍 Buscando usuario por ID: {auth_user_id}")
         response = supabase.table("users").select("id").eq("id", auth_user_id).maybe_single().execute()
 
-        if not response or not response.data:
+        if not response or not hasattr(response, "data") or not response.data:
             print(f"🔍 No se encontró por ID. Buscando usuario por email: {email}")
             response = supabase.table("users").select("id").eq("email", email).maybe_single().execute()
 
-            if not response or not response.data:
+            if not response or not hasattr(response, "data") or not response.data:
                 print(f"🆕 Creando nuevo usuario: {auth_user_id}")
                 insert = supabase.table("users").insert({
                     "id": auth_user_id,
@@ -24,7 +24,7 @@ def get_or_create_user(auth_user_id: str, email: str) -> str:
                     "is_new_user": False
                 }).execute()
 
-                if not insert or not insert.data:
+                if not insert or not hasattr(insert, "data") or not insert.data:
                     raise Exception(f"❌ Error al crear usuario: {insert}")
                 return insert.data[0]["id"]
             else:
@@ -43,7 +43,7 @@ def get_or_create_client_id(user_id: str, email: str) -> str:
         print(f"🔍 Buscando client_id para user_id: {user_id}")
         response = supabase.table("clients").select("id").eq("user_id", user_id).maybe_single().execute()
 
-        if response and response.data:
+        if response and hasattr(response, "data") and response.data:
             print(f"✅ Cliente encontrado: {response.data['id']}")
             return response.data["id"]
 
@@ -57,7 +57,7 @@ def get_or_create_client_id(user_id: str, email: str) -> str:
             "name": name
         }).execute()
 
-        if not insert or not insert.data:
+        if not insert or not hasattr(insert, "data") or not insert.data:
             raise Exception("❌ Error al crear cliente")
 
         print(f"✅ Cliente creado con ID: {insert.data[0]['id']}")
@@ -91,7 +91,7 @@ def get_client_plan(client_id: str) -> str:
     try:
         print(f"✪ Buscando plan para cliente {client_id}")
         response = supabase.table("client_settings").select("plan").eq("client_id", client_id).maybe_single().execute()
-        if response.data:
+        if response and hasattr(response, "data") and response.data:
             return response.data["plan"]
         return "free"
     except Exception as e:
@@ -104,7 +104,7 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
         usage_res = supabase.table("client_usage").select("value")\
             .eq("client_id", client_id).eq("type", type).eq("channel", channel).maybe_single().execute()
 
-        current = usage_res.data["value"] if usage_res.data else 0
+        current = usage_res.data["value"] if usage_res and hasattr(usage_res, "data") and usage_res.data else 0
         new_value = current + value
 
         supabase.table("client_usage").upsert({
@@ -124,8 +124,6 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
 def get_client_id_by_channel(channel_type: str, value: str) -> str:
     try:
         print(f"✪ Buscando client_id para canal {channel_type}: {value}")
-
-        # 👉 Ya no modificar nada del valor, lo esperamos como viene: whatsapp:+...
         response = supabase.table("channels")\
             .select("client_id")\
             .eq("type", channel_type)\
@@ -143,14 +141,13 @@ def get_client_id_by_channel(channel_type: str, value: str) -> str:
         print(f"❌ Error en get_client_id_by_channel: {e}")
         return None
 
-
 def link_channel_to_client(client_id: str, channel_type: str, value: str):
     try:
         print(f"✪ Vinculando canal {channel_type}: {value} para cliente {client_id}")
         response = supabase.table("channels").select("id")\
             .eq("type", channel_type).eq("value", value).maybe_single().execute()
 
-        if response.data:
+        if response and hasattr(response, "data") and response.data:
             return response.data["id"]
 
         insert = supabase.table("channels").insert({
@@ -160,7 +157,7 @@ def link_channel_to_client(client_id: str, channel_type: str, value: str):
             "client_id": client_id
         }).execute()
 
-        return insert.data[0]["id"]
+        return insert.data[0]["id"] if insert and hasattr(insert, "data") else None
     except Exception as e:
         print(f"❌ Error en link_channel_to_client: {e}")
         return None
@@ -199,7 +196,7 @@ def list_documents_with_signed_urls(client_id: str, bucket_name: str = "evolvian
         return []
 
 # -------------------------------
-# WHATSAPP (Meta Cloud API)aaaaa
+# WHATSAPP
 # -------------------------------
 
 def get_whatsapp_credentials(client_id: str) -> dict:
@@ -207,12 +204,12 @@ def get_whatsapp_credentials(client_id: str) -> dict:
         print(f"🔐 Buscando credenciales WhatsApp para client_id={client_id}")
         response = supabase.table("channels")\
             .select("wa_phone_id, wa_token")\
-            .filter("client_id", "eq", client_id)\
-            .filter("type", "eq", "whatsapp")\
+            .eq("client_id", client_id)\
+            .eq("type", "whatsapp")\
             .maybe_single()\
             .execute()
 
-        if not response or not response.data:
+        if not response or not hasattr(response, "data") or not response.data:
             raise Exception("❌ No se encontraron credenciales de WhatsApp para este cliente.")
 
         print("✅ Credenciales WhatsApp encontradas.")

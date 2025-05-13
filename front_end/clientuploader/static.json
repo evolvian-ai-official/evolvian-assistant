@@ -7,6 +7,18 @@
         "Content-Type": "application/javascript",
         "Cross-Origin-Resource-Policy": "cross-origin"
       }
+    },
+    {
+      "src": "^/chat-widget.html$",
+      "dest": "/chat-widget.html"
+    },
+    {
+      "src": "^/embed-app$",
+      "dest": "/chat-widget.html"
+    },
+    {
+      "src": ".*",
+      "dest": "/index.html"
     }
   ]
 }
