@@ -1,5 +1,3 @@
-# api/link_whatsapp.py
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from api.modules.assistant_rag.supabase_client import supabase
@@ -10,7 +8,10 @@ router = APIRouter()
 class WhatsAppLinkPayload(BaseModel):
     auth_user_id: str
     email: str
-    phone: str  # sin "whatsapp:" al principio
+    phone: str  # sin whatsapp: al inicio
+    provider: str = "meta"
+    wa_phone_id: str | None = None
+    wa_token: str | None = None
 
 @router.post("/link_whatsapp")
 def link_whatsapp(payload: WhatsAppLinkPayload):
@@ -39,32 +40,37 @@ def link_whatsapp(payload: WhatsAppLinkPayload):
 
         client_id = client_res.data["id"]
 
-        # 3. Formatear valor del canal
+        # 3. Formatear número
         full_value = f"whatsapp:+{payload.phone.lstrip('+')}"
 
-        # 4. Buscar si ya existe ese canal
+        # 4. Datos del canal a guardar o actualizar
+        data = {
+            "client_id": client_id,
+            "type": "whatsapp",
+            "value": full_value,
+            "provider": payload.provider,
+            "wa_phone_id": payload.wa_phone_id,
+            "wa_token": payload.wa_token,
+        }
+
+        # 5. Buscar si ya existe canal
         existing = supabase.table("channels")\
             .select("id")\
             .eq("type", "whatsapp")\
             .eq("value", full_value)\
+            .maybe_single()\
             .execute()
 
-        if existing.data and len(existing.data) > 0:
-            # Actualizar si ya existe
-            update_res = supabase.table("channels")\
-                .update({
-                    "client_id": client_id
-                })\
-                .eq("id", existing.data[0]["id"])\
+        if existing.data:
+            # Si ya existe, actualizar
+            supabase.table("channels")\
+                .update(data)\
+                .eq("id", existing.data["id"])\
                 .execute()
         else:
-            # Insertar si no existe
-            insert_res = supabase.table("channels").insert({
-                "id": str(uuid.uuid4()),
-                "type": "whatsapp",
-                "value": full_value,
-                "client_id": client_id
-            }).execute()
+            # Si no existe, insertar
+            data["id"] = str(uuid.uuid4())
+            supabase.table("channels").insert(data).execute()
 
         return {
             "message": "Número vinculado correctamente al cliente",

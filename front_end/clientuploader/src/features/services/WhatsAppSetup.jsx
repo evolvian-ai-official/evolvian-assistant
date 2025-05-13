@@ -6,6 +6,9 @@ import { useLanguage } from "../../contexts/LanguageContext"; // ✅ Importar tr
 
 export default function WhatsAppSetup() {
   const [phone, setPhone] = useState("");
+  const [provider, setProvider] = useState("meta");
+  const [waPhoneId, setWaPhoneId] = useState("");
+  const [waToken, setWaToken] = useState("");
   const [step, setStep] = useState(1);
   const [session, setSession] = useState(null);
   const [status, setStatus] = useState({ message: "", type: "" });
@@ -29,6 +32,9 @@ export default function WhatsAppSetup() {
       auth_user_id: session.user.id,
       email: session.user.email,
       phone,
+      provider,
+      wa_phone_id: provider === "meta" ? waPhoneId : null,
+      wa_token: provider === "meta" ? waToken : null,
     };
 
     try {
@@ -50,9 +56,7 @@ export default function WhatsAppSetup() {
   return (
     <div style={pageStyle}>
       <div style={cardStyle}>
-        <h2 style={titleStyle}>
-          💬 {t("setup_whatsapp")}
-        </h2>
+        <h2 style={titleStyle}>💬 {t("setup_whatsapp")}</h2>
 
         {step === 1 && (
           <>
@@ -63,9 +67,7 @@ export default function WhatsAppSetup() {
             <p style={paragraphStyle}>
               <strong>{t("step2")}:</strong> {t("send_message_instruction")}
             </p>
-            <code style={codeBoxStyle}>
-              join come-science
-            </code>
+            <code style={codeBoxStyle}>join come-science</code>
             <br />
             <button onClick={handleNext} style={btnStyle}>✅ {t("already_done")}</button>
           </>
@@ -76,6 +78,12 @@ export default function WhatsAppSetup() {
             <p style={paragraphStyle}>
               <strong>{t("step3")}:</strong> {t("enter_whatsapp_number")}
             </p>
+
+            <select value={provider} onChange={(e) => setProvider(e.target.value)} style={inputStyle}>
+              <option value="meta">Meta Cloud API</option>
+              <option value="twilio">Twilio</option>
+            </select>
+
             <input
               type="text"
               placeholder="+52XXXXXXXXXX"
@@ -83,10 +91,30 @@ export default function WhatsAppSetup() {
               onChange={(e) => setPhone(e.target.value)}
               style={inputStyle}
             />
+
+            {provider === "meta" && (
+              <>
+                <input
+                  type="text"
+                  placeholder="Meta phone_number_id"
+                  value={waPhoneId}
+                  onChange={(e) => setWaPhoneId(e.target.value)}
+                  style={inputStyle}
+                />
+                <input
+                  type="text"
+                  placeholder="Meta access_token"
+                  value={waToken}
+                  onChange={(e) => setWaToken(e.target.value)}
+                  style={inputStyle}
+                />
+              </>
+            )}
+
             <div style={{ display: "flex", gap: "1rem" }}>
               <button
                 onClick={handleSubmit}
-                disabled={!phone}
+                disabled={!phone || (provider === "meta" && (!waPhoneId || !waToken))}
                 style={{
                   ...btnStyle,
                   opacity: phone ? 1 : 0.5,
@@ -113,10 +141,7 @@ export default function WhatsAppSetup() {
           <>
             <p style={paragraphStyle}>🎉 {t("number_linked_success")}</p>
             <p style={linkedNumberStyle}>{phone}</p>
-            <p style={noteStyle}>
-              {t("start_chatting_instruction")}
-            </p>
-
+            <p style={noteStyle}>{t("start_chatting_instruction")}</p>
             <a
               href={`https://wa.me/${phone.replace("+", "")}?text=Hola,%20quiero%20probar%20mi%20asistente%20Evolvian`}
               target="_blank"
@@ -125,7 +150,6 @@ export default function WhatsAppSetup() {
             >
               🔁 {t("test_assistant")}
             </a>
-
             <button
               onClick={() => setStep(2)}
               style={{ ...backBtnStyle, marginTop: "1.5rem" }}
