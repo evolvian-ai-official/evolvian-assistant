@@ -40,18 +40,26 @@ def dashboard_summary(client_id: str = Query(...)):
             "plan_features": [f["feature"] for f in plan.get("plan_features", [])]
         }
 
-        # 2. Uso actual
-        usage_res = supabase.table("client_usage")\
-            .select("messages_used, documents_uploaded, last_used_at")\
+        # 2. Uso actual (adaptado al modelo por tipo)
+        usage_raw = supabase.table("client_usage")\
+            .select("type, value, last_used_at")\
             .eq("client_id", client_id)\
-            .maybe_single()\
+            .eq("channel", "chat")\
             .execute()
 
-        usage = usage_res.data or {
+        usage = {
             "messages_used": 0,
             "documents_uploaded": 0,
             "last_used_at": None
         }
+
+        if usage_raw.data:
+            for row in usage_raw.data:
+                if row["type"] == "question":
+                    usage["messages_used"] = row["value"]
+                    usage["last_used_at"] = row["last_used_at"]
+                elif row["type"] == "document":
+                    usage["documents_uploaded"] = row["value"]
 
         # 3. Canales activos
         channels_res = supabase.table("channels")\
