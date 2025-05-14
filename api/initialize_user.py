@@ -1,3 +1,5 @@
+# src/api/initialize_user.py
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
@@ -36,15 +38,12 @@ def initialize_user(payload: InitUserPayload):
         print(f"🚀 Versión initialize_user.py cargada correctamente.")
         print(f"🔵 Inicializando usuario: auth_user_id={payload.auth_user_id}, email={payload.email}")
 
-        # 1. Crear o encontrar usuario
         user_id = get_or_create_user(payload.auth_user_id, payload.email)
         print(f"✅ User ID obtenido o creado: {user_id}")
 
-        # 2. Crear o encontrar cliente
         client_id = get_or_create_client_id(user_id, payload.email)
         print(f"✅ Client ID obtenido o creado: {client_id}")
 
-        # 3. Verificar o asignar public_client_id
         client_response = supabase.table("clients").select("public_client_id").eq("id", client_id).maybe_single().execute()
         public_client_id = client_response.data.get("public_client_id") if client_response and client_response.data else None
 
@@ -59,14 +58,12 @@ def initialize_user(payload: InitUserPayload):
                 raise Exception("❌ No se pudo guardar el public_client_id en la base de datos.")
             print(f"🆕 Public client ID generado y guardado: {public_client_id}")
 
-        # 4. Verificar o crear configuración inicial del cliente + asignar plan 'free'
         print(f"🔎 Verificando configuración del cliente {client_id}")
         settings_res = supabase.table("client_settings")\
             .select("client_id, plan_id")\
             .eq("client_id", client_id)\
             .maybe_single()\
             .execute()
-
         print("📤 Resultado crudo de client_settings:", settings_res)
 
         if not settings_res or not hasattr(settings_res, "data"):
@@ -85,37 +82,12 @@ def initialize_user(payload: InitUserPayload):
             }).execute()
             print(f"🛠 Configuración creada para client_id: {client_id} con plan 'free'")
         else:
-            if isinstance(settings_res.data, dict):
-                current_plan = settings_res.data.get("plan_id")
-                print(f"✅ Configuración existente encontrada: plan={current_plan}")
-                if not current_plan:
-                    supabase.table("client_settings").update({"plan_id": "free"}).eq("client_id", client_id).execute()
-                    print(f"🔁 Plan 'free' asignado automáticamente a client_id: {client_id}")
-            else:
-                raise Exception(f"⚠️ client_settings devolvió un tipo inesperado: {type(settings_res.data)} -> {settings_res.data}")
+            current_plan = settings_res.data.get("plan_id")
+            print(f"✅ Configuración existente encontrada: plan={current_plan}")
+            if not current_plan:
+                supabase.table("client_settings").update({"plan_id": "free"}).eq("client_id", client_id).execute()
+                print(f"🔁 Plan 'free' asignado automáticamente a client_id: {client_id}")
 
-        # 5. Verificar o crear uso inicial
-        usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).maybe_single().execute()
-        if not usage_res or not usage_res.data:
-            supabase.table("client_usage").insert({
-                "id": str(uuid.uuid4()),
-                "client_id": client_id,
-                "channel": "chat",
-                "type": "question",
-                "value": 0,
-                "last_used_at": datetime.utcnow().isoformat()
-            }).execute()
-            supabase.table("client_usage").insert({
-                "id": str(uuid.uuid4()),
-                "client_id": client_id,
-                "channel": "chat",
-                "type": "document",
-                "value": 0,
-                "last_used_at": datetime.utcnow().isoformat()
-            }).execute()
-            print(f"📈 Uso inicial creado para client_id: {client_id}")
-
-        # 6. Calcular si es usuario nuevo
         user_record = supabase.table("users").select("created_at, is_new_user").eq("id", payload.auth_user_id).maybe_single().execute()
         if not user_record or not user_record.data:
             raise Exception("No se encontró el usuario en tabla 'users' al calcular is_new_user")
@@ -134,7 +106,30 @@ def initialize_user(payload: InitUserPayload):
                 print(f"🆕 Marcado como nuevo usuario: {payload.auth_user_id}")
             is_new_user = True
 
-        # 7. Devolver respuesta final
+        # ✅ Bloque movido al final para evitar conflictos en flujo principal
+        try:
+            usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).maybe_single().execute()
+            if not usage_res or not usage_res.data:
+                supabase.table("client_usage").insert({
+                    "id": str(uuid.uuid4()),
+                    "client_id": client_id,
+                    "channel": "chat",
+                    "type": "question",
+                    "value": 0,
+                    "last_used_at": datetime.utcnow().isoformat()
+                }).execute()
+                supabase.table("client_usage").insert({
+                    "id": str(uuid.uuid4()),
+                    "client_id": client_id,
+                    "channel": "chat",
+                    "type": "document",
+                    "value": 0,
+                    "last_used_at": datetime.utcnow().isoformat()
+                }).execute()
+                print(f"📈 Uso inicial creado para client_id: {client_id}")
+        except Exception as e:
+            print(f"⚠️ Error temporal ignorado en client_usage: {e}")
+
         return {
             "user_id": user_id,
             "client_id": client_id,
