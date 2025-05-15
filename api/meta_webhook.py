@@ -13,7 +13,7 @@ router = APIRouter()
 
 VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolviansecret2025")
 
-# ✅ Verificación del webhook de Meta
+
 @router.get("/webhooks/meta")
 def verify_webhook(request: Request):
     print("🧪 Entró a verify_webhook")
@@ -25,7 +25,7 @@ def verify_webhook(request: Request):
     print("❌ Token inválido o modo incorrecto en la verificación")
     return PlainTextResponse(content="Verification token mismatch", status_code=403)
 
-# ✅ Recepción y procesamiento de mensajes
+
 @router.post("/webhooks/meta")
 async def receive_whatsapp_message(request: Request):
     try:
@@ -44,24 +44,20 @@ async def receive_whatsapp_message(request: Request):
         msg = messages[0]
         user_phone = msg["from"]
         text = msg["text"]["body"]
-
         print(f"📞 Mensaje de {user_phone}: {text}")
 
-        # 🟢 Usamos el número del negocio, no del usuario
         business_phone = value.get("metadata", {}).get("display_phone_number")
         if not business_phone:
             print("❌ No se pudo extraer el número del negocio")
             return JSONResponse(status_code=400, content={"error": "Número del negocio no encontrado"})
 
         print(f"🔑 Número de negocio extraído: {business_phone}")
-
         formatted_value = f"whatsapp:+{business_phone.lstrip('+')}"
         print(f"🔍 Formateado el número de WhatsApp: {formatted_value}")
 
         try:
             client_id = get_client_id_by_channel("whatsapp", formatted_value)
             print(f"📦 client_id encontrado: {client_id}")
-
             if not client_id or not isinstance(client_id, str) or len(client_id) < 30:
                 raise ValueError("client_id inválido o ausente")
         except Exception as e:
@@ -71,12 +67,17 @@ async def receive_whatsapp_message(request: Request):
         credentials = get_whatsapp_credentials(client_id)
         print(f"🔑 Credenciales de WhatsApp obtenidas: {credentials}")
 
-        # ✅ Aquí está el orden corregido: pregunta primero, luego client_id
+        # ✅ Preguntar al asistente con documentos
         response = ask_question(text, client_id)
         print(f"💬 Respuesta generada por RAG: {response}")
 
+        # 🔧 Ajuste temporal para evitar error (#131030) con +521
+        if user_phone.startswith("521"):
+            user_phone = "52" + user_phone[3:]
+            print(f"📞 Ajustando número para Meta Sandbox: {user_phone}")
+
         send_whatsapp_message(
-            to_number=user_phone,
+            to_number=f"+{user_phone}",
             message=response,
             token=credentials["wa_token"],
             phone_id=credentials["wa_phone_id"]
