@@ -47,7 +47,7 @@ async def receive_whatsapp_message(request: Request):
 
         print(f"📞 Mensaje de {user_phone}: {text}")
 
-        # 🟢 En lugar de buscar por el número del usuario, usamos el número del negocio
+        # 🟢 Usamos el número del negocio, no del usuario
         business_phone = value.get("metadata", {}).get("display_phone_number")
         if not business_phone:
             print("❌ No se pudo extraer el número del negocio")
@@ -59,26 +59,22 @@ async def receive_whatsapp_message(request: Request):
         print(f"🔍 Formateado el número de WhatsApp: {formatted_value}")
 
         try:
-            # Obtén el client_id asociado al número de WhatsApp
             client_id = get_client_id_by_channel("whatsapp", formatted_value)
             print(f"📦 client_id encontrado: {client_id}")
 
-            # Validación de client_id
             if not client_id or not isinstance(client_id, str) or len(client_id) < 30:
                 raise ValueError("client_id inválido o ausente")
         except Exception as e:
             print(f"❌ Error buscando client_id: {e}")
             return JSONResponse(status_code=404, content={"error": "Cliente no encontrado"})
 
-        # Obtener credenciales del cliente desde Supabase
         credentials = get_whatsapp_credentials(client_id)
         print(f"🔑 Credenciales de WhatsApp obtenidas: {credentials}")
 
-        # Procesar mensaje con RAG
-        response = ask_question(client_id, text)
+        # ✅ Aquí está el orden corregido: pregunta primero, luego client_id
+        response = ask_question(text, client_id)
         print(f"💬 Respuesta generada por RAG: {response}")
 
-        # Enviar respuesta usando las credenciales del cliente
         send_whatsapp_message(
             to_number=user_phone,
             message=response,
@@ -87,7 +83,6 @@ async def receive_whatsapp_message(request: Request):
         )
         print(f"✅ Mensaje enviado a {user_phone} con éxito.")
 
-        # Guardar historial
         save_history(client_id, text, response, channel="whatsapp")
         print(f"📂 Historial guardado para client_id {client_id}")
 
