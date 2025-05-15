@@ -61,7 +61,6 @@ def fetch_signed_documents(client_id: str) -> List[str]:
 def ask_question(question: str, client_id: str, prompt: str = None) -> str:
     prompt = prompt or get_prompt_for_client(client_id)
 
-    # 1. Obtener documentos firmados usando función local
     signed_urls = fetch_signed_documents(client_id)
     logging.info(f"📄 Total documentos firmados: {len(signed_urls)}")
 
@@ -69,8 +68,9 @@ def ask_question(question: str, client_id: str, prompt: str = None) -> str:
         logging.warning("⚠️ No se encontraron documentos para este asistente.")
         return "No documents found for this assistant."
 
-    # 2. Descargar y procesar documentos
     all_chunks = []
+    used_docs = []  # 🔍 NUEVO: para registrar documentos utilizados
+
     for url in signed_urls:
         try:
             logging.info(f"📥 Descargando documento desde: {url}")
@@ -85,6 +85,13 @@ def ask_question(question: str, client_id: str, prompt: str = None) -> str:
                 docs = load_document(tmp_file.name)
                 chunks = chunk_documents(docs)
                 logging.info(f"✂️ Documento particionado en {len(chunks)} chunks")
+
+                # 🔍 NUEVO: marcar la fuente del chunk
+                source = url.split("/")[-1].split("?")[0]
+                for chunk in chunks:
+                    chunk.metadata["source"] = source
+                used_docs.append(source)
+
                 all_chunks.extend(chunks)
         except Exception as e:
             logging.warning(f"❌ Error procesando {url}: {e}")
@@ -93,7 +100,11 @@ def ask_question(question: str, client_id: str, prompt: str = None) -> str:
     if not all_chunks:
         return "Error: no content to generate an answer."
 
-    # 3. Embeddings en memoria (no persistimos)
+    # 🔍 NUEVO: Log de documentos utilizados
+    logging.info("📚 Documentos utilizados para la respuesta:")
+    for doc in used_docs:
+        logging.info(f"   🔹 {doc}")
+
     embeddings = OpenAIEmbeddings()
     vectordb = Chroma.from_documents(
         documents=all_chunks,
@@ -101,7 +112,6 @@ def ask_question(question: str, client_id: str, prompt: str = None) -> str:
         persist_directory=None
     )
 
-    # 4. Ejecutar cadena RAG
     qa_chain = RetrievalQA.from_chain_type(
         llm=OpenAI(),
         retriever=vectordb.as_retriever(),
