@@ -60,43 +60,40 @@ export default function ChatWidget({
       return;
     }
 
-    const userMsg = { from: "user", text: input };
+    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const userMsg = { from: "user", text: input, timestamp: now };
     setMessages((prev) => [...prev, userMsg]);
+    setInput(""); // Limpiar el input inmediatamente
     setSending(true);
 
     try {
       const apiUrl = "https://evolvian.onrender.com";
-      console.log("🔍 Enviando mensaje al backend...");
-      console.log("🌐 Endpoint:", `${apiUrl}/chat`);
-      console.log("📨 Payload:", {
-        public_client_id: clientId,
-        message: input,
-      });
-
       const res = await fetch(`${apiUrl}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ public_client_id: clientId, message: input }),
       });
 
-      console.log("📥 Respuesta cruda:", res);
-
       if (!res.ok) {
         const errorText = await res.text();
-        console.error(`❌ Error HTTP (${res.status}):`, errorText);
-        throw new Error(`Backend error ${res.status}`);
+        throw new Error(`Backend error ${res.status}: ${errorText}`);
       }
 
       const data = await res.json();
-      console.log("✅ Respuesta del backend:", data);
-
-      const botMsg = { from: "bot", text: data.answer || "(respuesta vacía)" };
+      const botMsg = {
+        from: "bot",
+        text: data.answer || "(respuesta vacía)",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
       setMessages((prev) => [...prev, botMsg]);
     } catch (err) {
       console.error("❌ Error al enviar mensaje:", err);
-      setMessages((prev) => [...prev, { from: "bot", text: t("error_response") }]);
+      setMessages((prev) => [...prev, {
+        from: "bot",
+        text: t("error_response"),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      }]);
     } finally {
-      setInput("");
       setSending(false);
     }
   };
@@ -153,8 +150,13 @@ export default function ChatWidget({
       </div>
       <div style={styles.messages}>
         {messages.map((msg, idx) => (
-          <div key={idx} style={{ ...styles.message, ...(msg.from === "user" ? styles.userMessage : styles.botMessage) }}>
-            {msg.text}
+          <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: msg.from === "user" ? "flex-end" : "flex-start" }}>
+            <div style={{ ...styles.message, ...(msg.from === "user" ? styles.userMessage : styles.botMessage) }}>
+              {msg.text}
+            </div>
+            <span style={{ fontSize: "0.7rem", color: "#b0b0b0", marginTop: "0.25rem" }}>
+              {msg.timestamp}
+            </span>
           </div>
         ))}
         <div ref={messagesEndRef} />

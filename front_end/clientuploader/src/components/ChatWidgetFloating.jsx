@@ -10,30 +10,45 @@ export default function ChatWidgetFloating() {
 
   return (
     <>
-      {/* Botón flotante para abrir/cerrar */}
+      {/* Botón flotante */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         style={{
           position: "fixed",
           bottom: "24px",
-          right: isOpen ? "384px" : "24px", // corre el botón si está abierto
+          right: isOpen ? "384px" : "24px",
           zIndex: 10000,
-          backgroundColor: "#4a90e2",
-          color: "white",
+          backgroundColor: "#ffffff",
           border: "none",
           borderRadius: "50%",
-          width: "48px",
-          height: "48px",
-          fontSize: "20px",
+          width: "56px",
+          height: "56px",
+          padding: "6px",
           cursor: "pointer",
           boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
         title={isOpen ? "Cerrar asistente" : "Abrir asistente"}
       >
-        {isOpen ? "×" : "💬"}
+        {isOpen ? (
+          <span style={{ fontSize: "28px", color: "#4a90e2" }}>×</span>
+        ) : (
+          <img
+            src="/logo-evolvian.svg"
+            alt="Evolvian"
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "50%",
+              objectFit: "cover",
+            }}
+          />
+        )}
       </button>
 
-      {/* Widget visible solo si isOpen */}
+      {/* Contenedor del widget */}
       {isOpen && (
         <div style={styles.container}>
           <ChatWidget clientId={clientId} />
