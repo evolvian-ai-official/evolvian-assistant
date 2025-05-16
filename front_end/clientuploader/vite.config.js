@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, 'index.html'),
         widget: path.resolve(__dirname, 'chat-widget.html'),
+        // ❌ NO declares widget.html si está en public/
       },
     },
   },
