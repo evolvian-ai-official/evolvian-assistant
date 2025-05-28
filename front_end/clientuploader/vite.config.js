@@ -4,6 +4,11 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "src"), // ✅ Alias para rutas absolutas
+    },
+  },
   build: {
     rollupOptions: {
       input: {
@@ -11,6 +16,11 @@ export default defineConfig({
         widget: path.resolve(__dirname, 'chat-widget.html'),
         iframe: path.resolve(__dirname, 'widget.html'), // ✅ widget.html IFRAME embebido
       },
+    },
+  },
+  server: {
+    proxy: {
+      "/api": "http://localhost:8001", // ✅ Solo afecta dev, no producción
     },
   },
 });

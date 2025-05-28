@@ -14,7 +14,7 @@ router = APIRouter()
 
 class ClientSettingsPayload(BaseModel):
     client_id: str
-    plan: Optional[str] = None  # Puede no venir para evitar sobrescribir
+    plan: Optional[str] = None
     max_messages: Optional[int] = 100
     assistant_name: Optional[str] = "Evolvian Assistant"
     language: Optional[str] = "es"
@@ -30,7 +30,6 @@ def upsert_client_settings(payload: ClientSettingsPayload):
     try:
         payload_dict = {k: v for k, v in payload.dict().items() if v is not None}
 
-        # Verificar si se está enviando plan
         plan_id = payload_dict.get("plan")
 
         if plan_id:
@@ -44,19 +43,16 @@ def upsert_client_settings(payload: ClientSettingsPayload):
                 .single()\
                 .execute()
             plan_id = current_plan_res.data["plan_id"] if current_plan_res.data else "free"
-            payload_dict.pop("plan", None)  # ✅ No sobrescribimos el plan si no lo mandaron
+            payload_dict.pop("plan", None)
 
-        # ¿Puede editar custom_prompt?
         allow_custom_prompt = plan_id in ["premium", "white_label"]
         if not allow_custom_prompt:
             payload_dict.pop("custom_prompt", None)
 
-        # Actualizar plan_id explícitamente si se envió
         if payload.plan:
             payload_dict["plan_id"] = payload.plan
             payload_dict.pop("plan", None)
 
-        # Upsert sin sobreescribir plan innecesariamente
         response = supabase.table("client_settings").upsert(payload_dict, on_conflict="client_id").execute()
 
         if response.data:
@@ -70,7 +66,6 @@ def upsert_client_settings(payload: ClientSettingsPayload):
     except Exception as e:
         print(f"❌ Error en POST /client_settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ------------------------------
 # GET /client_settings?client_id=...
@@ -89,6 +84,9 @@ def get_client_settings(client_id: str = Query(...)):
             require_email,
             require_phone,
             require_terms,
+            subscription_id,
+            subscription_start,
+            subscription_end,
             plan:plan_id(
                 id,
                 name,
@@ -109,20 +107,31 @@ def get_client_settings(client_id: str = Query(...)):
 
         settings = response.data
 
-        # Booleans asegurados
         settings["require_email"] = bool(settings.get("require_email", False))
         settings["require_phone"] = bool(settings.get("require_phone", False))
         settings["require_terms"] = bool(settings.get("require_terms", False))
 
-        # plan_features fallback
-        if "plan" in settings:
-            settings["plan"]["plan_features"] = settings["plan"].get("plan_features", [])
+        if not settings.get("plan") or not settings["plan"].get("id"):
+            print("⚠️ Fallback: plan vacío, asignando plan FREE")
+            settings["plan"] = {
+                "id": "free",
+                "name": "Free",
+                "max_messages": 100,
+                "max_documents": 3,
+                "is_unlimited": False,
+                "show_powered_by": True,
+                "supports_chat": True,
+                "supports_email": False,
+                "supports_whatsapp": False,
+                "price_usd": 0,
+                "plan_features": []
+            }
 
-        # custom_prompt por defecto
+        settings["plan"]["plan_features"] = settings["plan"].get("plan_features", [])
+
         if not settings.get("custom_prompt"):
             settings["custom_prompt"] = DEFAULT_PROMPT
 
-        # Obtener todos los planes disponibles
         plans_response = supabase.table("plans").select("""
             id,
             name,
@@ -132,6 +141,7 @@ def get_client_settings(client_id: str = Query(...)):
             supports_chat,
             supports_email,
             supports_whatsapp,
+            show_powered_by,
             price_usd
         """).order("price_usd").execute()
 

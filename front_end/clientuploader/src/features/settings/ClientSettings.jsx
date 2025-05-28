@@ -1,12 +1,16 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useClientId } from "../../hooks/useClientId";
-import { useLanguage } from "../../contexts/LanguageContext"; // ✅ agregado el import
+import { useLanguage } from "../../contexts/LanguageContext";
 
+import PlanInfo from "./PlanInfo";
+import FeatureList from "./FeatureList";
+import PromptSettings from "./PromptSettings";
+import WidgetSettings from "./WidgetSettings";
 
 export default function ClientSettings() {
   const clientId = useClientId();
-  const { t } = useLanguage(); // ✅ hook para traducir
-  console.log("🧠 clientId:", clientId);
+  const { t } = useLanguage();
+  const [activeTab, setActiveTab] = useState("plan");
 
   const [formData, setFormData] = useState({
     assistant_name: "",
@@ -17,60 +21,63 @@ export default function ClientSettings() {
     custom_prompt: "",
     require_email: false,
     require_phone: false,
-    require_terms: false
+    require_terms: false,
   });
 
   const [status, setStatus] = useState({ message: "", type: "" });
   const [loading, setLoading] = useState(true);
 
-  const DEFAULT_PROMPT = t("default_prompt") || "Eres un asistente de IA diseñado para ayudar con preguntas sobre los documentos cargados por el cliente. Responde de forma clara, útil y en el idioma del usuario.";
+  const DEFAULT_PROMPT =
+    t("default_prompt") ||
+    "Eres un asistente de IA diseñado para ayudar con preguntas sobre los documentos cargados por el cliente.";
   const MAX_PROMPT_LENGTH = 2000;
-  const promptLength = (formData.custom_prompt || DEFAULT_PROMPT).length;
-  const isPromptTooLong = promptLength > MAX_PROMPT_LENGTH;
 
-  useEffect(() => {
-    const fetchSettings = async () => {
-      if (!clientId) {
-        console.warn("⚠️ clientId no disponible");
-        return;
+  const fetchSettings = useCallback(async () => {
+    if (!clientId) return;
+
+    try {
+      console.log("📡 Fetching settings for:", clientId);
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings?client_id=${clientId}`);
+      const data = await res.json();
+      console.log("📦 Response from /client_settings:", data);
+
+      if (res.ok && data) {
+        const safePlan = data.plan || { id: "free", plan_features: [] };
+        setFormData((prev) => ({
+          ...prev,
+          ...data,
+          plan: {
+            ...safePlan,
+            plan_features: safePlan.plan_features ?? [],
+          },
+        }));
+        console.log("🧾 Plan actualizado en estado:", safePlan?.id);
+      } else {
+        console.error("❌ Error al obtener configuración:", data);
       }
-      try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings?client_id=${clientId}`);
+    } catch (err) {
+      console.error("❌ Error de red en fetchSettings:", err);
+    }
 
-        const data = await res.json();
-        console.log("📥 Respuesta del backend:", data);
-        if (res.ok) {
-          setFormData(prev => ({
-            ...data,
-            plan: {
-              ...data.plan,
-              plan_features: data.plan?.plan_features
-            }
-          }));
-        }
-      } catch (err) {
-        console.error("❌ Error en la petición:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchSettings();
+    setLoading(false);
   }, [clientId]);
 
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
 
   const handleChange = (e) => {
     const { name, type, checked, value } = e.target;
-    const newValue = type === "checkbox" ? checked : value;
-    console.log("✏️ Cambio en formulario:", name, newValue);
-    setFormData(prev => ({ ...prev, [name]: newValue }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : value,
+    }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setStatus({ message: "", type: "" });
 
-    if (formData.custom_prompt?.length > MAX_PROMPT_LENGTH) {
+    if ((formData.custom_prompt || DEFAULT_PROMPT).length > MAX_PROMPT_LENGTH) {
       setStatus({ message: `❌ ${t("prompt_too_long")}`, type: "error" });
       return;
     }
@@ -83,186 +90,100 @@ export default function ClientSettings() {
       custom_prompt: formData.custom_prompt,
       require_email: formData.require_email,
       require_phone: formData.require_phone,
-      require_terms: formData.require_terms
+      require_terms: formData.require_terms,
     };
 
-    console.log("📤 Payload a enviar:", payload);
     try {
+      console.log("📤 Enviando payload:", payload);
       const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
-      console.log("📥 Respuesta del backend:", data);
-      if (!res.ok) throw new Error(data.error || t("error_saving"));
+      console.log("📨 Respuesta POST /client_settings:", data);
 
-      setStatus({ message: `✅ ${t("settings_saved")}`, type: "success" });
+      if (!res.ok) {
+        setStatus({ message: `❌ ${data.error || t("error_saving")}`, type: "error" });
+      } else {
+        setStatus({ message: `✅ ${t("settings_saved")}`, type: "success" });
+      }
     } catch (err) {
-      console.error("❌ Error en la petición:", err);
-      setStatus({ message: `❌ ${err.message}`, type: "error" });
+      console.error("❌ Error en handleSubmit:", err);
+      setStatus({ message: "❌ Error al guardar configuración.", type: "error" });
     }
   };
 
-  const featurePlans = {
-    chat_widget: ["free", "starter", "premium"],
-    email_support: ["starter", "premium"],
-    whatsapp_integration: ["premium"],
-    custom_greeting: ["starter", "premium"],
-    white_labeling: ["white_label"],
-    custom_prompt_editing: ["premium", "white_label"]
-  };
+  const hasPromptFeature =
+    formData.plan?.plan_features?.some((f) =>
+      typeof f === "string"
+        ? f === "custom_prompt_editing"
+        : f?.feature?.toLowerCase()?.replace(/\s+/g, "_") === "custom_prompt_editing"
+    ) ?? false;
 
-  const planHierarchy = ["free", "starter", "premium", "white_label"];
-  const currentPlanId = formData.plan?.id?.toLowerCase() ?? "free";
+  if (loading) return <p>{t("loading_settings")}</p>;
 
-  const isFeatureIncludedByPlan = (featureKey, currentPlan) => {
-    const allowedPlans = featurePlans[featureKey];
-    if (!allowedPlans) return false;
-    const currentIndex = planHierarchy.indexOf(currentPlan);
-    return allowedPlans.some(plan => planHierarchy.indexOf(plan) <= currentIndex);
-  };
-
-  const getRequiredPlan = (featureKey) => {
-    const plans = featurePlans[featureKey];
-    if (!plans || plans.length === 0) return "—";
-    if (plans.includes("free")) return t("free");
-    if (plans.includes("starter")) return t("starter");
-    if (plans.includes("premium")) return t("premium");
-    return plans[0];
-  };
-
-  const hasPromptFeature = formData.plan?.plan_features?.some(f =>
-    typeof f === "string"
-      ? f === "custom_prompt_editing"
-      : f?.feature?.toLowerCase()?.replace(/\s+/g, "_") === "custom_prompt_editing"
-  );
-
-  if (!clientId) return <p style={{ padding: "1rem", color: "red" }}>⚠️ {t("client_not_identified")}</p>;
-  if (loading) return <p style={{ padding: "1rem" }}>🔄 {t("loading_settings")}</p>;
+  console.log("📌 Renderizando ClientSettings con tab:", activeTab);
 
   return (
-    <div style={{ padding: "2rem", maxWidth: "700px", margin: "0 auto", fontFamily: "sans-serif" }}>
-      <h2 style={{ fontSize: "1.8rem", color: "#274472", marginBottom: "1.5rem" }}>⚙️ {t("client_settings")}</h2>
+    <div style={{ padding: "2rem", maxWidth: "700px", margin: "0 auto" }}>
+      <h2>⚙️ {t("client_settings")}</h2>
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-        <div>
-          <label>{t("assistant_name")}</label>
-          <input
-            name="assistant_name"
-            value={formData.assistant_name || ""}
-            onChange={handleChange}
-            style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #ccc", marginTop: "4px" }}
-          />
-        </div>
+      <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
+        <button onClick={() => setActiveTab("plan")} style={tabStyle(activeTab === "plan")}>🧾 {t("your_current_plan")}</button>
+        <button onClick={() => setActiveTab("features")} style={tabStyle(activeTab === "features")}>🧩 {t("included_features")}</button>
+        <button onClick={() => setActiveTab("prompt")} style={tabStyle(activeTab === "prompt")}>🎨 {t("custom_prompt")}</button>
+        <button onClick={() => setActiveTab("widget")} style={tabStyle(activeTab === "widget")}>💬 {t("chat_widget")}</button>
+      </div>
 
-        <div>
-          <label>{t("custom_prompt")}</label>
-          <textarea
-            name="custom_prompt"
-            value={formData.custom_prompt || DEFAULT_PROMPT}
-            onChange={handleChange}
-            readOnly={!hasPromptFeature}
-            rows={6}
+      {/* Vistas por pestaña */}
+      {activeTab === "plan" && (
+        <PlanInfo activeTab={activeTab} formData={formData} refetchSettings={fetchSettings} />
+      )}
+
+      {activeTab === "features" && (
+        <FeatureList activeTab={activeTab} plan={formData.plan} />
+      )}
+
+      {(activeTab === "prompt" || activeTab === "widget") && (
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+          {activeTab === "prompt" && (
+            <PromptSettings
+              activeTab={activeTab}
+              custom_prompt={formData.custom_prompt}
+              hasPromptFeature={hasPromptFeature}
+              onChange={handleChange}
+              maxLength={MAX_PROMPT_LENGTH}
+              defaultPrompt={DEFAULT_PROMPT}
+            />
+          )}
+          {activeTab === "widget" && (
+            <WidgetSettings
+              activeTab={activeTab}
+              require_email={formData.require_email}
+              require_phone={formData.require_phone}
+              require_terms={formData.require_terms}
+              onChange={handleChange}
+            />
+          )}
+          <button
+            type="submit"
             style={{
-              width: "100%",
-              padding: "8px",
+              backgroundColor: "#4a90e2",
+              color: "white",
+              padding: "10px 16px",
+              border: "none",
               borderRadius: "6px",
-              border: isPromptTooLong ? "2px solid #e53935" : "1px solid #ccc",
-              marginTop: "4px",
-              fontFamily: "inherit"
+              cursor: "pointer",
+              fontWeight: "bold",
+              width: "fit-content"
             }}
-          />
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px" }}>
-            {!hasPromptFeature && (
-              <p style={{ color: "#888", fontSize: "0.85rem" }}>
-                {t("custom_prompt_locked")}
-              </p>
-            )}
-            <p style={{ fontSize: "0.85rem", color: isPromptTooLong ? "#e53935" : "#666" }}>
-              {promptLength} / {MAX_PROMPT_LENGTH} {t("characters")}
-            </p>
-          </div>
-        </div>
-{/*
-        <div> 
-          <label>{t("language")}</label>
-          <select
-            name="language"
-            value={formData.language || "es"}
-            onChange={handleChange}
-            style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #ccc", marginTop: "4px" }}
           >
-            <option value="es">{t("spanish")}</option>
-            <option value="en">{t("english")}</option>
-          </select>
-        </div>
-
-        <div>
-          <label>{t("creativity")}</label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            max="1"
-            name="temperature"
-            value={formData.temperature ?? 0.7}
-            onChange={handleChange}
-            style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #ccc", marginTop: "4px" }}
-          />
-        </div>
-
-        <div>
-          <label>
-            <input
-              type="checkbox"
-              name="require_email"
-              checked={formData.require_email}
-              onChange={handleChange}
-            /> {t("require_email")}
-          </label>
-        </div>
-
-        <div>
-          <label>
-            <input
-              type="checkbox"
-              name="require_phone"
-              checked={formData.require_phone}
-              onChange={handleChange}
-            /> {t("require_phone")}
-          </label>
-        </div>
-
-        <div>
-          <label>
-            <input
-              type="checkbox"
-              name="require_terms"
-              checked={formData.require_terms}
-              onChange={handleChange}
-            /> {t("require_terms")}
-          </label>
-        </div>
-*/}
-        <button
-          type="submit"
-          disabled={isPromptTooLong}
-          style={{
-            backgroundColor: "#4a90e2",
-            color: "white",
-            padding: "10px 16px",
-            border: "none",
-            borderRadius: "6px",
-            cursor: isPromptTooLong ? "not-allowed" : "pointer",
-            fontWeight: "bold",
-            width: "fit-content"
-          }}
-        >
-          {t("save_settings")}
-        </button>
-      </form>
+            {t("save_settings")}
+          </button>
+        </form>
+      )}
 
       {status.message && (
         <p style={{
@@ -273,107 +194,17 @@ export default function ClientSettings() {
           {status.message}
         </p>
       )}
-
-    {/* PLAN ACTUAL */}
-<div style={{
-  marginTop: "2rem",
-  backgroundColor: "white",
-  border: "1px solid #4a90e2",
-  borderRadius: "16px",
-  padding: "1.5rem",
-  boxShadow: "0 4px 10px rgba(0,0,0,0.08)"
-}}>
-  <div style={{
-    display: "flex", justifyContent: "space-between",
-    alignItems: "center", marginBottom: "1rem"
-  }}>
-    <h3 style={{ color: "#274472", fontSize: "1.2rem", fontWeight: "bold" }}>
-      🧾 {t("your_current_plan")}
-    </h3>
-    <span style={{
-      backgroundColor: "#4a90e2", color: "white", padding: "4px 12px",
-      borderRadius: "999px", fontSize: "0.85rem", textTransform: "capitalize"
-    }}>
-      {formData.plan?.name || formData.plan_id || "—"}
-    </span>
-  </div>
-
-  <ul style={{ fontSize: "0.95rem", paddingLeft: "1rem", marginBottom: "1rem", lineHeight: "1.8" }}>
-    <li><strong style={{ color: "#4a90e2" }}>💬 {t("messages")}:</strong>{" "}
-      <span style={{ color: "#1b2a41" }}>
-        {formData.plan?.is_unlimited ? t("unlimited") : formData.plan?.max_messages ?? "—"}
-      </span>
-    </li>
-    <li><strong style={{ color: "#4a90e2" }}>📄 {t("documents")}:</strong>{" "}
-      <span style={{ color: "#1b2a41" }}>
-        {formData.plan?.is_unlimited ? t("unlimited") : formData.plan?.max_documents ?? "—"}
-      </span>
-    </li>
-    <li><strong style={{ color: "#4a90e2" }}>🔖 {t("branding_active")}:</strong>{" "}
-      <span style={{ color: "#1b2a41" }}>
-        {formData.show_powered_by ? t("yes") : t("no")}
-      </span>
-    </li>
-  </ul>
-
-  <div style={{ textAlign: "right" }}>
-    <a href="/settings" style={{
-      color: "#f5a623", fontWeight: "bold", fontSize: "0.9rem"
-    }}>
-      🔁 {t("change_or_update_plan")}
-    </a>
-  </div>
-</div>
-
-
-
-
-      {/* FUNCIONALIDADES INCLUIDAS */}
-      <div style={{
-        marginTop: "2rem",
-        backgroundColor: "white",
-        border: "1px solid #4a90e2",
-        borderRadius: "16px",
-        padding: "1.5rem",
-        boxShadow: "0 4px 10px rgba(0,0,0,0.08)"
-      }}>
-        <h4 style={{
-          fontSize: "1.1rem", fontWeight: "bold",
-          color: "#274472", marginBottom: "1rem"
-        }}>
-          🧩 {t("included_features")}
-        </h4>
-
-        <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "0.95rem" }}>
-          {[
-            { key: "chat_widget", label: t("chat_widget"), icon: "💬" },
-            { key: "email_support", label: t("email_support"), icon: "✉️" },
-            { key: "whatsapp_integration", label: t("whatsapp_integration"), icon: "📱" },
-            { key: "custom_greeting", label: t("custom_greeting"), icon: "👋" },
-            { key: "white_labeling", label: t("white_labeling"), icon: "🏷️" }
-          ].map((feature) => {
-            const isIncluded = isFeatureIncludedByPlan(feature.key, currentPlanId);
-            return (
-              <li key={feature.key} style={{
-                display: "flex", alignItems: "center", gap: "8px",
-                marginBottom: "0.5rem", color: isIncluded ? "#4a90e2" : "#999"
-              }}>
-                <span>{feature.icon}</span>
-                <span>{feature.label}</span>
-                <span style={{
-                  marginLeft: "auto",
-                  backgroundColor: isIncluded ? "#a3d9b1" : "#f5a623",
-                  color: "#1b2a41", fontSize: "0.7rem", padding: "2px 6px",
-                  borderRadius: "999px", fontWeight: "bold"
-                }}>
-                  {isIncluded ? t("included_in_plan") : `${t("available_from")} ${getRequiredPlan(feature.key)}`}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-
     </div>
   );
 }
+
+const tabStyle = (active) => ({
+  padding: "6px 12px",
+  backgroundColor: active ? "#a3d9b1" : "#ededed",
+  color: "#274472",
+  borderRadius: "999px",
+  border: "none",
+  cursor: "pointer",
+  fontWeight: "500",
+  fontSize: "0.9rem"
+});

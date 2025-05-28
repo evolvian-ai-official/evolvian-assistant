@@ -164,6 +164,7 @@ es: {
   copy_iframe: "Copiar IFRAME",
   copy_script: "Copiar Script",
   copy_script_button: "Copiar Script",
+  cancel_subscription_and_go_free: "Cancelar suscripción y volver a Free",
 
   // Email Assistant
   setup_email_assistant: "Configurar Email Assistant",
@@ -230,6 +231,16 @@ es: {
   thinking: "Pensando...",
   error_response: "⚠️ Error al responder.",
   consent_required_fields: "Por favor completa todos los campos requeridos.",
+
+  //Plan info
+  choose_a_plan:"Escoge un plan",
+  plan_free: "Free",
+  plan_starter: "Starter",
+  plan_premium: "Premium",
+  plan_white_label: "White Label",
+  i_want_this_plan: "Quiero este plan",
+  contact_for_whitelabel: "Si requieres un plan a tu medida contacta",
+
 },
 
 
@@ -342,6 +353,7 @@ en: {
   prompt_too_long: "The custom prompt exceeds the 2000 characters limit.",
   error_saving: "Error saving settings.",
   settings_saved: "Settings saved successfully!",
+  cancel_subscription_and_go_free: "Cancel subscription and go back to Free",
 
   // Plan Section
   your_current_plan: "Your Current Plan",
@@ -446,6 +458,15 @@ en: {
   terms_title: "Terms & Conditions",
   terms_description: "By continuing, you accept our",
   terms_and_conditions: "Terms and Conditions",
+
+  //Plan info
+  choose_a_plan:"Choose a plan",
+  plan_free: "Free",
+  plan_starter: "Starter",
+  plan_premium: "Premium",
+  plan_white_label: "White Label",
+  i_want_this_plan: "I want this plan",
+  contact_for_whitelabel: "Contact for Whitelabel plan",
 }
 
   

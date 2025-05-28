@@ -14,13 +14,6 @@ export default function ChatSetup() {
     ? "http://localhost:5173"
     : "https://evolvian.app";
 
-  const iframeCode = `<iframe
-  src="${domain}/widget?public_client_id=${publicClientId || "TU_ID_PUBLICO"}"
-  style="width:360px;height:520px;border:2px solid #4a90e2;border-radius:16px;background-color:#ededed;box-shadow:0 6px 24px rgba(0,0,0,0.15);position:fixed;bottom:20px;right:20px;z-index:9999;"
-  allow="clipboard-write; microphone"
-  title="Evolvian AI Chat Widget"
-></iframe>`;
-
   const scriptCode = `<script>
   (function () {
     const iframe = document.createElement("iframe");
@@ -41,6 +34,13 @@ export default function ChatSetup() {
   })();
 </script>`;
 
+  const iframeCode = `<iframe
+  src="${domain}/widget?public_client_id=${publicClientId || "TU_ID_PUBLICO"}"
+  style="width:360px;height:520px;border:2px solid #4a90e2;border-radius:16px;background-color:#ededed;box-shadow:0 6px 24px rgba(0,0,0,0.15);position:fixed;bottom:20px;right:20px;z-index:9999;"
+  allow="clipboard-write; microphone"
+  title="Evolvian AI Chat Widget"
+></iframe>`;
+
   if (loading) {
     return (
       <div style={pageStyle}>
@@ -53,10 +53,7 @@ export default function ChatSetup() {
     <div style={pageStyle}>
       <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
         <h2 style={titleStyle}>🧠 {t("setup_evolvian_web")}</h2>
-
-        <p style={descriptionStyle}>
-          {t("setup_description")}
-        </p>
+        <p style={descriptionStyle}>{t("setup_description")}</p>
 
         <div style={idBoxStyle}>
           <div>
@@ -77,19 +74,6 @@ export default function ChatSetup() {
             <h3 style={subtitleStyle}>🔹 {t("option1_title")}</h3>
             <p style={hintStyle}>💡 {t("option1_hint")}</p>
             <ol style={stepsStyle}>
-              <li>1. {t("copy_code")}</li>
-              <li>2. {t("paste_before_body")}</li>
-            </ol>
-            <pre style={codeStyle}>{iframeCode}</pre>
-            <button onClick={() => handleCopy(iframeCode)} style={actionButtonStyle}>
-              {t("copy_iframe")}
-            </button>
-          </div>
-
-          <div style={cardStyle}>
-            <h3 style={subtitleStyle}>🔹 {t("option2_title")}</h3>
-            <p style={hintStyle}>💡 {t("option2_hint")}</p>
-            <ol style={stepsStyle}>
               <li>1. {t("copy_script")}</li>
               <li>2. {t("paste_before_body")}</li>
             </ol>
@@ -98,13 +82,26 @@ export default function ChatSetup() {
               {t("copy_script_button")}
             </button>
           </div>
+
+          <div style={cardStyle}>
+            <h3 style={subtitleStyle}>🔹 {t("option2_title")}</h3>
+            <p style={hintStyle}>💡 {t("option2_hint")}</p>
+            <ol style={stepsStyle}>
+              <li>1. {t("copy_code")}</li>
+              <li>2. {t("paste_before_body")}</li>
+            </ol>
+            <pre style={codeStyle}>{iframeCode}</pre>
+            <button onClick={() => handleCopy(iframeCode)} style={actionButtonStyle}>
+              {t("copy_iframe")}
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// 🎨 Estilos (se quedan igual)
+// 🎨 Estilos (sin cambios)
 const pageStyle = {
   padding: "2rem 3rem",
   fontFamily: "system-ui, sans-serif",

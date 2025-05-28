@@ -1,6 +1,12 @@
-from api.config.config import supabase
+import os
 import uuid
+import stripe
 from datetime import datetime
+from api.config.config import supabase
+from supabase import create_client, Client
+
+# Configurar Stripe
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
 # -------------------------------
 # USERS Y CLIENTES
@@ -16,7 +22,7 @@ def get_or_create_user(auth_user_id: str, email: str) -> str:
             response = supabase.table("users").select("id").eq("email", email).maybe_single().execute()
 
             if not response or not response.data:
-                print(f"🆕 Creando nuevo usuario: {auth_user_id}")
+                print(f"🖕 Creando nuevo usuario: {auth_user_id}")
                 insert = supabase.table("users").insert({
                     "id": auth_user_id,
                     "email": email,
@@ -49,7 +55,7 @@ def get_or_create_client_id(user_id: str, email: str) -> str:
 
         name = email.split("@")[0]
         new_id = str(uuid.uuid4())
-        print(f"🆕 Creando cliente para user_id: {user_id} con ID: {new_id}")
+        print(f"🖕 Creando cliente para user_id: {user_id} con ID: {new_id}")
 
         insert = supabase.table("clients").insert({
             "id": new_id,
@@ -146,7 +152,7 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
             print(f"🔁 Uso actualizado. Nuevo valor: {new_value}")
         else:
             supabase.table("client_usage").insert({
-                "id": str(uuid.uuid4()),  # ✅ Obligatorio
+                "id": str(uuid.uuid4()),
                 "client_id": client_id,
                 "channel": channel,
                 "type": type,
@@ -157,8 +163,6 @@ def track_usage(client_id: str, channel: str, type: str = "question", value: int
 
     except Exception as e:
         print(f"❌ Error en track_usage: {e}")
-
-
 
 # -------------------------------
 # CANALES
@@ -249,8 +253,8 @@ def get_whatsapp_credentials(client_id: str) -> dict:
         print(f"🔐 Buscando credenciales WhatsApp para client_id={client_id}")
         response = supabase.table("channels")\
             .select("wa_phone_id, wa_token")\
-            .filter("client_id", "eq", client_id)\
-            .filter("type", "eq", "whatsapp")\
+            .eq("client_id", client_id)\
+            .eq("type", "whatsapp")\
             .maybe_single()\
             .execute()
 
@@ -266,3 +270,65 @@ def get_whatsapp_credentials(client_id: str) -> dict:
     except Exception as e:
         print(f"❌ Error en get_whatsapp_credentials: {e}")
         raise
+
+# -------------------------------
+# PLAN STRIPE
+# -------------------------------
+
+async def update_client_plan_by_id(client_id: str, new_plan_id: str, subscription_id: str | None = None):
+    try:
+        print(f"✏️ Intentando actualizar plan para {client_id} a '{new_plan_id}'")
+
+        update_payload = {"plan_id": new_plan_id}
+
+        if subscription_id:
+            update_payload["subscription_id"] = subscription_id
+
+            try:
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                print("🧾 Subscription object from Stripe:", subscription)
+
+                item = subscription["items"]["data"][0]
+                update_payload["subscription_start"] = datetime.utcfromtimestamp(item["current_period_start"]).isoformat()
+                update_payload["subscription_end"] = datetime.utcfromtimestamp(item["current_period_end"]).isoformat()
+
+
+
+                print(f"📅 Fechas obtenidas:")
+                print(f"  • Start: {update_payload['subscription_start']}")
+                print(f"  • End:   {update_payload['subscription_end']}")
+
+            except Exception as e:
+                print(f"⚠️ No se pudieron obtener fechas de Stripe: {e}")
+
+        print("📦 Payload final que se mandará a Supabase:", update_payload)
+
+        response = supabase.table("client_settings")\
+            .update(update_payload)\
+            .eq("client_id", client_id)\
+            .execute()
+
+        print("🔄 Respuesta de update:", response)
+
+        if not response or not response.data:
+            print("❌ Update no tuvo efecto, sin datos")
+        else:
+            print(f"✅ Plan actualizado correctamente a '{new_plan_id}' para {client_id} con sub: {subscription_id}")
+
+    except Exception as e:
+        print("🔥 Error en update_client_plan_by_id:", e)
+
+async def get_client_id_by_subscription_id(subscription_id: str) -> str | None:
+    try:
+        response = supabase.table("client_settings")\
+            .select("client_id")\
+            .eq("subscription_id", subscription_id)\
+            .execute()
+
+        data = response.data
+        if data and len(data) > 0:
+            return data[0]["client_id"]
+        return None
+    except Exception as e:
+        print(f"❌ Error buscando client_id por subscription_id: {e}")
+        return None

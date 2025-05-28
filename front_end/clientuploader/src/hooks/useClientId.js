@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 
 export function useClientId() {
@@ -8,17 +7,18 @@ export function useClientId() {
   });
 
   useEffect(() => {
-    const checkClientId = () => {
-      const stored = localStorage.getItem("client_id");
-      if (stored && stored !== "undefined" && stored !== "null") {
-        setClientId(stored);
+    const handleStorageChange = (event) => {
+      if (event.key === "client_id") {
+        const value = event.newValue;
+        if (value && value !== "undefined" && value !== "null") {
+          setClientId(value);
+        }
       }
     };
 
-    // ⏱ Revisa cada 500ms por cambios de manera simple
-    const interval = setInterval(checkClientId, 500);
+    window.addEventListener("storage", handleStorageChange);
 
-    return () => clearInterval(interval);
+    return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
   return clientId;
