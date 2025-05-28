@@ -5,17 +5,16 @@ import os
 import jwt
 
 # ✅ Cargar variables de entorno
-load_dotenv()
+load_dotenv(".env")
 print("🔄 Variables de entorno cargadas desde .env")
 
 # ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 if not supabase_key:
-    print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env ni en el entorno")
+    print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env")
 else:
     print(f"🔑 Prefijo SUPABASE_SERVICE_ROLE_KEY: {supabase_key[:10]}...")
-
     try:
         decoded = jwt.decode(supabase_key, options={"verify_signature": False})
         role = decoded.get("role")
@@ -23,13 +22,12 @@ else:
 
         if role != "service_role":
             print("⚠️ ¡CUIDADO! Estás usando una clave con rol:", role)
-            print("👉 Ve a Supabase > Settings > API y copia la Service Role Key")
         else:
             print("✅ Supabase configurado con la Service Role Key")
     except Exception as e:
-        print("❌ No se pudo decodificar SUPABASE_SERVICE_ROLE_KEY:", str(e))
+        print("❌ Error al decodificar la key:", str(e))
 
-# Routers principales
+# ✅ Routers principales
 from api.upload_document import router as upload_router
 from api.history_api import router as history_router
 from api.create_client_if_needed import router as client_router
@@ -51,22 +49,30 @@ from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
-from api.meta_webhook import router as meta_webhook_router  # ✅ NUEVO
+
+# ✅ Stripe
+from api.stripe_webhook import router as stripe_router
+from api.stripe_create_checkout_session import router as stripe_checkout_router
+from api.stripe_cancel_subscription import router as stripe_cancel_router
+from api.stripe_change_plan import router as stripe_change_plan_router
+
+# ✅ Integraciones externas
+from api.meta_webhook import router as meta_webhook_router
 
 print("🚀 Routers importados correctamente")
 
 app = FastAPI()
 
-# Middleware CORS
+# ✅ CORS para producción
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.evolvianai.com"],
+    allow_origins=["https://www.evolvianai.com"],  # Cambiar a ["*"] solo si estás probando
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Registro de routers
+# ✅ Registro de routers principales
 app.include_router(upload_router)
 app.include_router(history_router)
 app.include_router(client_router)
@@ -88,23 +94,22 @@ app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
 app.include_router(embed_router)
-app.include_router(meta_webhook_router)  # ✅ Webhook Meta
 
-# Healthcheck
+# ✅ Stripe
+app.include_router(stripe_router)                                 # /stripe
+app.include_router(stripe_checkout_router, prefix="/api")         # /api/create-checkout-session
+app.include_router(stripe_cancel_router, prefix="/api")           # /api/cancel-subscription
+app.include_router(stripe_change_plan_router, prefix="/api")      # /api/change-plan
+
+# ✅ Otras integraciones
+app.include_router(meta_webhook_router)                           # /meta-webhook
+
+# ✅ Healthcheck
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
 
-# Diagnóstico rutas activas
-@app.get("/test_chat_route")
-def test_chat_route():
-    registered_routes = [route.path for route in app.routes]
-    return {
-        "chat_router_loaded": "/chat" in registered_routes,
-        "available_routes": registered_routes
-    }
-
-# 🔍 Diagnóstico general de rutas
+# ✅ Diagnóstico de rutas
 @app.get("/test_routes")
 def test_routes():
     return [route.path for route in app.routes]
