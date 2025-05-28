@@ -1,13 +1,14 @@
-# Entorno virtual y compilados
+# ✅ Python / FastAPI
 venv/
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-*.sqlite3
-*.DS_Store
+*.egg-info/
+instance/
+*.log
 
-# Archivos de configuración sensibles
+# ✅ Archivos sensibles
 .env
 .env.local
 .env.*.local
@@ -15,11 +16,26 @@ __pycache__/
 *.secret
 *.key
 
-# Bases de datos locales
+# ✅ Bases de datos locales
 *.db
 *.sqlite
+*.sqlite3
 
-# Otros
-*.log
+# ✅ Node / React / Vite
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
 
+# ✅ macOS
 .DS_Store
+
+# ✅ VSCode
+.vscode/
+
+# ✅ Otros
+*.zip
+*.bak
+*.tmp
+coverage/
