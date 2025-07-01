@@ -1,0 +1,42 @@
+# ✅ Python / FastAPI
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+instance/
+*.log
+
+# ✅ Archivos sensibles
+.env
+.env.local
+.env.*.local
+*.env
+*.secret
+*.key
+
+# ✅ Bases de datos locales
+*.db
+*.sqlite
+*.sqlite3
+
+# ✅ Node / React / Vite
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# ✅ macOS
+.DS_Store
+
+# ✅ VSCode
+.vscode/
+
+# ✅ Otros
+*.zip
+*.bak
+*.tmp
+coverage/
+main_local.py
