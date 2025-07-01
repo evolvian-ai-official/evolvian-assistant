@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ✅ Garantizar altura total en el layout base */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* 🌐 Estilos globales opcionales y neutros */
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  color-scheme: light dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ✅ Fondo base Evolvian aplicado solo si no lo sobreescribe Tailwind */
+body {
+  background-color: #0f1c2e;
+  color: #ffffff;
+}
+
+/* ✅ Enlaces con colores de marca */
+a {
+  @apply text-[#4a90e2] hover:text-[#274472] font-medium;
+}
