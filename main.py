@@ -8,6 +8,13 @@ import jwt
 load_dotenv(".env")
 print("🔄 Variables de entorno cargadas desde .env")
 
+# 🔍 Diagnóstico explícito de entorno
+print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
+print("🔍 GOOGLE_CLIENT_SECRET:", os.getenv("GOOGLE_CLIENT_SECRET"))
+print("🔍 GOOGLE_REDIRECT_URI_LOCAL:", os.getenv("GOOGLE_REDIRECT_URI_LOCAL"))
+print("🔍 GOOGLE_REDIRECT_URI_PROD:", os.getenv("GOOGLE_REDIRECT_URI_PROD"))
+print("🔍 ENV:", os.getenv("ENV"))
+
 # ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
@@ -58,6 +65,13 @@ from api.stripe_change_plan import router as stripe_change_plan_router
 
 # ✅ Integraciones externas
 from api.meta_webhook import router as meta_webhook_router
+from api.auth.google_calendar_auth import router as google_auth_router
+from api.auth.google_calendar_callback import router as google_callback_router
+from api.calendar_routes import router as calendar_router
+from api.calendar_booking import router as calendar_booking_router
+from api.modules.calendar import init_calendar_auth
+from api import calendar_status
+from api import auth
 
 print("🚀 Routers importados correctamente")
 
@@ -66,13 +80,13 @@ app = FastAPI()
 # ✅ CORS para producción
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.evolvianai.com"],  # Cambiar a ["*"] solo si estás probando
+    allow_origins=["https://www.evolvianai.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Registro de routers principales
+# ✅ Registro de routers
 app.include_router(upload_router)
 app.include_router(history_router)
 app.include_router(client_router)
@@ -96,21 +110,26 @@ app.include_router(delete_chunks_router)
 app.include_router(embed_router)
 
 # ✅ Stripe
-app.include_router(stripe_router)                                 # /stripe
-app.include_router(stripe_checkout_router, prefix="/api")         # /api/create-checkout-session
-app.include_router(stripe_cancel_router, prefix="/api")           # /api/cancel-subscription
-app.include_router(stripe_change_plan_router, prefix="/api")      # /api/change-plan
+app.include_router(stripe_router)
+app.include_router(stripe_checkout_router, prefix="/api")
+app.include_router(stripe_cancel_router, prefix="/api")
+app.include_router(stripe_change_plan_router, prefix="/api")
 
-# ✅ Otras integraciones
-app.include_router(meta_webhook_router) 
-app.include_router(calendar_auth_router, prefix="/api")                          # /meta-webhook
+# ✅ Google Calendar & otras integraciones
+app.include_router(meta_webhook_router)
+app.include_router(calendar_router, prefix="/api")
+app.include_router(calendar_booking_router, prefix="/api")
+app.include_router(google_auth_router, prefix="/api")
+app.include_router(google_callback_router, prefix="/api")
+app.include_router(init_calendar_auth.router)
+app.include_router(calendar_status.router, prefix="/api")
 
 # ✅ Healthcheck
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
 
-# ✅ Diagnóstico de rutas
+# ✅ Diagnóstico de rutas activas
 @app.get("/test_routes")
 def test_routes():
     return [route.path for route in app.routes]
