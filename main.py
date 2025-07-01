@@ -8,12 +8,10 @@ import jwt
 load_dotenv(".env")
 print("🔄 Variables de entorno cargadas desde .env")
 
-# 🔍 Diagnóstico explícito de entorno
-print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
-print("🔍 GOOGLE_CLIENT_SECRET:", os.getenv("GOOGLE_CLIENT_SECRET"))
-print("🔍 GOOGLE_REDIRECT_URI_LOCAL:", os.getenv("GOOGLE_REDIRECT_URI_LOCAL"))
-print("🔍 GOOGLE_REDIRECT_URI_PROD:", os.getenv("GOOGLE_REDIRECT_URI_PROD"))
-print("🔍 ENV:", os.getenv("ENV"))
+# 🔍 Diagnóstico explícito de entorno (solo en desarrollo)
+if os.getenv("ENV") != "prod":
+    print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
+    # print("🔍 GOOGLE_CLIENT_SECRET:", os.getenv("GOOGLE_CLIENT_SECRET"))  # 🔐 Comentado por seguridad
 
 # ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
