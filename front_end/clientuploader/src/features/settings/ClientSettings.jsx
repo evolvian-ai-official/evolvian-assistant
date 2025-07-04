@@ -140,15 +140,8 @@ export default function ClientSettings() {
         <button onClick={() => setActiveTab("prompt")} style={tabStyle(activeTab === "prompt")}>
           🎨 {t("custom_prompt")}
         </button>
-        {/* 🔒 Chat Widget oculto por ahora */}
-        {/* 
-        <button onClick={() => setActiveTab("widget")} style={tabStyle(activeTab === "widget")}>
-          💬 {t("chat_widget")}
-        </button> 
-        */}
       </div>
 
-      {/* Vistas por pestaña */}
       {activeTab === "plan" && (
         <PlanInfo activeTab={activeTab} formData={formData} refetchSettings={fetchSettings} />
       )}
@@ -162,6 +155,7 @@ export default function ClientSettings() {
           <PromptSettings
             activeTab={activeTab}
             custom_prompt={formData.custom_prompt}
+            temperature={formData.temperature}
             hasPromptFeature={hasPromptFeature}
             onChange={handleChange}
             maxLength={MAX_PROMPT_LENGTH}
@@ -184,36 +178,6 @@ export default function ClientSettings() {
           </button>
         </form>
       )}
-
-      {/* 🔒 WidgetSettings oculto por ahora */}
-      {/* 
-      {activeTab === "widget" && (
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
-          <WidgetSettings
-            activeTab={activeTab}
-            require_email={formData.require_email}
-            require_phone={formData.require_phone}
-            require_terms={formData.require_terms}
-            onChange={handleChange}
-          />
-          <button
-            type="submit"
-            style={{
-              backgroundColor: "#4a90e2",
-              color: "white",
-              padding: "10px 16px",
-              border: "none",
-              borderRadius: "6px",
-              cursor: "pointer",
-              fontWeight: "bold",
-              width: "fit-content"
-            }}
-          >
-            {t("save_settings")}
-          </button>
-        </form>
-      )}
-      */}
 
       {status.message && (
         <p style={{

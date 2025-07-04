@@ -3,7 +3,6 @@ from fastapi.responses import JSONResponse
 from datetime import datetime
 import re
 
-from api.config import config
 from api.modules.assistant_rag.rag_pipeline import ask_question
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.calendar.google_calendar import get_availability_from_google_calendar
@@ -11,8 +10,8 @@ from api.modules.calendar_logic import save_appointment_if_valid
 
 router = APIRouter()
 
-DEFAULT_PROMPT = "You are a helpful assistant. Provide relevant answers based only on the uploaded documents."
 MAX_DAILY_MESSAGES_INTERNAL = 1000  # 💡 Límite diario solo para Evolvian Support Bot
+
 
 def is_availability_request(text: str) -> bool:
     text = text.lower()
@@ -21,6 +20,7 @@ def is_availability_request(text: str) -> bool:
         "citas disponibles", "cuándo puedo", "calendar disponible"
     ]
     return any(kw in text for kw in keywords)
+
 
 @router.post("/ask")
 async def ask(question: str = Form(...), client_id: str = Form(...)):
@@ -73,16 +73,11 @@ async def ask(question: str = Form(...), client_id: str = Form(...)):
                 answer = calendar_res.get("message", "No se encontraron horarios disponibles.")
             return JSONResponse(content={"answer": answer})
 
-        # 📌 Agendamiento directo con fecha detectada automáticamente (más flexible)
-        print("📥 Revisando si el mensaje contiene fecha ISO...")
-        print(f"🔍 Mensaje recibido: {question}")
-
+        # 📌 Agendamiento directo con fecha detectada automáticamente
         iso_match = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:-\d{2}:\d{2})?", question)
         if iso_match:
             try:
                 raw_datetime = iso_match.group()
-                print(f"✅ Fecha encontrada: {raw_datetime}")
-
                 scheduled_time = datetime.fromisoformat(raw_datetime)
 
                 success = save_appointment_if_valid(
@@ -95,25 +90,9 @@ async def ask(question: str = Form(...), client_id: str = Form(...)):
             except Exception as e:
                 print(f"❌ Error al intentar agendar: {e}")
                 return JSONResponse(content={"answer": f"❌ Error al intentar agendar la cita: {e}"})
-        else:
-            print("❌ No se encontró una fecha válida en el mensaje.")
 
-        # 🧠 Prompt personalizado
-        settings_res = supabase.table("client_settings")\
-            .select("custom_prompt")\
-            .eq("client_id", client_id)\
-            .single()\
-            .execute()
-
-        if settings_res.error:
-            print(f"⚠️ Error al obtener el prompt: {settings_res.error}")
-            prompt = DEFAULT_PROMPT
-        else:
-            prompt = settings_res.data.get("custom_prompt", DEFAULT_PROMPT) if settings_res.data else DEFAULT_PROMPT
-
-        # 🤖 RAG
-        response = ask_question(question, client_id, prompt=prompt)
-
+        # 🤖 RAG principal
+        response = ask_question(question, client_id)
         return JSONResponse(content={"answer": response})
 
     except Exception as e:

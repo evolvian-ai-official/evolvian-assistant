@@ -80,6 +80,8 @@ es: {
   no_history: "No hay historial reciente.",
   recent_documents: "Documentos Recientes",
   no_documents: "No hay documentos recientes.",
+  custom_prompt_editing: "Edición de AI Chat prompt",
+  calendar_sync: "Sync con Google calendar",
 
   // Chat Assistant
   chat_assistant: "Asistente de Chat",
@@ -249,6 +251,7 @@ es: {
   feature_higher_limits: "Limites altos",
   feature_all_starter: "Todo de Starter",
   feature_whatsapp: "Whatsapp",
+   feature_googlecalendar: "Google Calendar",
   feature_custom_prompt: "Prompt AI customizable",
   feature_all_premium: "Todo de Premium",
   feature_custom_branding: "Branding customizable",
@@ -256,6 +259,7 @@ es: {
   feature_custom_needs: "Necesidades personalizadas",
   start_date: "Inicio de plan",
   end_date: "Fin de plan",
+  temperature_label: "Temperatura",
 
 
 
@@ -374,6 +378,8 @@ en: {
   your_plan: "Your Plan",
   messages: "Mesages",
   documents: "Documents",
+  custom_prompt_editing: "AI Chat Prompt Edition",
+  calendar_sync: "Sync with Google calendar",
 
   active_features: "Active Features",
   chat_widget: "✅ Chat Widget",
@@ -530,6 +536,7 @@ en: {
   feature_higher_limits: "Higher limits",
   feature_all_starter: "All starter",
   feature_whatsapp: "Whatsapp",
+  feature_googlecalendar: "Google Calendar",
   feature_custom_prompt: "Custom Prompt",
   feature_all_premium: "All premium",
   feature_custom_branding: "Custom branding",
@@ -538,6 +545,7 @@ en: {
   start_date: "Start date",
   end_date: "End date",
   see_plans: "See plans",
+  temperature_label: "Temperature",
 
 
 

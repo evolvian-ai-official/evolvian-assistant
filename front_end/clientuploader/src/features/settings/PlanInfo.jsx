@@ -28,7 +28,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       id: "premium",
       name: t("plan_premium"),
       price: "$49/mo",
-      features: [t("feature_all_starter"), t("feature_whatsapp"), t("feature_custom_prompt")],
+      features: [t("feature_all_starter"), t("feature_whatsapp"), t("feature_googlecalendar"), t("feature_custom_prompt")],
     },
     {
       id: "white_label",

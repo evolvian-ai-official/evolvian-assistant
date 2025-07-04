@@ -35,7 +35,10 @@ export default function GoogleCalendar() {
       .then((data) => {
         if (data.connected) {
           setConnected(true);
-          setAvailableSlots(data.available_slots || []);
+          const safeSlots = (data.available_slots || []).filter(
+            (slot) => typeof slot === "string" || typeof slot === "number"
+          );
+          setAvailableSlots(safeSlots);
         }
       })
       .catch(() => {
@@ -82,11 +85,15 @@ export default function GoogleCalendar() {
               <p className="text-sm text-gray-500">{t("calendar_no_slots")}</p>
             ) : (
               <ul className="list-disc ml-5">
-                {availableSlots.map((slot) => (
-                  <li key={slot} className="text-sm">
-                    {new Date(slot).toLocaleString()}
-                  </li>
-                ))}
+                {availableSlots.map((slot, index) => {
+                  const safeDate = new Date(slot);
+                  const isValid = !isNaN(safeDate.getTime());
+                  return (
+                    <li key={index} className="text-sm">
+                      {isValid ? safeDate.toLocaleString() : "⛔ Fecha inválida"}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>
