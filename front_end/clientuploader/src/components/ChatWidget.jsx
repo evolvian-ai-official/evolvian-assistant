@@ -7,7 +7,8 @@ export default function ChatWidget({
   requirePhone = false,
   requireTerms = false,
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+
   const [clientId, setClientId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -19,6 +20,9 @@ export default function ChatWidget({
   const [thinkingDots, setThinkingDots] = useState("");
 
   const messagesEndRef = useRef(null);
+
+  // ✅ No renderizar nada si idioma aún no está cargado
+  if (!lang) return null;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -55,10 +59,7 @@ export default function ChatWidget({
   };
 
   const sendMessage = async () => {
-    if (!input.trim() || !clientId) {
-      console.warn("⚠️ No hay input o clientId no definido:", { input, clientId });
-      return;
-    }
+    if (!input.trim() || !clientId) return;
 
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const userMsg = { from: "user", text: input, timestamp: now };
@@ -78,12 +79,8 @@ export default function ChatWidget({
         body: JSON.stringify({ public_client_id: clientId, message: input }),
       });
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`Backend error ${res.status}: ${errorText}`);
-      }
-
       const data = await res.json();
+
       const botMsg = {
         from: "bot",
         text: data.answer || "(respuesta vacía)",
@@ -188,6 +185,7 @@ export default function ChatWidget({
     </div>
   );
 }
+
 
 const styles = {
   wrapper: {
