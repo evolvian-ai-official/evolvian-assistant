@@ -15,7 +15,7 @@ def serve_embed_js():
   const isLocal = window.location.hostname === "localhost" || window.location.hostname.startsWith("192.");
 const baseUrl = isLocal
   ? "http://localhost:5173"
-  : "https://www.evolvianai.com";
+  : "https://www.evolvianai.net";
 
 
   console.log("📦 public_client_id:", clientId);

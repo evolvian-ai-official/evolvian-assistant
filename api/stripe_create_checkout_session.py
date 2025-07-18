@@ -45,12 +45,12 @@ async def create_checkout_session(request: Request):
     success_url = (
         "http://localhost:5173/dashboard"
         if env == "local"
-        else os.getenv("STRIPE_SUCCESS_URL", "https://www.evolvianai.com/settings")
+        else os.getenv("STRIPE_SUCCESS_URL", "https://www.evolvianai.net/settings")
     )
     cancel_url = (
         "http://localhost:5173/settings"
         if env == "local"
-        else os.getenv("STRIPE_CANCEL_URL", "https://www.evolvianai.com/settings")
+        else os.getenv("STRIPE_CANCEL_URL", "https://www.evolvianai.net/settings")
     )
 
     try:

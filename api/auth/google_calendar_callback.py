@@ -18,7 +18,7 @@ GOOGLE_REDIRECT_URI = (
     else os.getenv("GOOGLE_REDIRECT_URI_LOCAL")
 )
 DASHBOARD_REDIRECT_URL = (
-    os.getenv("DASHBOARD_REDIRECT_URL_PROD", "https://evolvianai.com/dashboard")
+    os.getenv("DASHBOARD_REDIRECT_URL_PROD", "https://evolvianai.net/dashboard")
     if ENV == "prod"
     else os.getenv("DASHBOARD_REDIRECT_URL_LOCAL", "http://localhost:5173/dashboard")
 )

@@ -26,8 +26,8 @@ async def create_checkout_session(request: Request):
                 "quantity": 1,
             }],
             mode="subscription",  # usa "payment" si es una compra única
-            success_url=os.getenv("STRIPE_SUCCESS_URL", "https://evolvianai.com/success"),
-            cancel_url=os.getenv("STRIPE_CANCEL_URL", "https://evolvianai.com/cancel"),
+            success_url=os.getenv("STRIPE_SUCCESS_URL", "https://evolvianai.net/success"),
+            cancel_url=os.getenv("STRIPE_CANCEL_URL", "https://evolvianai.net/cancel"),
             client_reference_id=client_id,
             metadata={"plan_id": plan_id}
         )
