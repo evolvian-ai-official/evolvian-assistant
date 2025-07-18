@@ -127,6 +127,11 @@ app.include_router(calendar_status.router, prefix="/api")
 def health_check():
     return {"status": "ok"}
 
+# ✅ Root endpoint
+@app.get("/")
+def root():
+    return {"message": "Evolvian Assistant API is running"}
+
 # ✅ Diagnóstico de rutas activas
 @app.get("/test_routes")
 def test_routes():
