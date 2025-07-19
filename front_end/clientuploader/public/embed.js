@@ -13,7 +13,7 @@
   }
 
   const iframe = document.createElement("iframe");
-  iframe.src = `https://www.evolvianai.com/widget/index.html?public_client_id=${publicClientId}`;
+  iframe.src = `https://www.evolvianai.net/widget/index.html?public_client_id=${publicClientId}`;
   iframe.style.position = "fixed";
   iframe.style.bottom = "20px";
   iframe.style.right = "20px";
