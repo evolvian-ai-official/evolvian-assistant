@@ -1,0 +1,1 @@
+import{d as t,j as e,R as a,L as r,C as c}from"./ChatWidget-Cpya50tL.js";const o=new URLSearchParams(window.location.search),s=o.get("public_client_id");t.createRoot(document.getElementById("root")).render(e.jsx(a.StrictMode,{children:e.jsx(r,{children:e.jsx(c,{clientId:s})})}));
