@@ -78,7 +78,7 @@ app = FastAPI()
 # ✅ CORS para producción
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://clientuploader.onrender.com","https://evolvianai.net","https://www.evolvianai.net"],
+    allow_origins=["https://clientuploader.onrender.com","https://evolvianai.net","https://www.evolvianai.net", "https://evolvian.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
