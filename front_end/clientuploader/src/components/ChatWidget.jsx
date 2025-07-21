@@ -71,7 +71,7 @@ export default function ChatWidget({
       const apiUrl =
         window.location.hostname === "localhost"
           ? "http://localhost:8001"
-          : "https://evolvian.onrender.com";
+          : "https://evolvian-assistant.onrender.com";
 
       const res = await fetch(`${apiUrl}/chat`, {
         method: "POST",
