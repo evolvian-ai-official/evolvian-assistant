@@ -78,6 +78,7 @@ app.add_middleware(
     allow_origins=[
         # Producción
         "https://clientuploader.onrender.com",
+        "https://evolvianai.com",
         "https://evolvianai.net",
         "https://www.evolvianai.net",
         "https://evolvian-assistant.onrender.com",

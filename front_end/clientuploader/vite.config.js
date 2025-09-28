@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { resolve } from "path";
 
 export default defineConfig({
-  base: "./",
+  base: "/", // 👈 rutas absolutas en prod
   plugins: [react()],
   resolve: {
     alias: {
@@ -12,15 +12,15 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    assetsDir: "assets",
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),   // Admin
-        widget: resolve(__dirname, "widget.html") // Widget iframe
+        widget: resolve(__dirname, "widget.html") // Widget iframe 👈 añadido
       },
     },
-    assetsDir: "assets",
   },
   server: {
-    port: 4223, // ⚡ fija el puerto del frontend para evitar cambios
+    port: 4223,
   },
 });
