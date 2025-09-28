@@ -140,7 +140,7 @@ supabase==2.15.0
 supafunc==0.9.4
 sympy==1.14.0
 tenacity==9.1.2
-tiktoken==0.6.0
+tiktoken>=0.7,<1.0
 tokenizers==0.19.1
 tqdm==4.67.1
 twilio==9.5.2
