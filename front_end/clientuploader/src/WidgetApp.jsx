@@ -1,4 +1,4 @@
-// src/WidgetApp.jsx
+// HIGH src/WidgetApp.jsx es el entrypoint del widget real: el que se carga cuando un cliente lo incrusta en su web
 import React from "react";
 import ReactDOM from "react-dom/client";
 import ChatWidget from "./components/ChatWidget";

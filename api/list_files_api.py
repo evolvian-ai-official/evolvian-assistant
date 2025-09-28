@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter, Query, HTTPException
 from api.config.config import supabase
-import os
 
 router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
@@ -14,15 +13,16 @@ def list_files(client_id: str = Query(...)):
         if not files:
             return {"files": []}
 
-        # 🔐 Generar URL firmada por archivo
         result = []
         for file in files:
+            storage_path = f"{client_id}/{file['name']}"
             signed = supabase.storage.from_(BUCKET_NAME).create_signed_url(
-                path=f"{client_id}/{file['name']}",
+                path=storage_path,
                 expires_in=3600
             )
             result.append({
-                "name": file["name"],
+                "name": file["name"],  # solo el nombre
+                "storage_path": storage_path,  # ruta completa
                 "last_updated": file.get("updated_at"),
                 "signed_url": signed.get("signedURL"),
                 "size_kb": round(file.get("metadata", {}).get("size", 0) / 1024, 2)

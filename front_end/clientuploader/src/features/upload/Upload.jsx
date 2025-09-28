@@ -13,7 +13,9 @@ export default function Upload() {
   const fetchFiles = async () => {
     if (!clientId) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/list_files?client_id=${clientId}`);
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/list_files?client_id=${clientId}`
+      );
       const data = await res.json();
       setUploadedFiles(data.files || []);
     } catch (err) {
@@ -44,10 +46,13 @@ export default function Upload() {
     formData.append("file", file);
 
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/upload_document`, {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/upload_document`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
 
       if (res.status === 403) {
         const errorData = await res.json();
@@ -79,6 +84,34 @@ export default function Upload() {
     }
   };
 
+  const handleDelete = async (storagePath) => {
+    if (!window.confirm(`⚠️ ${t("confirm_delete_file")} ${storagePath}?`)) return;
+
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/delete_file?storage_path=${encodeURIComponent(
+          storagePath
+        )}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || t("unknown_delete_error"));
+      }
+
+      const data = await res.json();
+      console.log("🗑️ Respuesta backend:", data);
+      setMessage(`✅ ${data.message || t("file_deleted_success")}`);
+      fetchFiles();
+    } catch (err) {
+      console.error("❌ Error al borrar archivo:", err);
+      setMessage(`❌ ${err.message}`);
+    }
+  };
+
   return (
     <div
       style={{
@@ -103,13 +136,21 @@ export default function Upload() {
           border: "1px solid #274472",
         }}
       >
-        <h1 style={{ fontSize: "1.8rem", marginBottom: "1rem", color: "#f5a623" }}>
+        <h1
+          style={{ fontSize: "1.8rem", marginBottom: "1rem", color: "#f5a623" }}
+        >
           📤 {t("upload_document")}
         </h1>
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: "1.2rem" }}>
-            <label style={{ display: "block", marginBottom: "0.5rem", color: "#ededed" }}>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "0.5rem",
+                color: "#ededed",
+              }}
+            >
               📎 {t("select_file_label")}
             </label>
             <input
@@ -148,16 +189,47 @@ export default function Upload() {
         </form>
 
         {message && (
-          <p style={{ marginTop: "1rem", fontWeight: "500", color: "#a3d9b1" }}>{message}</p>
+          <p
+            style={{ marginTop: "1rem", fontWeight: "500", color: "#a3d9b1" }}
+          >
+            {message}
+          </p>
         )}
 
         {uploadedFiles.length > 0 && (
           <div style={{ marginTop: "2rem" }}>
-            <h3 style={{ color: "#f5a623", marginBottom: "0.75rem" }}>📂 {t("uploaded_files")}</h3>
+            <h3 style={{ color: "#f5a623", marginBottom: "0.75rem" }}>
+              📂 {t("uploaded_files")}
+            </h3>
             <ul style={{ listStyleType: "none", paddingLeft: 0 }}>
               {uploadedFiles.map((file, idx) => (
-                <li key={idx} style={{ marginBottom: "0.5rem", color: "#ededed" }}>
-                  📄 {file.name} – {file.size_kb} KB
+                <li
+                  key={idx}
+                  style={{
+                    marginBottom: "0.8rem",
+                    color: "#ededed",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>
+                    📄 {file.name} – {file.size_kb} KB
+                  </span>
+                  <button
+                    onClick={() => handleDelete(file.storage_path)}
+                    style={{
+                      backgroundColor: "#e74c3c",
+                      padding: "0.4rem 0.8rem",
+                      color: "white",
+                      borderRadius: "6px",
+                      border: "none",
+                      cursor: "pointer",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    🗑️ {t("delete")}
+                  </button>
                 </li>
               ))}
             </ul>

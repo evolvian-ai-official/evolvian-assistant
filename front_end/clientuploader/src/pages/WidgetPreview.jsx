@@ -1,11 +1,11 @@
-// src/pages/WidgetPreview.jsx
+// src/pages/WidgetPreview.jsx   SANDBOX PRUEBA PARA VER COMO SE VERIA EL WIDGET
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import ChatWidget from "../components/ChatWidget";
 
 export default function WidgetPreview() {
   const [searchParams] = useSearchParams();
-  const publicClientId = searchParams.get("public_client_id"); // ✅ CORREGIDO
+  const publicClientId = searchParams.get("public_client_id"); //
 
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);

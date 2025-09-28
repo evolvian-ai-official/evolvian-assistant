@@ -11,11 +11,9 @@ print("🔄 Variables de entorno cargadas desde .env")
 # 🔍 Diagnóstico explícito de entorno (solo en desarrollo)
 if os.getenv("ENV") != "prod":
     print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
-    # print("🔍 GOOGLE_CLIENT_SECRET:", os.getenv("GOOGLE_CLIENT_SECRET"))  # 🔐 Comentado por seguridad
 
 # ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
 if not supabase_key:
     print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env")
 else:
@@ -24,7 +22,6 @@ else:
         decoded = jwt.decode(supabase_key, options={"verify_signature": False})
         role = decoded.get("role")
         print("🔐 Supabase Key Role:", role)
-
         if role != "service_role":
             print("⚠️ ¡CUIDADO! Estás usando una clave con rol:", role)
         else:
@@ -54,6 +51,7 @@ from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
+from api.routes import reset  # Cron
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
@@ -69,22 +67,31 @@ from api.calendar_routes import router as calendar_router
 from api.calendar_booking import router as calendar_booking_router
 from api.modules.calendar import init_calendar_auth
 from api import calendar_status
-from api import auth
 
 print("🚀 Routers importados correctamente")
 
 app = FastAPI()
 
-# ✅ CORS para producción
+# ✅ CORS para producción y desarrollo local
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://clientuploader.onrender.com","https://evolvianai.net","https://www.evolvianai.net", "https://evolvian-assistant.onrender.com"],
+    allow_origins=[
+        # Producción
+        "https://clientuploader.onrender.com",
+        "https://evolvianai.net",
+        "https://www.evolvianai.net",
+        "https://evolvian-assistant.onrender.com",
+        # Local
+        "http://localhost:4222",
+        "http://localhost:4223",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Registro de routers
+# ✅ Registro de routers (sin prefijo /api)
 app.include_router(upload_router)
 app.include_router(history_router)
 app.include_router(client_router)
@@ -106,21 +113,22 @@ app.include_router(list_files_router)
 app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
 app.include_router(embed_router)
+app.include_router(reset.router, tags=["subscriptions"])
 
 # ✅ Stripe
 app.include_router(stripe_router)
-app.include_router(stripe_checkout_router, prefix="/api")
-app.include_router(stripe_cancel_router, prefix="/api")
-app.include_router(stripe_change_plan_router, prefix="/api")
+app.include_router(stripe_checkout_router)
+app.include_router(stripe_cancel_router)
+app.include_router(stripe_change_plan_router)
 
 # ✅ Google Calendar & otras integraciones
 app.include_router(meta_webhook_router)
-app.include_router(calendar_router, prefix="/api")
-app.include_router(calendar_booking_router, prefix="/api")
-app.include_router(google_auth_router, prefix="/api")
-app.include_router(google_callback_router, prefix="/api")
+app.include_router(calendar_router)
+app.include_router(calendar_booking_router)
+app.include_router(google_auth_router)
+app.include_router(google_callback_router)
 app.include_router(init_calendar_auth.router)
-app.include_router(calendar_status.router, prefix="/api")
+app.include_router(calendar_status.router)
 
 # ✅ Healthcheck
 @app.get("/healthz")

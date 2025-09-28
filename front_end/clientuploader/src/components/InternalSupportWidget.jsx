@@ -1,7 +1,7 @@
 // src/components/InternalSupportWidget.jsx
 import { useState } from "react";
 import ChatWidget from "./ChatWidget";
-import { INTERNAL_PUBLIC_CLIENT_ID } from "../constants/clientIds"; // ✅ (crear este archivo)
+import { INTERNAL_PUBLIC_CLIENT_ID } from "../constants/clientIds";
 
 export default function InternalSupportWidget() {
   const [isOpen, setIsOpen] = useState(false);
@@ -16,17 +16,31 @@ export default function InternalSupportWidget() {
           bottom: isOpen ? "540px" : "24px",
           right: "24px",
           zIndex: 10000,
-          backgroundColor: "#4a90e2",
-          color: "white",
           borderRadius: "50%",
-          width: "48px",
-          height: "48px",
+          width: "64px",
+          height: "64px",
           border: "none",
-          fontSize: "20px",
           cursor: "pointer",
+          overflow: "hidden", // ✅ asegura que el logo se mantenga redondo
+          padding: 0,
         }}
       >
-        {isOpen ? "×" : "💬"}
+        {isOpen ? (
+          <span style={{ fontSize: "32px", color: "white", background: "#4a90e2", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            ×
+          </span>
+        ) : (
+          <img
+            src="/logo-evolvian.svg"
+            alt="Evolvian Logo"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover", // ✅ el logo llena el círculo
+              borderRadius: "50%",
+            }}
+          />
+        )}
       </button>
 
       {isOpen && (

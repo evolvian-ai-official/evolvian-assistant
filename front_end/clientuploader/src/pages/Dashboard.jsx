@@ -3,6 +3,7 @@ import { useClientId } from "../hooks/useClientId";
 import { supabase } from "../lib/supabaseClient";
 import { useLanguage } from "../contexts/LanguageContext";
 import WelcomeModal from "../components/WelcomeModal";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export default function Dashboard() {
   const [dashboardData, setDashboardData] = useState(null);
@@ -28,7 +29,9 @@ export default function Dashboard() {
         return;
       }
       try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL}/dashboard_summary?client_id=${clientId}`);
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL}/dashboard_summary?client_id=${clientId}`
+        );
         const data = await res.json();
         if (res.ok) {
           setDashboardData(data);
@@ -45,7 +48,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     const redirected = sessionStorage.getItem("alreadyRedirected");
-    console.log("🔄 alreadyRedirected:", redirected);
     if (redirected !== "true") {
       setShowWelcome(true);
     }
@@ -59,31 +61,66 @@ export default function Dashboard() {
     );
   }
 
-  const { plan, usage, history_preview, documents_preview, assistant_config } = dashboardData;
+  const { 
+    plan, 
+    usage, 
+    history_preview, 
+    assistant_config, 
+    upgrade_suggestion, 
+    subscription_start, 
+    subscription_end 
+  } = dashboardData;
+
   const normalize = (str) => str.toLowerCase().replace(/\s+/g, "_");
-  const activeFeatures = plan?.plan_features?.map(f => normalize(f)) || [];
+  const activeFeatures = plan?.plan_features?.map((f) => normalize(f)) || [];
+
+  // 📊 Datos para la gráfica
+  const chartData = [
+    {
+      name: t("messages"),
+      used: usage.messages_used,
+      max: plan.is_unlimited ? usage.messages_used : plan.max_messages,
+    },
+    {
+      name: t("documents"),
+      used: usage.documents_uploaded,
+      max: plan.max_documents,
+    },
+  ];
 
   return (
-    <div style={{
-      backgroundColor: showWelcome ? "rgba(15,28,46,0.7)" : "#0f1c2e",
-      minHeight: "100vh",
-      padding: "2rem",
-      fontFamily: "system-ui, sans-serif",
-      color: "white",
-      overflow: "hidden",
-    }}>
+    <div
+      style={{
+        backgroundColor: showWelcome ? "rgba(15,28,46,0.7)" : "#0f1c2e",
+        minHeight: "100vh",
+        padding: "2rem",
+        fontFamily: "system-ui, sans-serif",
+        color: "white",
+        overflow: "hidden",
+      }}
+    >
       {showWelcome && (
-        <WelcomeModal onClose={() => {
-          console.log("📴 Cerrando WelcomeModal");
-          setShowWelcome(false);
-        }} />
+        <WelcomeModal
+          onClose={() => setShowWelcome(false)}
+        />
       )}
 
-      <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", color: "#f5a623", marginBottom: "0.5rem" }}>
+      <h1
+        style={{
+          fontSize: "1.8rem",
+          fontWeight: "bold",
+          color: "#f5a623",
+          marginBottom: "0.5rem",
+        }}
+      >
         👋 {t("welcome")}, {user.email}
       </h1>
       <p style={{ color: "#ededed", marginBottom: "2rem" }}>
-        {t("assistant_intro")} <strong style={{ color: "#a3d9b1" }}>{assistant_config?.assistant_name || t("your_assistant")}</strong>.
+        {t("assistant_intro")}{" "}
+        <strong style={{ color: "#a3d9b1" }}>
+          {assistant_config?.assistant_name || t("your_assistant")}
+        </strong>
+        .
       </p>
 
       {/* 🧾 Plan Actual */}
@@ -92,6 +129,61 @@ export default function Dashboard() {
         <p><strong>{plan.name}</strong></p>
         <p>{t("messages")}: {plan.is_unlimited ? "∞" : plan.max_messages}</p>
         <p>{t("documents")}: {plan.max_documents}</p>
+        {/* 🗓️ Fechas de suscripción */}
+        {subscription_start && subscription_end && (
+          <p style={{ marginTop: "0.5rem", color: "#ededed" }}>
+            {t("subscription_period")}:{" "}
+            <strong>{subscription_start} – {subscription_end}</strong>
+          </p>
+        )}
+      </div>
+
+      {/* 📊 Uso Actual */}
+      <div style={cardStyle}>
+        <h2 style={cardTitle}>{t("usage_summary")}</h2>
+        <p>
+          {t("messages_used")}:{" "}
+          <strong style={{ color: "#a3d9b1" }}>{usage.messages_used}</strong>{" "}
+          / {plan.is_unlimited ? "∞" : plan.max_messages}
+          {upgrade_suggestion && (
+            <>
+              {" "}— {t("almost_limit")} 🚀{" "}
+              {upgrade_suggestion.action === "upgrade" && (
+                <>
+                  {t("upgrade_to")} <strong>{upgrade_suggestion.to}</strong>
+                </>
+              )}
+              {upgrade_suggestion.action === "contact_support" && (
+                <> contacting <strong>{upgrade_suggestion.email}</strong></>
+              )}
+            </>
+          )}
+        </p>
+        <p>
+          {t("documents_uploaded")}:{" "}
+          <strong style={{ color: "#a3d9b1" }}>{usage.documents_uploaded}</strong>{" "}
+          / {plan.max_documents}
+        </p>
+
+        {/* 📊 Gráfico de barras */}
+        <div style={{ width: "100%", height: 250, marginTop: "1rem" }}>
+          <ResponsiveContainer>
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#274472" />
+              <XAxis dataKey="name" stroke="#ededed" />
+              <YAxis stroke="#ededed" />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#1b2a41",
+                  border: "1px solid #274472",
+                  color: "#ededed",
+                }}
+              />
+              <Bar dataKey="used" fill="#a3d9b1" name={t("used")} />
+              <Bar dataKey="max" fill="#4a90e2" name={t("max")} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       {/* ⚙️ Funcionalidades Activas */}
@@ -99,8 +191,10 @@ export default function Dashboard() {
         <h2 style={cardTitle}>{t("active_features")}</h2>
         <ul>
           {activeFeatures.length > 0 ? (
-            activeFeatures.map(f => (
-              <li key={f} style={{ marginBottom: "0.5rem" }}>✅ {t(f)}</li>
+            activeFeatures.map((f) => (
+              <li key={f} style={{ marginBottom: "0.5rem" }}>
+                ✅ {t(f)}
+              </li>
             ))
           ) : (
             <li>{t("no_features")}</li>
@@ -121,22 +215,6 @@ export default function Dashboard() {
           </ul>
         ) : (
           <p>{t("no_history")}</p>
-        )}
-      </div>
-
-      {/* 📄 Documentos */}
-      <div style={cardStyle}>
-        <h2 style={cardTitle}>{t("recent_documents")}</h2>
-        {documents_preview && documents_preview.length > 0 ? (
-          <ul>
-            {documents_preview.map((doc, idx) => (
-              <li key={idx} style={{ marginBottom: "0.5rem" }}>
-                {doc.filename} {doc.uploaded_at ? `(${new Date(doc.uploaded_at).toLocaleDateString()})` : ""}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>{t("no_documents")}</p>
         )}
       </div>
     </div>

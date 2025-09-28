@@ -70,10 +70,10 @@ export default function FeatureList({ activeTab, plan }) {
       >
         {[
           { key: "chat_widget", label: t("chat_widget"), icon: "💬" },
-          { key: "email_support", label: t("email_support"), icon: "✉️" },
-          { key: "whatsapp_integration", label: t("whatsapp_integration"), icon: "📱" },
-          { key: "custom_greeting", label: t("custom_greeting"), icon: "👋" },
-          { key: "white_labeling", label: t("white_labeling"), icon: "🏷️" }
+          //{ key: "email_support", label: t("email_support"), icon: "✉️" },
+          //{ key: "whatsapp_integration", label: t("whatsapp_integration"), icon: "📱" },
+          //{ key: "custom_greeting", label: t("custom_greeting"), icon: "👋" },
+          //{ key: "white_labeling", label: t("white_labeling"), icon: "🏷️" }
         ].map((feature) => {
           const isIncluded = isFeatureIncludedByPlan(
             feature.key,

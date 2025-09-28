@@ -7,7 +7,6 @@ import jwt
 # ✅ Cargar variables locales de entorno
 load_dotenv(".env")
 print("🔄 Variables de entorno cargadas desde .env")
-# 🔍 Diagnóstico manual de Google OAuth
 print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
 print("🔍 GOOGLE_CLIENT_SECRET:", os.getenv("GOOGLE_CLIENT_SECRET"))
 print("🔍 GOOGLE_REDIRECT_URI_LOCAL:", os.getenv("GOOGLE_REDIRECT_URI_LOCAL"))
@@ -16,7 +15,6 @@ print("🔍 ENV:", os.getenv("ENV"))
 
 # ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
 if not supabase_key:
     print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env")
 else:
@@ -25,7 +23,6 @@ else:
         decoded = jwt.decode(supabase_key, options={"verify_signature": False})
         role = decoded.get("role")
         print("🔐 Supabase Key Role:", role)
-
         if role != "service_role":
             print("⚠️ ¡CUIDADO! Estás usando una clave con rol:", role)
         else:
@@ -55,6 +52,7 @@ from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
+from api.delete_file import router as delete_file_router
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
@@ -64,15 +62,13 @@ from api.stripe_change_plan import router as stripe_change_plan_router
 
 # ✅ Integraciones externas
 from api.meta_webhook import router as meta_webhook_router
-from api.auth.google_calendar_auth import router as google_auth_router         # 🟢 Nuevo
-from api.auth.google_calendar_callback import router as google_callback_router # 🟢 Nuevo
+from api.auth.google_calendar_auth import router as google_auth_router
+from api.auth.google_calendar_callback import router as google_callback_router
 from api import calendar_status
 from api.calendar_routes import router as calendar_router
 from api.calendar_booking import router as calendar_booking_router
 from api.auth import google_calendar_auth
 from api.modules.calendar import init_calendar_auth
-
-
 
 print("🚀 Routers importados correctamente")
 
@@ -81,51 +77,55 @@ app = FastAPI()
 # ✅ CORS para pruebas locales
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Cambia esto en producción
+    allow_origins=[
+        "http://localhost:4222",
+        "http://localhost:4223",
+        "http://localhost:5173",  # Vite default
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Registro de routers
-app.include_router(upload_router)
-app.include_router(history_router)
-app.include_router(client_router)
-app.include_router(ask_router)
-app.include_router(twilio_router)
-app.include_router(initialize_user_router)
-app.include_router(client_settings_router)
-app.include_router(link_whatsapp_router)
-app.include_router(chat_widget_router)
-app.include_router(check_email_router)
-app.include_router(dashboard_summary_router)
-app.include_router(user_flags_router)
-app.include_router(widget_consents_router)
-app.include_router(terms_router)
-app.include_router(clear_new_user_flag_router)
-app.include_router(client_profile_router)
-app.include_router(accept_terms_router)
-app.include_router(list_files_router)
-app.include_router(list_chunks_router)
-app.include_router(delete_chunks_router)
-app.include_router(embed_router)
+# ✅ Registro de routers con prefijo /api
+app.include_router(upload_router, prefix="/api")
+app.include_router(history_router, prefix="/api")
+app.include_router(client_router, prefix="/api")
+app.include_router(ask_router, prefix="/api")
+app.include_router(twilio_router, prefix="/api")
+app.include_router(initialize_user_router, prefix="/api")
+app.include_router(client_settings_router, prefix="/api")
+app.include_router(link_whatsapp_router, prefix="/api")
+app.include_router(chat_widget_router, prefix="/api")
+app.include_router(check_email_router, prefix="/api")
+app.include_router(dashboard_summary_router, prefix="/api")
+app.include_router(user_flags_router, prefix="/api")
+app.include_router(widget_consents_router, prefix="/api")
+app.include_router(terms_router, prefix="/api")
+app.include_router(clear_new_user_flag_router, prefix="/api")
+app.include_router(client_profile_router, prefix="/api")
+app.include_router(accept_terms_router, prefix="/api")
+app.include_router(list_files_router, prefix="/api")
+app.include_router(list_chunks_router, prefix="/api")
+app.include_router(delete_chunks_router, prefix="/api")
+app.include_router(embed_router, prefix="/api")
+app.include_router(delete_file_router, prefix="/api", tags=["Files"])
 
 # ✅ Stripe
-app.include_router(stripe_router)
+app.include_router(stripe_router, prefix="/api")
 app.include_router(stripe_checkout_router, prefix="/api")
 app.include_router(stripe_cancel_router, prefix="/api")
 app.include_router(stripe_change_plan_router, prefix="/api")
 
 # ✅ Otras integraciones
-app.include_router(meta_webhook_router)
+app.include_router(meta_webhook_router, prefix="/api")
 app.include_router(calendar_router, prefix="/api")
-app.include_router(google_auth_router, prefix="/api")         # 🟢 Google OAuth Step 1
-app.include_router(google_callback_router, prefix="/api")     # 🟢 Google OAuth Step 2
+app.include_router(google_auth_router, prefix="/api")
+app.include_router(google_callback_router, prefix="/api")
 app.include_router(calendar_status.router, prefix="/api")
-app.include_router(calendar_router)
 app.include_router(calendar_booking_router, prefix="/api")
 app.include_router(google_calendar_auth.router, prefix="/api")
-app.include_router(init_calendar_auth.router)
+app.include_router(init_calendar_auth.router, prefix="/api")
 
 # ✅ Healthcheck
 @app.get("/healthz")

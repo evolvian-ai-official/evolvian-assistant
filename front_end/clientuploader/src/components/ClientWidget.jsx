@@ -1,4 +1,4 @@
-// src/components/ClientWidget.jsx
+// src/components/ClientWidget.jsx es un wrapper simplificado que sirve para pruebas rápidas: detecta client_id o public_client_id en la URL y monta el chat ocupando todo el espacio disponible.
 import { useEffect, useState } from "react";
 import ChatWidget from "./ChatWidget";
 

@@ -1,34 +1,26 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { resolve } from "path";
 
 export default defineConfig({
-  base: './',
+  base: "./",
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "src"),
+      "@": resolve(__dirname, "src"),
     },
   },
   build: {
+    outDir: "dist",
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html'),
-        widget: path.resolve(__dirname, 'chat-widget.html'),
-        iframe: path.resolve(__dirname, 'widget.html'),
-      },
-      output: {
-        entryFileNames: (chunk) => {
-          return chunk.name === 'widget' ? 'assets/widget-app.js' : 'assets/[name].js';
-        },
-        chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name].[ext]',
+        main: resolve(__dirname, "index.html"),   // Admin
+        widget: resolve(__dirname, "widget.html") // Widget iframe
       },
     },
+    assetsDir: "assets",
   },
   server: {
-    proxy: {
-      "/api": "http://localhost:8001",
-    },
+    port: 4223, // ⚡ fija el puerto del frontend para evitar cambios
   },
 });

@@ -1,30 +1,56 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Widget Evolvian</title>
-    <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        height: 100%;
-        background-color: #ffffff;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        overflow: hidden;
-      }
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Evolvian Widget</title>
 
+    <!-- Fuente (opcional, pero así unificamos tipografía) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Resets críticos: SIN márgenes, altura 100%, sin scroll del documento -->
+    <style>
+      html,
+      body,
       #root {
         height: 100%;
-        background-color: #ffffff;
-        display: flex;
-        justify-content: center;
-        align-items: center;
+        margin: 0;
+        padding: 0;
+      }
+      /* Evita que el documento (no el área de mensajes) tenga scroll */
+      html,
+      body {
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      /* Fuente por defecto para todo el widget (fallbacks incluidos) */
+      #root {
+        font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: transparent; /* o #fff si prefieres */
+      }
+      * {
+        box-sizing: border-box;
       }
     </style>
   </head>
+
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/WidgetApp.jsx"></script> <!-- ✅ directo a tu fuente -->
+
+    <!-- DEV (Vite): apunta a tu entry de React -->
+    <script type="module" src="/src/widget-app.jsx"></script>
+
+    <!-- PROD (build de Vite): descomenta y usa el bundle generado
+    <script type="module" src="/assets/widget-app.js"></script>
+    -->
   </body>
 </html>

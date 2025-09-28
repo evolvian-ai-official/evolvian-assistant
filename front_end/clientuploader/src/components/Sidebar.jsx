@@ -56,8 +56,8 @@ export default function Sidebar() {
           {[
             { label: `🧠 ${t("chat_assistant")}`, path: "/services/chat", feature: "chat_widget" },
             // { label: `✉️ ${t("email")}`, path: "/services/email", feature: "email_support" }, // Desactivado temporalmente
-            { label: `💬 ${t("whatsapp")}`, path: "/services/whatsapp", feature: "whatsapp_integration" },
-            { label: `📅 Google Calendar`, path: "/services/calendar", feature: "calendar_sync" },
+           // { label: `💬 ${t("whatsapp")}`, path: "/services/whatsapp", feature: "whatsapp_integration" }, Desactivado temporalmente
+          //  { label: `📅 Google Calendar`, path: "/services/calendar", feature: "calendar_sync" }, Desactivado temporalmente
           ].map(({ label, path, feature }) => {
             const enabled = isEnabled(feature);
             const id = path;

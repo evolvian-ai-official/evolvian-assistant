@@ -1,4 +1,4 @@
-// src/pages/ChatWidgetPage.jsx
+// src/pages/ChatWidgetPage.jsx - ESTA ES EL IFRAME
 import { useSearchParams } from "react-router-dom";
 import ChatWidget from "../components/ChatWidget";
 

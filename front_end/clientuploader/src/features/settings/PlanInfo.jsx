@@ -28,13 +28,13 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       id: "premium",
       name: t("plan_premium"),
       price: "$49/mo",
-      features: [t("feature_all_starter"), t("feature_whatsapp"), t("feature_googlecalendar"), t("feature_custom_prompt")],
+      features: [t("feature_all_starter"), t("feature_custom_prompt"), t("premium_messages")],  // t("feature_custom_branding"), t("feature_whatsapp"), t("feature_googlecalendar"),
     },
     {
       id: "white_label",
       name: t("plan_white_label"),
       price: "",
-      features: [t("feature_all_premium"), t("feature_custom_branding"), t("feature_full_api"), t("feature_custom_needs")],
+      features: [t("feature_all_premium"), t("feature_custom_needs")],
     },
   ];
 

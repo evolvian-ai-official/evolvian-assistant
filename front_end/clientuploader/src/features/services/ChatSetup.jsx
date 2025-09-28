@@ -1,3 +1,4 @@
+//  Chat setup es para darle al cliente la opcion de copiar y pegar dentro del Admin Tool
 import { useInitializeUser } from "../../hooks/useInitializeUser";
 import { useLanguage } from "../../contexts/LanguageContext"; // ✅ Importar traducción
 
@@ -11,32 +12,18 @@ export default function ChatSetup() {
   };
 
   const domain = window.location.hostname.includes("localhost")
-    ? "http://localhost:5173"
-    : "https://evolvian.app";
+    ? "http://localhost:5180"
+    : "https://evolvianai.net";
 
-  const scriptCode = `<script>
-  (function () {
-    const iframe = document.createElement("iframe");
-    iframe.src = "${domain}/widget?public_client_id=${publicClientId || "TU_ID_PUBLICO"}";
-    iframe.style.position = "fixed";
-    iframe.style.bottom = "20px";
-    iframe.style.right = "20px";
-    iframe.style.width = "360px";
-    iframe.style.height = "520px";
-    iframe.style.border = "2px solid #4a90e2";
-    iframe.style.borderRadius = "16px";
-    iframe.style.backgroundColor = "#ededed";
-    iframe.style.boxShadow = "0 6px 24px rgba(0,0,0,0.15)";
-    iframe.style.zIndex = "9999";
-    iframe.setAttribute("title", "Evolvian AI Widget");
-    iframe.setAttribute("allow", "clipboard-write; microphone");
-    document.body.appendChild(iframe);
-  })();
-</script>`;
+  const scriptCode = `<script
+  type="module"
+  src="${domain}/embed-floating.js"
+  data-public-client-id="${publicClientId}"
+></script>`;
 
   const iframeCode = `<iframe
-  src="${domain}/widget?public_client_id=${publicClientId || "TU_ID_PUBLICO"}"
-  style="width:360px;height:520px;border:2px solid #4a90e2;border-radius:16px;background-color:#ededed;box-shadow:0 6px 24px rgba(0,0,0,0.15);position:fixed;bottom:20px;right:20px;z-index:9999;"
+  src="${domain}/widget.html?public_client_id=${publicClientId || 'TU_ID_PUBLICO'}"
+  style="width:360px;height:520px;border:none;border-radius:12px;"
   allow="clipboard-write; microphone"
   title="Evolvian AI Chat Widget"
 ></iframe>`;

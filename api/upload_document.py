@@ -1,16 +1,17 @@
+# api/upload_document.py
+
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from io import BytesIO
 import requests
 import logging
 import re
 import unicodedata
 from api.config.config import supabase
 from api.modules.document_processor import process_file
-from api.modules.assistant_rag.supabase_client import track_usage  # ✅ nuevo
+from api.utils.usage_limiter import check_and_increment_usage  # ✅ corregido
 
 router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
@@ -39,7 +40,6 @@ async def upload_document(
         if not settings:
             raise HTTPException(status_code=404, detail="client_settings_not_found")
 
-        plan_id = settings.get("plan_id")
         max_documents = settings.get("plans", {}).get("max_documents", 1)
 
         # 📦 Contar archivos actuales en Supabase Storage para este cliente
@@ -99,17 +99,22 @@ async def upload_document(
         chunks = process_file(file_url=signed_url, client_id=client_id)
         logging.info(f"✅ Documento procesado correctamente para {client_id}: {filename}")
 
-        # ✅ Registrar en client_usage
-        track_usage(client_id=client_id, channel="chat", type="document", value=1)
+        # ✅ Registrar en client_usage (+1 documento)
+        check_and_increment_usage(
+            client_id=client_id,
+            usage_type="documents_uploaded",
+            delta=1
+        )
 
         return {
+            "success": True,
             "message": "Documento subido y procesado correctamente",
-            "chunks": len(chunks)
+            "chunks": len(chunks),
+            "storage_path": storage_path
         }
 
-    except HTTPException as e:
-        raise e  # 🙌 No lo captures como error inesperado
-
+    except HTTPException:
+        raise
     except Exception as e:
         logging.exception("❌ Error inesperado en /upload_document")
         raise HTTPException(status_code=500, detail=str(e))

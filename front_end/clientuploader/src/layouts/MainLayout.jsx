@@ -24,7 +24,7 @@ export default function MainLayout({ children }) {
         </div>
         <div>
           Version v1.0 —{" "}
-          <a href="https://evolvian.com" target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", color: "#a3d9b1" }}>
+          <a href="https://evolvianai.com" target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", color: "#a3d9b1" }}>
             Visit Public Site
           </a>{" "}
           |{" "}

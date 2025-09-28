@@ -4,7 +4,6 @@ import requests
 import re
 from typing import List
 from tempfile import NamedTemporaryFile
-from datetime import datetime
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -15,18 +14,17 @@ from langchain_community.vectorstores import Chroma
 
 from api.modules.assistant_rag.supabase_client import (
     save_history,
-    list_documents_with_signed_urls
-)
-from api.modules.calendar_logic import (
-    get_availability_from_google_calendar as get_calendar_availability,
-    save_appointment_if_valid
+    list_documents_with_signed_urls,
 )
 from api.modules.assistant_rag.prompt_utils import (
     get_prompt_for_client,
-    get_temperature_for_client
+    get_temperature_for_client,
 )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 🚫 Desactivar telemetría de Chroma
+os.environ["ANONYMIZED_TELEMETRY"] = "false"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def load_document(file_path: str) -> List:
@@ -46,13 +44,18 @@ def chunk_documents(documents: List) -> List:
 
 
 def fetch_signed_documents(client_id: str) -> List[str]:
+    """Obtiene URLs firmadas de Supabase (solo devuelve lista de URLs, sin imprimir tokens)."""
     try:
         res = list_documents_with_signed_urls(client_id)
         if not res:
             logging.info("📂 No hay documentos firmados disponibles.")
             return []
         urls = [doc["signed_url"] for doc in res if doc.get("signed_url")]
-        logging.info(f"📂 Documentos firmados encontrados: {len(urls)}")
+
+        # ⚠️ Evitar mostrar tokens firmados en logs
+        filenames = [url.split("/")[-1].split("?")[0] for url in urls]
+        logging.info(f"📂 Documentos firmados encontrados: {len(filenames)} → {filenames}")
+
         return urls
     except Exception as e:
         logging.error(f"❌ Error al obtener documentos firmados: {e}")
@@ -65,84 +68,42 @@ def ask_question(question: str, client_id: str, prompt: str = None) -> str:
 
     lower_question = question.strip().lower()
     if lower_question in ["hello", "hi", "hola"]:
-        return "Soy Evolvian. ¿En qué puedo ayudarte hoy?"
-
-    # Pregunta por planes o precios
-    if re.search(r"planes?|precios?|cu[aá]les son tus planes|what.*plan", lower_question):
-        return (
-            "Actualmente ofrecemos distintos planes según las necesidades de tu negocio. "
-            "Con Evolvian puedes crear asistentes personalizados usando tus propios documentos, con soporte multi-canal (widget web, WhatsApp, email), control de uso, personalización, y más.\n\n"
-            "¿Te gustaría agendar una demo o recibir más información sobre los planes disponibles?"
-        )
-
-    # Verificar si es intento de agendar cita
-    match = re.search(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(?:-\d{2}:\d{2})?", question)
-    if match:
-        selected_time = match.group(0).replace(" ", "T")
-        message = save_appointment_if_valid(client_id, selected_time)
-        return message
-
-        # 🧠 Consulta de disponibilidad en calendario (multilingüe)
-    calendar_keywords_es = ["disponibilidad", "horario disponible", "agenda", "cita", "disponible", "calendario"]
-    calendar_keywords_en = ["availability", "available time", "schedule", "appointment", "calendar", "free slot"]
-
-    if any(keyword in lower_question for keyword in calendar_keywords_es + calendar_keywords_en):
-        try:
-            calendar_data = get_calendar_availability(client_id=client_id)
-            slots = calendar_data.get("available_slots", [])
-            formatted = "\n".join(f"🕒 {slot.replace('T', ' ').split('.')[0]}" for slot in slots[:10])
-
-            if not slots:
-                # 🧾 Respuesta según idioma detectado
-                if any(kw in lower_question for kw in calendar_keywords_en):
-                    return "No available time slots found in the next 7 days."
-                else:
-                    return "No se encontraron horarios disponibles en los próximos 7 días."
-
-            if any(kw in lower_question for kw in calendar_keywords_en):
-                return f"The next available time slots are:\n{formatted}"
-            else:
-                return f"Los próximos horarios disponibles son:\n{formatted}"
-
-        except Exception as e:
-            logging.error(f"❌ Error al consultar calendario: {e}")
-            if any(kw in lower_question for kw in calendar_keywords_en):
-                return "Unable to retrieve calendar availability at this moment."
-            else:
-                return "No fue posible consultar el calendario en este momento."
-
+        return "I'm your assistant. What can I do for you today?"
 
     # RAG pipeline
     signed_urls = fetch_signed_documents(client_id)
     logging.info(f"📄 Total documentos firmados: {len(signed_urls)}")
 
     if not signed_urls:
-        return "No se encontraron documentos cargados para este asistente."
+        return "No information found for this question."
 
     all_chunks = []
     used_docs = []
 
     for url in signed_urls:
         try:
-            logging.info(f"📥 Descargando documento desde: {url}")
-            response = requests.get(url)
+            logging.info(f"📥 Descargando documento: {url.split('/')[-1].split('?')[0]}")  # solo nombre
+            response = requests.get(url, timeout=15)
             if response.status_code != 200:
                 logging.warning(f"❌ No se pudo descargar el documento (status {response.status_code})")
                 continue
-            suffix = ".pdf" if ".pdf" in url else ".txt"
+
+            suffix = ".pdf" if ".pdf" in url.lower() else ".txt"
             with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
                 tmp_file.write(response.content)
                 tmp_file.flush()
                 docs = load_document(tmp_file.name)
                 chunks = chunk_documents(docs)
-                logging.info(f"✂️ Documento particionado en {len(chunks)} chunks")
 
                 source = url.split("/")[-1].split("?")[0]
                 for chunk in chunks:
                     chunk.metadata["source"] = source
-                used_docs.append(source)
 
+                used_docs.append(source)
                 all_chunks.extend(chunks)
+
+            logging.info(f"✂️ {source} particionado en {len(chunks)} chunks")
+
         except Exception as e:
             logging.warning(f"❌ Error procesando {url}: {e}")
 
@@ -156,8 +117,8 @@ def ask_question(question: str, client_id: str, prompt: str = None) -> str:
     embeddings = OpenAIEmbeddings()
     vectordb = Chroma.from_documents(
         documents=all_chunks,
-        embedding=embeddings,
-        persist_directory=None
+        embedding=embeddings,  # ✅ FIX: parámetro correcto
+        persist_directory=None,
     )
 
     qa_chain = RetrievalQA.from_chain_type(
@@ -167,13 +128,13 @@ def ask_question(question: str, client_id: str, prompt: str = None) -> str:
         chain_type_kwargs={
             "prompt": PromptTemplate(
                 template=f"{prompt}\n\nContexto:\n{{context}}\n\nPregunta:\n{{question}}",
-                input_variables=["context", "question"]
+                input_variables=["context", "question"],
             )
-        }
+        },
     )
 
     try:
-        result = qa_chain({"query": question})
+        result = qa_chain.invoke({"query": question})
         answer = result.get("result") or result.get("answer") or result.get("output_text") or ""
         logging.info(f"✅ Respuesta generada para {client_id}: {answer}")
 
