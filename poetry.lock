@@ -1,0 +1,4 @@
+touch poetry.lock
+git add poetry.lock
+git commit -m "disable poetry auto-detection on Render"
+git push origin main

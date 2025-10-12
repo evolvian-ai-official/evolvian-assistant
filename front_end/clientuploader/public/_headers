@@ -1,0 +1,9 @@
+/widget.html
+  Content-Security-Policy: 
+    default-src 'self';
+    script-src 'self' https://sqqyamhzfgpisqjrqsjf.supabase.co;
+    style-src 'self' 'unsafe-inline' https://sqqyamhzfgpisqjrqsjf.supabase.co;
+    img-src 'self' data: https://sqqyamhzfgpisqjrqsjf.supabase.co;
+    font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com;
+    connect-src 'self' https://evolvian-assistant.onrender.com https://sqqyamhzfgpisqjrqsjf.supabase.co;
+    frame-src 'self' https://sqqyamhzfgpisqjrqsjf.supabase.co;

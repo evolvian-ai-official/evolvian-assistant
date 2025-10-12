@@ -1,0 +1,68 @@
+# =====================================
+# 🌿 Evolvian AI - .gitignore
+# =====================================
+
+# 🔒 Environment & config
+.env
+.env.*
+*.key
+*.pem
+api/config/config.py
+
+# 🧠 Cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+
+# 📦 Dependency folders
+node_modules/
+venv/
+.venv/
+env/
+.envrc
+.poetry/
+.poetry_cache/
+__pypackages__/
+
+# 🗂 Build outputs
+dist/
+build/
+*.egg-info/
+*.egg
+*.manifest
+*.spec
+*.log
+
+# 🧩 IDE files
+.vscode/
+.idea/
+*.iml
+
+# 🧠 Chroma vector databases
+chroma_db/
+data/
+chroma_*/
+
+# 📁 Temporary / test data
+tmp/
+temp/
+*.bak
+*.zip
+*.tar
+*.gz
+
+# 🚫 OS and misc
+.DS_Store
+Thumbs.db
+
+# ⚛️ React frontend (Vite / build)
+front_end/clientuploader/dist/
+front_end/publicpage/dist/
+
+# 🔧 Local scripts
+clean_for_production.py
+requirements 2.txt
+api/modules/assistant_rag/test_rag_script.py
