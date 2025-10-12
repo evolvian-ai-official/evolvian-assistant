@@ -7,7 +7,7 @@
 .env.*
 *.key
 *.pem
-api/config/config.py
+# ✅ No ignorar api/config/config.py (necesario en Render)
 
 # 🧠 Cache & compiled files
 __pycache__/
@@ -61,8 +61,10 @@ Thumbs.db
 # ⚛️ React frontend (Vite / build)
 front_end/clientuploader/dist/
 front_end/publicpage/dist/
+front_end/clientuploader/node_modules/
+front_end/publicpage/node_modules/
 
-# 🔧 Local scripts
+# 🔧 Local / dev scripts
 clean_for_production.py
 requirements 2.txt
 api/modules/assistant_rag/test_rag_script.py
