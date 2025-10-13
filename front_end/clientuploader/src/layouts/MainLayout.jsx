@@ -17,22 +17,37 @@ export default function MainLayout({ children }) {
         </main>
       </div>
 
-      {/* Footer legal */}
-      <footer style={footerStyle}>
-        <div>
-          Evolvian™ is a pending trademark application filed with the USPTO. All rights reserved.
-        </div>
-        <div>
-          Version v1.0 —{" "}
-          <a href="https://evolvianai.com" target="_blank" rel="noopener noreferrer" style={{ textDecoration: "underline", color: "#a3d9b1" }}>
-            Visit Public Site
-          </a>{" "}
-          |{" "}
-          <a href="/terms" style={{ textDecoration: "underline", color: "#a3d9b1" }}>
-            Terms & Conditions
-          </a>
-        </div>
-      </footer>
+     {/* Footer legal */}
+<footer style={footerStyle}>
+  <div>
+    Evolvian™ is a pending trademark application filed with the USPTO. All rights reserved.
+  </div>
+  <div>
+    Version v1.0 —{" "}
+    <a
+      href="https://evolvianai.com"
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ textDecoration: "underline", color: "#a3d9b1" }}
+    >
+      Visit Public Site
+    </a>{" "}
+    |{" "}
+    <a
+      href="/terms"
+      style={{ textDecoration: "underline", color: "#a3d9b1" }}
+    >
+      Terms & Conditions
+    </a>{" "}
+    |{" "}
+    <a
+      href="/PrivacyPolicy"
+      style={{ textDecoration: "underline", color: "#a3d9b1" }}
+    >
+      Privacy Policy
+    </a>
+  </div>
+</footer>
 
       {/* Widget de ayuda interna para clientes Evolvian */}
       <InternalSupportWidget />

@@ -22,6 +22,7 @@ import MainLayout from "../layouts/MainLayout";
 import PrivateRoutes from "./PrivateRoutes";
 import WidgetPreview from "../pages/WidgetPreview";
 import Terms from "../pages/Terms";
+import PrivacyPolicy from "../pages/PrivacyPolicy";
 
 export default function AppRouter() {
   const location = useLocation();
@@ -30,7 +31,7 @@ export default function AppRouter() {
     "/", "/login", "/register", "/confirm",
     "/forgot-password", "/reset-password", "/verify-mfa",
     "/welcome", "/chat-widget", "/widget", "/widget-preview", 
-    "/terms"
+    "/terms", "/PrivacyPolicy"
   ];
   const isPublicRoute = publicRoutes.includes(location.pathname);
 
@@ -46,6 +47,7 @@ export default function AppRouter() {
       <Route path="/verify-mfa" element={<VerifyMfa />} />
       <Route path="/welcome" element={<Welcome />} />
       <Route path="/terms" element={<Terms />} />
+       <Route path="/PrivacyPolicy" element={<PrivacyPolicy />} />
       <Route path="/chat-widget" element={<ChatWidgetPage />} />
       <Route path="/widget" element={<ClientWidget />} />
       <Route path="/widget-preview" element={<WidgetPreview />} />

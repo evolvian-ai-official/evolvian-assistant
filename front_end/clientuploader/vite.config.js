@@ -12,10 +12,10 @@ export default defineConfig({
   },
   build: {
     // ⚡ Usa "dist" para despliegues de frontend SaaS (Render)
-      //outDir: "dist",
+      outDir: "dist",
 
     // ⚡ Usa "../../static" cuando quieras regenerar el widget servido por FastAPI
-   outDir: "../../static",
+   //outDir: "../../static",
 
     assetsDir: "assets",
     rollupOptions: {

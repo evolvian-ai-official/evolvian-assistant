@@ -5,86 +5,130 @@ export default function Terms() {
         <h1 style={styles.title}>Terms and Conditions</h1>
 
         <p style={styles.paragraph}>
-          These Terms and Conditions (“Terms”) govern your access to and use of the Evolvian™ Software-as-a-Service platform (“Service” or “Platform”). By creating an account, subscribing to a plan, or using the Service, you agree to be legally bound by these Terms. If you do not agree, please discontinue use immediately.
+          These Terms and Conditions (“Terms”) govern your access to and use of the Evolvian™ Software-as-a-Service platform (“Service” or “Platform”). 
+          By creating an account, subscribing to a plan, or using the Service, you agree to be legally bound by these Terms. 
+          If you do not agree, please discontinue use immediately.
         </p>
 
         <h2 style={styles.subtitle}>1. Eligibility and Use of Service</h2>
         <p style={styles.paragraph}>
-          You must be at least 18 years old to use the Service. You represent and warrant that you have the authority to enter into these Terms on behalf of yourself or your organization. You agree to use the Platform only for lawful purposes and in compliance with all applicable laws and regulations.
+          You must be at least 18 years old to use the Service. You represent and warrant that you have the authority to enter into these Terms 
+          on behalf of yourself or your organization. You agree to use the Platform only for lawful purposes and in compliance with all applicable laws and regulations.
         </p>
 
         <h2 style={styles.subtitle}>2. Account Registration and Security</h2>
         <p style={styles.paragraph}>
-          You are responsible for maintaining the confidentiality of your login credentials and for all activity that occurs under your account. You must immediately notify Evolvian of any unauthorized use or security breach. Evolvian is not liable for any losses caused by unauthorized access to your account.
+          You are responsible for maintaining the confidentiality of your login credentials and for all activity that occurs under your account. 
+          You must immediately notify Evolvian of any unauthorized use or security breach. Evolvian is not liable for any losses caused by unauthorized access to your account.
         </p>
 
         <h2 style={styles.subtitle}>3. Data Ownership and Confidentiality</h2>
         <p style={styles.paragraph}>
-          You retain full ownership and rights to all documents, data, and materials you upload (“Client Data”). Evolvian does not claim ownership over your content. Client Data is stored securely and used solely to provide the Service. Evolvian does not use or share Client Data to train any public AI models. Access to Client Data is strictly limited to authorized personnel only when necessary for support, maintenance, or legal compliance.
+          You retain full ownership and rights to all documents, data, and materials you upload (“Client Data”). 
+          Evolvian does not claim ownership over your content. Client Data is stored securely and used solely to provide the Service. 
+          Evolvian does not use or share Client Data to train any public AI models. 
+          Access to Client Data is strictly limited to authorized personnel only when necessary for support, maintenance, or legal compliance.
         </p>
 
         <h2 style={styles.subtitle}>4. Data Protection and Compliance</h2>
         <p style={styles.paragraph}>
-          Evolvian applies industry-standard security measures and aligns with major international data protection frameworks, including the General Data Protection Regulation (GDPR) and the California Consumer Privacy Act (CCPA), to the extent applicable. You are responsible for ensuring your own compliance with privacy regulations that apply to your users or customers.
+          Evolvian applies industry-standard security measures and aligns with major international data protection frameworks, 
+          including the General Data Protection Regulation (GDPR) and the California Consumer Privacy Act (CCPA), to the extent applicable. 
+          You are responsible for ensuring your own compliance with privacy regulations that apply to your users or customers.
         </p>
 
         <h2 style={styles.subtitle}>5. Intellectual Property</h2>
         <p style={styles.paragraph}>
-          Evolvian and its licensors retain all rights, title, and interest in the Service, including software, algorithms, interfaces, designs, trademarks, and documentation. No rights are granted to you except as expressly stated herein. You may not copy, modify, reverse engineer, decompile, or distribute any part of the Service.
+          Evolvian and its licensors retain all rights, title, and interest in the Service, including software, algorithms, interfaces, designs, trademarks, and documentation. 
+          No rights are granted to you except as expressly stated herein. 
+          You may not copy, modify, reverse engineer, decompile, or distribute any part of the Service.
         </p>
 
         <h2 style={styles.subtitle}>6. Acceptable Use and Restrictions</h2>
         <p style={styles.paragraph}>
-          You agree not to misuse the Service. Prohibited activities include but are not limited to: uploading harmful or illegal content, attempting to disrupt or hack the platform, violating intellectual property rights, exceeding plan limits, or using the Service to generate or disseminate harmful, misleading, or discriminatory content. Evolvian reserves the right to suspend or terminate any account violating these provisions.
+          You agree not to misuse the Service. Prohibited activities include but are not limited to: uploading harmful or illegal content, 
+          attempting to disrupt or hack the platform, violating intellectual property rights, exceeding plan limits, 
+          using automated systems or bots to access the Service, or using the Service to generate or disseminate harmful, misleading, or discriminatory content. 
+          Excessive or automated API usage beyond your plan limits may result in throttling, suspension, or additional fees. 
+          Evolvian reserves the right to suspend or terminate any account violating these provisions.
         </p>
 
         <h2 style={styles.subtitle}>7. Service Plans, Billing, and Termination</h2>
         <p style={styles.paragraph}>
-          Subscription fees are charged according to your selected plan. Evolvian may modify pricing or plan limits with reasonable notice. You may cancel your subscription at any time; however, fees paid are non-refundable except as required by law. Evolvian reserves the right to suspend or terminate access for non-payment or breach of these Terms.
+          Subscription fees are charged according to your selected plan. Evolvian may modify pricing or plan limits with reasonable notice. 
+          You may cancel your subscription at any time; however, fees paid are non-refundable except as required by law. 
+          Evolvian reserves the right to suspend or terminate access for non-payment or breach of these Terms.
         </p>
 
-        <h2 style={styles.subtitle}>8. Service Availability and Updates</h2>
+        <h2 style={styles.subtitle}>8. Service Availability, Backups, and Updates</h2>
         <p style={styles.paragraph}>
-          While Evolvian strives for continuous Service availability, temporary interruptions may occur for maintenance, upgrades, or unforeseen circumstances. Evolvian is not liable for downtime, delays, or data loss resulting from such interruptions. The Service may be updated or modified at Evolvian’s discretion.
+          While Evolvian strives for continuous Service availability, temporary interruptions may occur for maintenance, upgrades, or unforeseen circumstances. 
+          Evolvian performs regular system backups but is not responsible for data loss caused by client-side actions, third-party integrations, or force majeure events. 
+          The Service may be updated, enhanced, or modified at Evolvian’s discretion without prior notice.
         </p>
 
-        <h2 style={styles.subtitle}>9. Disclaimer of Warranties</h2>
+        <h2 style={styles.subtitle}>9. AI-Generated Content Disclaimer</h2>
         <p style={styles.paragraph}>
-          The Service is provided “as is” and “as available.” Evolvian makes no warranties, express or implied, regarding accuracy, reliability, or fitness for any particular purpose. You assume all responsibility for your use of the Service and any outputs generated by AI systems.
+          Evolvian provides AI-powered functionalities that may generate automated outputs (“AI Outputs”). 
+          You acknowledge that such outputs are generated algorithmically and may not always be accurate, complete, or appropriate. 
+          Evolvian makes no representations or warranties regarding the accuracy, legality, or fitness for any particular purpose of AI Outputs. 
+          You are solely responsible for reviewing, validating, and using any AI-generated content. 
+          Evolvian is not liable for any damages or consequences arising from reliance on AI Outputs.
         </p>
 
-        <h2 style={styles.subtitle}>10. Limitation of Liability</h2>
+        <h2 style={styles.subtitle}>10. White Label and Branding</h2>
         <p style={styles.paragraph}>
-          To the maximum extent permitted by law, Evolvian and its affiliates shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including lost profits or data, arising out of or related to your use of the Service, even if advised of the possibility of such damages. In all cases, Evolvian’s total aggregate liability shall not exceed the amount you paid in the 12 months preceding the event giving rise to the claim.
+          White-label clients may use their own branding when authorized under their subscription plan. 
+          However, Evolvian retains full ownership of the underlying software, infrastructure, and technology. 
+          Any use of the Evolvian brand, trademarks, or related assets must comply with Evolvian’s written brand guidelines or prior approval.
         </p>
 
-        <h2 style={styles.subtitle}>11. Indemnification</h2>
+        <h2 style={styles.subtitle}>11. Disclaimer of Warranties</h2>
         <p style={styles.paragraph}>
-          You agree to defend, indemnify, and hold harmless Evolvian, its affiliates, officers, and employees from any claims, damages, losses, or expenses arising from your use of the Service, your violation of these Terms, or infringement of any third-party rights.
+          The Service is provided “as is” and “as available.” Evolvian makes no warranties, express or implied, 
+          regarding accuracy, reliability, uptime, merchantability, or fitness for any particular purpose. 
+          You assume all responsibility for your use of the Service and any outputs generated by AI systems.
         </p>
 
-        <h2 style={styles.subtitle}>12. Export Compliance and Legal Use</h2>
+        <h2 style={styles.subtitle}>12. Limitation of Liability</h2>
         <p style={styles.paragraph}>
-          You represent that you are not located in, under the control of, or a resident of any country or entity subject to international sanctions or export restrictions. You agree not to use the Service in violation of any applicable export or trade control laws.
+          To the maximum extent permitted by law, Evolvian and its affiliates shall not be liable for any indirect, incidental, special, consequential, or punitive damages, 
+          including lost profits, business interruption, or data loss, arising out of or related to your use of the Service, 
+          even if advised of the possibility of such damages. 
+          In all cases, Evolvian’s total aggregate liability shall not exceed the amount you paid in the 12 months preceding the event giving rise to the claim.
         </p>
 
-        <h2 style={styles.subtitle}>13. Modifications to Terms</h2>
+        <h2 style={styles.subtitle}>13. Indemnification</h2>
         <p style={styles.paragraph}>
-          Evolvian may revise these Terms at any time. Updates take effect upon posting on our website or within the application. Continued use of the Service after modifications constitutes acceptance of the updated Terms.
+          You agree to defend, indemnify, and hold harmless Evolvian, its affiliates, officers, and employees from any claims, damages, losses, or expenses 
+          arising from your use of the Service, violation of these Terms, or infringement of any third-party rights.
         </p>
 
-        <h2 style={styles.subtitle}>14. Governing Law and Jurisdiction</h2>
+        <h2 style={styles.subtitle}>14. Export Compliance and Legal Use</h2>
         <p style={styles.paragraph}>
-          These Terms are governed by and construed in accordance with the laws of the State of Montana, United States.
+          You represent that you are not located in, under the control of, or a resident of any country or entity subject to international sanctions or export restrictions. 
+          You agree not to use the Service in violation of any applicable export or trade control laws.
         </p>
 
-        <h2 style={styles.subtitle}>15. Contact Information</h2>
+        <h2 style={styles.subtitle}>15. Modifications to Terms</h2>
+        <p style={styles.paragraph}>
+          Evolvian may revise these Terms at any time. Updates take effect upon posting on our website or within the application. 
+          Continued use of the Service after modifications constitutes acceptance of the updated Terms.
+        </p>
+
+        <h2 style={styles.subtitle}>16. Governing Law and International Jurisdiction</h2>
+        <p style={styles.paragraph}>
+          These Terms are governed by and construed in accordance with the laws of the State of Montana, United States, 
+          without regard to conflict-of-law principles. 
+          International users agree that any disputes shall be resolved exclusively in the courts of Montana, U.S.A.
+        </p>
+
+        <h2 style={styles.subtitle}>17. Contact Information</h2>
         <p style={styles.paragraph}>
           For legal inquiries, please contact us at{" "}
-          <a href="mailto:legal@evolvian.com" style={styles.link}>
-            legal@evolvian.com
-          </a>
-          .
+          <a href="mailto:support@evolvian.com" style={styles.link}>
+            support@evolvian.com
+          </a>.
         </p>
 
         <p
