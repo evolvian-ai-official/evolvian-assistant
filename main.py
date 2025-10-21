@@ -95,12 +95,20 @@ except Exception as e:
     register_email_channel = None
     print(f"⚠️ No se pudo importar register_email_channel: {e}")
 
+# ✅ Gmail modules (separados para evitar bloqueo mutuo)
 try:
-    from api.modules.email_integration import gmail_webhook, gmail_oauth
-    print("✅ Módulos de Gmail importados correctamente")
+    from api.modules.email_integration import gmail_webhook
+    print("✅ gmail_webhook importado correctamente")
 except Exception as e:
-    gmail_webhook = gmail_oauth = None
-    print(f"⚠️ No se pudieron importar los módulos de Gmail: {e}")
+    gmail_webhook = None
+    print(f"⚠️ No se pudo importar gmail_webhook: {e}")
+
+try:
+    from api.modules.email_integration import gmail_oauth
+    print("✅ gmail_oauth importado correctamente ✅")
+except Exception as e:
+    gmail_oauth = None
+    print(f"⚠️ No se pudo importar gmail_oauth: {e}")
 
 try:
     from api.modules.calendar import init_calendar_auth
@@ -195,17 +203,7 @@ routers = [
 ]
 
 # ----------------------------------------
-# ✅ Gmail OAuth (ruta /gmail_oauth/authorize)
-# ----------------------------------------
-try:
-    from api.modules.email_integration.gmail_oauth import router as gmail_oauth_router
-    app.include_router(gmail_oauth_router)
-    print("✅ gmail_oauth router registrado manualmente")
-except Exception as e:
-    print(f"⚠️ Error registrando gmail_oauth router: {e}")
-
-# ----------------------------------------
-# 🔥 Registro forzado por ruta absoluta (fallback para Render)
+# 🔥 Registro forzado por ruta absoluta (Render fix)
 # ----------------------------------------
 import importlib.util, sys
 
@@ -217,12 +215,11 @@ if os.path.exists(gmail_oauth_path):
         sys.modules["gmail_oauth"] = gmail_oauth_module
         spec.loader.exec_module(gmail_oauth_module)
         app.include_router(gmail_oauth_module.router)
-        print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix ✅ PATH corregido)")
+        print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix, path corregido)")
     except Exception as e:
         print(f"⚠️ Error al registrar Gmail OAuth router por ruta absoluta: {e}")
 else:
     print(f"⚠️ No se encontró gmail_oauth.py en: {gmail_oauth_path}")
-
 
 # ✅ Añadir routers dinámicamente si existen
 if chat_email: app.include_router(chat_email.router)
