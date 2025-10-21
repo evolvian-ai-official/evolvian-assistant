@@ -14,7 +14,7 @@ router = APIRouter(prefix="/gmail_watch", tags=["Gmail Watch Setup"])
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
 WEBHOOK_URL = os.getenv("GMAIL_WEBHOOK_URL", "https://evolvian-assistant.onrender.com/gmail_webhook")
-TOPIC_NAME = os.getenv("GMAIL_PUBSUB_TOPIC", "projects/evolvian-ai/topics/gmail-notifications")
+TOPIC_NAME = os.getenv("GMAIL_PUBSUB_TOPIC", "projects/sportshistoryandother/topics/gmail-notifications")
 
 SCOPES = [
     "https://mail.google.com/",
