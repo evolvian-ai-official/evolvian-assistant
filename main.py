@@ -194,6 +194,16 @@ routers = [
     google_callback_router,
 ]
 
+# ----------------------------------------
+# ✅ Gmail OAuth (ruta /gmail_oauth/authorize)
+# ----------------------------------------
+try:
+    from api.modules.email_integration.gmail_oauth import router as gmail_oauth_router
+    app.include_router(gmail_oauth_router)
+    print("✅ gmail_oauth router registrado manualmente")
+except Exception as e:
+    print(f"⚠️ Error registrando gmail_oauth router: {e}")
+
 # ✅ Añadir routers dinámicamente si existen
 if chat_email: app.include_router(chat_email.router)
 if get_client_by_email: app.include_router(get_client_by_email.router)
