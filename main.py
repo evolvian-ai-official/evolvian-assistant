@@ -31,7 +31,7 @@ else:
     except Exception as e:
         print("❌ Error al decodificar la key:", str(e))
 
-# ✅ Routers principales
+# ✅ Routers principales (core del sistema)
 from api.upload_document import router as upload_router
 from api.history_api import router as history_router
 from api.create_client_if_needed import router as client_router
@@ -56,41 +56,70 @@ from api.public.embed import router as embed_router
 from api.routes import reset  # Cron
 from api.routes import embed
 from api.delete_file import router as delete_file_router
-from api.modules.assistant_rag import chat_email
-from api.modules.assistant_rag import get_client_by_email
-from api.routes import register_email_channel
-
-# 🔧 MOVIDO ABAJO — estos dos deben importarse después de crear la app
-# from api.modules.email_integration import gmail_webhook
-# from api.modules.email_integration import gmail_oauth
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
 from api.create_checkout_session import router as checkout_router
 from api.stripe_cancel_subscription import router as stripe_cancel_router
 from api.stripe_change_plan import router as stripe_change_plan_router
-
-# ✅ NUEVO: Reactivar suscripciones canceladas
 from api.reactivate_subscription import router as reactivate_subscription_router
 
-# ✅ Integraciones externas
+# ✅ Integraciones externas seguras
 from api.meta_webhook import router as meta_webhook_router
 from api.auth.google_calendar_auth import router as google_auth_router
 from api.auth.google_calendar_callback import router as google_callback_router
 from api.calendar_routes import router as calendar_router
 from api.calendar_booking import router as calendar_booking_router
-from api.modules.calendar import init_calendar_auth
-from api import calendar_status
 
-print("🚀 Routers importados correctamente")
+# ✅ Módulos opcionales (protegidos)
+try:
+    from api.modules.assistant_rag import chat_email
+    print("✅ chat_email importado correctamente")
+except Exception as e:
+    chat_email = None
+    print(f"⚠️ No se pudo importar chat_email: {e}")
+
+try:
+    from api.modules.assistant_rag import get_client_by_email
+    print("✅ get_client_by_email importado correctamente")
+except Exception as e:
+    get_client_by_email = None
+    print(f"⚠️ No se pudo importar get_client_by_email: {e}")
+
+try:
+    from api.routes import register_email_channel
+    print("✅ register_email_channel importado correctamente")
+except Exception as e:
+    register_email_channel = None
+    print(f"⚠️ No se pudo importar register_email_channel: {e}")
+
+try:
+    from api.modules.email_integration import gmail_webhook, gmail_oauth
+    print("✅ Módulos de Gmail importados correctamente")
+except Exception as e:
+    gmail_webhook = gmail_oauth = None
+    print(f"⚠️ No se pudieron importar los módulos de Gmail: {e}")
+
+try:
+    from api.modules.calendar import init_calendar_auth
+    print("✅ init_calendar_auth importado correctamente")
+except Exception as e:
+    init_calendar_auth = None
+    print(f"⚠️ No se pudo importar init_calendar_auth: {e}")
+
+try:
+    from api import calendar_status
+    print("✅ calendar_status importado correctamente")
+except Exception as e:
+    calendar_status = None
+    print(f"⚠️ No se pudo importar calendar_status: {e}")
+
+print("🚀 Imports completados correctamente")
 
 # ----------------------------------------
 # ✅ Crear app antes de incluir routers
 # ----------------------------------------
 app = FastAPI()
-
-# 🔧 MOVIDO AQUÍ — ahora sí montamos los routers de Gmail correctamente
-from api.modules.email_integration import gmail_webhook, gmail_oauth
 
 # ✅ CORS para producción y desarrollo local
 app.add_middleware(
@@ -106,17 +135,16 @@ app.add_middleware(
         "http://localhost:4222",
         "http://localhost:4223",
         "http://localhost:5173",
-        "http://localhost:4223",
+        "http://localhost:5180",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 📂 Definir ruta de static antes de montarla
+# 📂 Static con CORS headers habilitados
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-# 🔧 Static con CORS headers habilitados
 class CORSMiddlewareStatic(StaticFiles):
     async def get_response(self, path, scope):
         response: Response = await super().get_response(path, scope)
@@ -125,62 +153,59 @@ class CORSMiddlewareStatic(StaticFiles):
         response.headers["Access-Control-Allow-Headers"] = "*"
         return response
 
-# 📂 static completo (embed-floating.js, widget.html, etc.)
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
-
-# 📂 assets compilados por Vite
 app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
-# ✅ Registro de routers (sin prefijo /api)
-app.include_router(upload_router)
-app.include_router(history_router)
-app.include_router(client_router)
-app.include_router(ask_router)
-app.include_router(twilio_router)
-app.include_router(initialize_user_router)
-app.include_router(client_settings_router)
-app.include_router(link_whatsapp_router)
-app.include_router(chat_widget_router)
-app.include_router(check_email_router)
-app.include_router(dashboard_summary_router)
-app.include_router(user_flags_router)
-app.include_router(widget_consents_router)
-app.include_router(terms_router)
-app.include_router(clear_new_user_flag_router)
-app.include_router(client_profile_router)
-app.include_router(accept_terms_router)
-app.include_router(list_files_router)
-app.include_router(list_chunks_router)
-app.include_router(delete_chunks_router)
-app.include_router(embed_router)
+# ✅ Registro de routers principales
+routers = [
+    upload_router,
+    history_router,
+    client_router,
+    ask_router,
+    twilio_router,
+    initialize_user_router,
+    client_settings_router,
+    link_whatsapp_router,
+    chat_widget_router,
+    check_email_router,
+    dashboard_summary_router,
+    user_flags_router,
+    widget_consents_router,
+    terms_router,
+    clear_new_user_flag_router,
+    client_profile_router,
+    accept_terms_router,
+    list_files_router,
+    list_chunks_router,
+    delete_chunks_router,
+    embed_router,
+    delete_file_router,
+    stripe_router,
+    checkout_router,
+    stripe_cancel_router,
+    stripe_change_plan_router,
+    reactivate_subscription_router,
+    meta_webhook_router,
+    calendar_router,
+    calendar_booking_router,
+    google_auth_router,
+    google_callback_router,
+]
+
+# ✅ Añadir routers dinámicamente si existen
+if chat_email: app.include_router(chat_email.router)
+if get_client_by_email: app.include_router(get_client_by_email.router)
+if register_email_channel: app.include_router(register_email_channel.router)
+if gmail_webhook: app.include_router(gmail_webhook.router)
+if gmail_oauth: app.include_router(gmail_oauth.router)
+if init_calendar_auth: app.include_router(init_calendar_auth.router)
+if calendar_status: app.include_router(calendar_status.router)
+
+for r in routers:
+    app.include_router(r)
+
 app.include_router(reset.router, tags=["subscriptions"])
-app.include_router(delete_file_router)
 app.include_router(embed.router)
-app.include_router(chat_email.router)
-app.include_router(get_client_by_email.router)
-app.include_router(register_email_channel.router)
-
-# ✅ Gmail routers correctamente montados
-app.include_router(gmail_webhook.router)
-app.include_router(gmail_oauth.router)
-
-# ✅ Stripe
-app.include_router(stripe_router)
-app.include_router(checkout_router)
-app.include_router(stripe_cancel_router)
-app.include_router(stripe_change_plan_router)
-
-# ✅ NUEVO: Reactivar suscripción
-app.include_router(reactivate_subscription_router)
-
-# ✅ Google Calendar & otras integraciones
-app.include_router(meta_webhook_router)
-app.include_router(calendar_router)
-app.include_router(calendar_booking_router)
-app.include_router(google_auth_router)
-app.include_router(google_callback_router)
-app.include_router(init_calendar_auth.router)
-app.include_router(calendar_status.router)
 
 # ✅ Healthcheck
 @app.get("/healthz")
