@@ -22,8 +22,8 @@
 
   console.log("✅ Evolvian Floating cargado con clientId:", clientId);
 
- //const baseOrigin = "https://evolvian-assistant.onrender.com/static";
-const baseOrigin = "http://localhost:8001/static";
+ const baseOrigin = "https://evolvian-assistant.onrender.com/static";
+//const baseOrigin = "http://localhost:8001/static";
   // 🟦 Botón flotante
   let isOpen = false;
   const button = document.createElement("button");
