@@ -207,7 +207,7 @@ routers = [
 # ----------------------------------------
 import importlib.util, sys
 
-gmail_oauth_path = os.path.join(os.path.dirname(__file__), "modules/email_integration/gmail_oauth.py")
+gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
 if os.path.exists(gmail_oauth_path):
     try:
         spec = importlib.util.spec_from_file_location("gmail_oauth", gmail_oauth_path)
