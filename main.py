@@ -204,6 +204,25 @@ try:
 except Exception as e:
     print(f"⚠️ Error registrando gmail_oauth router: {e}")
 
+# ----------------------------------------
+# 🔥 Registro forzado por ruta absoluta (fallback para Render)
+# ----------------------------------------
+import importlib.util, sys
+
+gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
+if os.path.exists(gmail_oauth_path):
+    try:
+        spec = importlib.util.spec_from_file_location("gmail_oauth", gmail_oauth_path)
+        gmail_oauth_module = importlib.util.module_from_spec(spec)
+        sys.modules["gmail_oauth"] = gmail_oauth_module
+        spec.loader.exec_module(gmail_oauth_module)
+        app.include_router(gmail_oauth_module.router)
+        print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix)")
+    except Exception as e:
+        print(f"⚠️ Error al registrar Gmail OAuth router por ruta absoluta: {e}")
+else:
+    print(f"⚠️ No se encontró gmail_oauth.py en: {gmail_oauth_path}")
+
 # ✅ Añadir routers dinámicamente si existen
 if chat_email: app.include_router(chat_email.router)
 if get_client_by_email: app.include_router(get_client_by_email.router)
