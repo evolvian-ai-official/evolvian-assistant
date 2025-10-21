@@ -56,12 +56,22 @@ from api.public.embed import router as embed_router
 from api.routes import reset  # Cron
 from api.routes import embed
 from api.delete_file import router as delete_file_router
+from api.modules.assistant_rag import chat_email
+from api.modules.assistant_rag import get_client_by_email
+from api.routes import register_email_channel
+
+# 🔧 MOVIDO ABAJO — estos dos deben importarse después de crear la app
+# from api.modules.email_integration import gmail_webhook
+# from api.modules.email_integration import gmail_oauth
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
-from api.stripe_create_checkout_session import router as stripe_checkout_router
+from api.create_checkout_session import router as checkout_router
 from api.stripe_cancel_subscription import router as stripe_cancel_router
 from api.stripe_change_plan import router as stripe_change_plan_router
+
+# ✅ NUEVO: Reactivar suscripciones canceladas
+from api.reactivate_subscription import router as reactivate_subscription_router
 
 # ✅ Integraciones externas
 from api.meta_webhook import router as meta_webhook_router
@@ -74,7 +84,13 @@ from api import calendar_status
 
 print("🚀 Routers importados correctamente")
 
+# ----------------------------------------
+# ✅ Crear app antes de incluir routers
+# ----------------------------------------
 app = FastAPI()
+
+# 🔧 MOVIDO AQUÍ — ahora sí montamos los routers de Gmail correctamente
+from api.modules.email_integration import gmail_webhook, gmail_oauth
 
 # ✅ CORS para producción y desarrollo local
 app.add_middleware(
@@ -90,7 +106,7 @@ app.add_middleware(
         "http://localhost:4222",
         "http://localhost:4223",
         "http://localhost:5173",
-        "http://localhost:4236",
+        "http://localhost:4223",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -138,14 +154,24 @@ app.include_router(list_chunks_router)
 app.include_router(delete_chunks_router)
 app.include_router(embed_router)
 app.include_router(reset.router, tags=["subscriptions"])
-app.include_router(delete_file_router)  
+app.include_router(delete_file_router)
 app.include_router(embed.router)
+app.include_router(chat_email.router)
+app.include_router(get_client_by_email.router)
+app.include_router(register_email_channel.router)
+
+# ✅ Gmail routers correctamente montados
+app.include_router(gmail_webhook.router)
+app.include_router(gmail_oauth.router)
 
 # ✅ Stripe
 app.include_router(stripe_router)
-app.include_router(stripe_checkout_router)
+app.include_router(checkout_router)
 app.include_router(stripe_cancel_router)
 app.include_router(stripe_change_plan_router)
+
+# ✅ NUEVO: Reactivar suscripción
+app.include_router(reactivate_subscription_router)
 
 # ✅ Google Calendar & otras integraciones
 app.include_router(meta_webhook_router)

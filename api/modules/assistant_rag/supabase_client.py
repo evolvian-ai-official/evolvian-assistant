@@ -341,6 +341,10 @@ async def get_client_whatsapp_config(client_id: str):
         print(f"❌ Failed to fetch WhatsApp config for client {client_id}: {e}")
         return None
 
+from datetime import datetime
+import stripe
+from api.utils.stripe_plan_utils import get_plan_from_price_id
+from api.config.config import supabase
 
 # -------------------------------
 # PLAN STRIPE
@@ -348,47 +352,58 @@ async def get_client_whatsapp_config(client_id: str):
 
 async def update_client_plan_by_id(client_id: str, new_plan_id: str, subscription_id: str | None = None):
     try:
-        print(f"✏️ Intentando actualizar plan para {client_id} a '{new_plan_id}'")
+        print(f"✏️ Actualizando plan para cliente {client_id} → '{new_plan_id}'")
 
-        update_payload = {"plan_id": new_plan_id}
+        update_payload = {
+            "plan_id": new_plan_id,
+            "cancellation_requested_at": None  # limpiamos cancelaciones previas
+        }
 
         if subscription_id:
             update_payload["subscription_id"] = subscription_id
 
             try:
+                # 🔍 Obtener información de la suscripción en Stripe
                 subscription = stripe.Subscription.retrieve(subscription_id)
-                print("🧾 Subscription Stripe ID:", subscription.id)
+                print(f"🧾 Subscription Stripe ID: {subscription.id}")
 
-                item = subscription["items"]["data"][0]
-                update_payload["subscription_start"] = datetime.utcfromtimestamp(item["current_period_start"]).isoformat()
-                update_payload["subscription_end"] = datetime.utcfromtimestamp(item["current_period_end"]).isoformat()
+                # ✅ Stripe devuelve los timestamps aquí
+                start_ts = subscription.get("current_period_start")
+                end_ts = subscription.get("current_period_end")
 
+                # ✅ Extraer price_id real y mapearlo a plan interno si aplica
+                price_id = subscription["items"]["data"][0]["price"]["id"]
+                plan_from_price = get_plan_from_price_id(price_id)
+                if plan_from_price:
+                    update_payload["plan_id"] = plan_from_price
 
+                # ✅ Guardar fechas del ciclo
+                if start_ts:
+                    update_payload["subscription_start"] = datetime.utcfromtimestamp(start_ts).isoformat()
+                if end_ts:
+                    update_payload["subscription_end"] = datetime.utcfromtimestamp(end_ts).isoformat()
 
-                print(f"📅 Fechas obtenidas:")
-                print(f"  • Start: {update_payload['subscription_start']}")
-                print(f"  • End:   {update_payload['subscription_end']}")
+                print(f"📅 Ciclo: {update_payload.get('subscription_start')} → {update_payload.get('subscription_end')}")
 
             except Exception as e:
                 print(f"⚠️ No se pudieron obtener fechas de Stripe: {e}")
 
-        print(f"📦 Payload con plan_id='{new_plan_id}' y subscription_id='{subscription_id}' listo para enviar a Supabase")
-
+        # 🧾 Actualizar en Supabase
+        print(f"📦 Payload listo para Supabase: {update_payload}")
 
         response = supabase.table("client_settings")\
             .update(update_payload)\
             .eq("client_id", client_id)\
             .execute()
 
-        print("🔄 Respuesta de update:", response)
-
-        if not response or not response.data:
-            print("❌ Update no tuvo efecto, sin datos")
+        if response and response.data:
+            print(f"✅ Plan actualizado correctamente para {client_id}")
         else:
-            print(f"✅ Plan actualizado correctamente a '{new_plan_id}' para {client_id} con sub: {subscription_id}")
+            print(f"⚠️ Update ejecutado pero sin data devuelta")
 
     except Exception as e:
-        print("🔥 Error en update_client_plan_by_id:", e)
+        print(f"🔥 Error en update_client_plan_by_id: {e}")
+
 
 async def get_client_id_by_subscription_id(subscription_id: str) -> str | None:
     try:
@@ -400,9 +415,10 @@ async def get_client_id_by_subscription_id(subscription_id: str) -> str | None:
         data = response.data
         if data and len(data) > 0:
             return data[0]["client_id"]
+
+        print(f"⚠️ No se encontró cliente para sub {subscription_id}")
         return None
+
     except Exception as e:
         print(f"❌ Error buscando client_id por subscription_id: {e}")
         return None
-
-

@@ -8,13 +8,16 @@ router = APIRouter()
 
 
 def format_date(dt_str):
-    """Convierte un string ISO en un formato legible: Sep 24, 2025"""
+    """Convierte un string SQL o ISO en un formato legible (ej: Oct 14, 2025)"""
     if not dt_str:
         return None
     try:
+        if "T" not in dt_str:
+            dt_str = dt_str.replace(" ", "T")
         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
         return dt.strftime("%b %d, %Y")
-    except Exception:
+    except Exception as e:
+        logging.warning(f"⚠️ No se pudo formatear fecha '{dt_str}': {e}")
         return dt_str
 
 
@@ -45,7 +48,7 @@ def dashboard_summary(client_id: str = Query(...)):
             supabase.table("client_settings")
             .select(
                 "assistant_name, language, temperature, plan_id, show_powered_by, "
-                "subscription_start, subscription_end, "
+                "subscription_start, subscription_end, cancellation_requested_at, scheduled_plan_id, "
                 "plans!client_settings_plan_id_fkey("
                 "id, name, max_messages, max_documents, is_unlimited, "
                 "show_powered_by, supports_chat, supports_email, supports_whatsapp, price_usd, "
@@ -63,6 +66,28 @@ def dashboard_summary(client_id: str = Query(...)):
         config = settings_res.data
         plan = config.get("plans", {})
 
+        # 2️⃣ Obtener información de suscripción
+        sub_data = {
+            "subscription_start": config.get("subscription_start"),
+            "subscription_end": config.get("subscription_end"),
+            "cancellation_requested_at": config.get("cancellation_requested_at"),
+            "scheduled_plan_id": config.get("scheduled_plan_id"),
+        }
+
+        # 🧩 Nuevo bloque: estado de cancelación
+        cancellation_status = None
+        if sub_data.get("cancellation_requested_at"):
+            plan_name = plan.get("name", "").capitalize() or config.get("plan_id", "Your plan").capitalize()
+            cancel_date = format_date(sub_data.get("subscription_end"))
+            next_plan = sub_data.get("scheduled_plan_id", "Free").capitalize()
+            cancellation_status = {
+                "is_pending": True,
+                "message": f"⚠️ Your {plan_name} will be downgraded to {next_plan} on {cancel_date}.",
+                "reactivate_label": f"🔄 Reactivate {plan_name}",
+                "reactivate_available": True
+            }
+
+        # 3️⃣ Construir bloque del plan con datos combinados
         plan_info = {
             "id": plan.get("id"),
             "name": plan.get("name"),
@@ -77,10 +102,7 @@ def dashboard_summary(client_id: str = Query(...)):
             "plan_features": [f["feature"] for f in plan.get("plan_features", [])],
         }
 
-        subscription_start = config.get("subscription_start")
-        subscription_end = config.get("subscription_end")
-
-        # 2️⃣ Contar mensajes del usuario (role=user)
+        # 4️⃣ Contar mensajes de usuario (solo role=user)
         msg_count_res = (
             supabase.table("history")
             .select("id", count="exact")
@@ -88,11 +110,10 @@ def dashboard_summary(client_id: str = Query(...)):
             .eq("role", "user")
             .execute()
         )
-
         total_user_messages = getattr(msg_count_res, "count", 0) or 0
         logging.info(f"💬 Mensajes de usuario encontrados: {total_user_messages}")
 
-        # 3️⃣ Uso actual (sincronizado con client_usage)
+        # 5️⃣ Sincronizar uso (client_usage)
         usage_row = (
             supabase.table("client_usage")
             .select("messages_used, documents_uploaded, last_used_at, created_at")
@@ -121,25 +142,25 @@ def dashboard_summary(client_id: str = Query(...)):
                 "last_used_at": usage["last_used_at"],
             }).execute()
 
-        # 4️⃣ Sincronizar número de documentos
+        # 6️⃣ Contar documentos en bucket
         bucket_count = count_bucket_documents(client_id)
         usage["documents_uploaded"] = bucket_count
         supabase.table("client_usage").update({
             "documents_uploaded": bucket_count,
         }).eq("client_id", client_id).execute()
 
-        # 5️⃣ Canales activos
+        # 7️⃣ Canales activos
         channels_res = supabase.table("channels").select("type").eq("client_id", client_id).execute()
         active_channels = [c["type"] for c in channels_res.data or []]
         all_channels = ["chat", "whatsapp", "email"]
         channels = {c: c in active_channels for c in all_channels}
 
-        # 6️⃣ Historial (últimos 3 mensajes reales del usuario)
+        # 8️⃣ Historial de usuario (últimos 3)
         history_res = (
             supabase.table("history")
             .select("content, created_at, channel, role")
             .eq("client_id", client_id)
-            .eq("role", "user")  # ✅ ya solo usamos user/assistant
+            .eq("role", "user")
             .not_.is_("content", None)
             .neq("content", "")
             .order("created_at", desc=True)
@@ -148,25 +169,20 @@ def dashboard_summary(client_id: str = Query(...)):
         )
 
         history_preview = []
-        if history_res.data:
-            for h in history_res.data:
-                if not h or not isinstance(h, dict):
-                    continue
+        for h in history_res.data or []:
+            content = h.get("content")
+            if isinstance(content, dict):
+                content = content.get("text") or str(content)
+            if not content or not str(content).strip():
+                continue
 
-                content = h.get("content")
-                # ✅ si content es JSON, extrae texto
-                if isinstance(content, dict):
-                    content = content.get("text") or str(content)
-                if not content or not str(content).strip():
-                    continue
+            history_preview.append({
+                "timestamp": h.get("created_at"),
+                "channel": h.get("channel", "chat"),
+                "question": str(content).strip()[:120],
+            })
 
-                history_preview.append({
-                    "timestamp": h.get("created_at"),
-                    "channel": h.get("channel", "chat"),
-                    "question": str(content).strip()[:120],
-                })
-
-        # 7️⃣ Sugerencia de upgrade
+        # 9️⃣ Sugerencia de upgrade
         upgrade_suggestion = None
         if not plan_info["is_unlimited"] and plan_info["max_messages"]:
             percent = (usage["messages_used"] / plan_info["max_messages"]) * 100
@@ -178,7 +194,7 @@ def dashboard_summary(client_id: str = Query(...)):
                 elif plan_info["id"] == "premium":
                     upgrade_suggestion = {"action": "contact_support", "email": "support@evolvianai.com"}
 
-        # ✅ Respuesta final
+        # ✅ Respuesta final (todo igual, solo agrega el nuevo campo)
         return JSONResponse(
             content={
                 "plan": plan_info,
@@ -192,8 +208,9 @@ def dashboard_summary(client_id: str = Query(...)):
                 },
                 "history_preview": history_preview,
                 "upgrade_suggestion": upgrade_suggestion,
-                "subscription_start": format_date(subscription_start),
-                "subscription_end": format_date(subscription_end),
+                "subscription_start": format_date(plan_info.get("subscription_start") or sub_data.get("subscription_start")),
+                "subscription_end": format_date(plan_info.get("subscription_end") or sub_data.get("subscription_end")),
+                "cancellation_status": cancellation_status,  # 🧩 nuevo campo aquí
             }
         )
 
