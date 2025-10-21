@@ -56,6 +56,8 @@ from api.public.embed import router as embed_router
 from api.routes import reset  # Cron
 from api.routes import embed
 from api.delete_file import router as delete_file_router
+from api.channels import router as channels_router
+from api.modules.email_integration import (disconnect_gmail)
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
@@ -200,6 +202,8 @@ if gmail_webhook: app.include_router(gmail_webhook.router)
 if gmail_oauth: app.include_router(gmail_oauth.router)
 if init_calendar_auth: app.include_router(init_calendar_auth.router)
 if calendar_status: app.include_router(calendar_status.router)
+if channels_router: app.include_router(channels_router)
+if disconnect_gmail: app.include_router(disconnect_gmail.router)
 
 for r in routers:
     app.include_router(r)

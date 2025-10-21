@@ -90,13 +90,40 @@ def ask_question(messages: List[Dict[str, str]] | str, client_id: str, session_i
         convo_tail = norm_messages[-10:]
         logging.info(f"🧩 Pregunta procesada: {question}")
 
-        # 🌍 Idioma del usuario
+                # 🌍 Language detection (English as default, but respect user input)
+        # 🌍 Smart language detection with English fallback
         try:
             from langdetect import detect
-            user_lang = detect(question)
-        except Exception:
+            detected_lang = detect(question)
+            logging.info(f"🌍 Detected language (langdetect): {detected_lang}")
+        except Exception as e:
+            logging.warning(f"⚠️ Language detection failed: {e}")
+            detected_lang = None
+
+        # 🔠 Keyword-based correction (avoid false "en" detections)
+        common_spanish_words = [
+            "hola", "buenas", "diferencia", "planes", "precio", "documento", "mensaje",
+            "ayuda", "soporte", "cuánto", "tienes", "quiero", "información"
+        ]
+
+        if any(word in question.lower() for word in common_spanish_words):
             user_lang = "es"
-        language_instruction = "Always respond in English." if user_lang == "en" else "Responde siempre en español."
+        elif detected_lang in ["en", "es", "fr", "de", "pt", "it"]:
+            user_lang = detected_lang
+        else:
+            user_lang = "en"  # Fallback seguro
+
+        # 🧭 Si no se detecta nada, usar inglés
+        if not user_lang or user_lang.strip() == "":
+            user_lang = "en"
+
+        language_instruction = (
+            "Responde siempre en español."
+            if user_lang == "es"
+            else "Always respond in English."
+        )
+        logging.info(f"🈶 Idioma final del usuario: {user_lang}")
+
 
         # 👋 Saludo rápido
         greetings_es = {"hola", "buenas", "hey"}

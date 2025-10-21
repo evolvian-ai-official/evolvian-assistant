@@ -23,19 +23,33 @@ def get_history(
             .eq("client_id", client_id)
         )
 
-        # ✅ Filtra por session_id solo si se envía
+        # Filtra por session_id solo si se envía
         if session_id:
             query = query.eq("session_id", session_id)
 
-        # ✅ Ordenar y limitar correctamente (solo una vez)
         response = query.order("created_at", desc=True).limit(limit).execute()
+        raw_data = response.data or []
+        print(f"📦 Resultados encontrados (crudos): {len(raw_data)}")
 
-        results = response.data or []
-        print(f"📦 Resultados encontrados: {len(results)} registros para client_id={client_id}")
+        # 🚧 Limpieza: eliminar filas nulas o corruptas
+        results = [r for r in raw_data if isinstance(r, dict) and r.get("content") is not None]
+
+        print(f"📦 Resultados válidos tras limpieza: {len(results)} registros para client_id={client_id}")
+
         if results:
-            print(f"🧩 Último mensaje: {results[0].get('role')} - {results[0].get('content')[:60]}")
+            first = results[0]
+            print(f"🧩 Último mensaje: {first.get('role', 'unknown')} - {first.get('content', '')[:60]}")
+        else:
+            print("ℹ️ No hay mensajes válidos para mostrar.")
 
-        return JSONResponse(content={"history": results})
+        return JSONResponse(
+            content={
+                "client_id": client_id,
+                "session_id": session_id,
+                "count": len(results),
+                "history": results
+            }
+        )
 
     except Exception as e:
         print(f"❌ Error en /history: {e}")
