@@ -67,23 +67,33 @@ async def upsert_client_settings(request: Request):
         raw = await request.json()
         print("📩 Body recibido (raw):", raw)
 
+        # ⚠️ Validar client_id presente
+        if not raw.get("client_id"):
+            print("⚠️ Error: Falta client_id en el payload recibido.")
+            raise HTTPException(status_code=400, detail="El campo 'client_id' es obligatorio.")
+
         # 🧹 Normalizar tipos (true/false como booleanos, números como int)
         for k, v in list(raw.items()):
             if isinstance(v, str):
                 if v.lower() in ["true", "false"]:
                     raw[k] = v.lower() == "true"
-                elif v.isdigit():
-                    raw[k] = int(v)
+                else:
+                    try:
+                        if "." in v:
+                            raw[k] = float(v)
+                        elif v.isdigit():
+                            raw[k] = int(v)
+                    except ValueError:
+                        pass
 
         # 🩹 Si viene plan como objeto, convertir a plan_id
         if isinstance(raw.get("plan"), dict) and "id" in raw["plan"]:
             raw["plan_id"] = raw["plan"]["id"]
             raw.pop("plan", None)
 
-        # 🎨 Limpieza del campo font_family
+        # 🎨 Limpieza y validación del campo font_family
         if "font_family" in raw and raw["font_family"]:
             raw["font_family"] = raw["font_family"].replace("'", "").replace('"', "").strip()
-            # Validar fuente
             font_name = raw["font_family"].split(",")[0].strip()
             if font_name not in ALLOWED_FONTS:
                 print(f"⚠️ Fuente no permitida: {font_name}, usando Inter.")
@@ -99,8 +109,13 @@ async def upsert_client_settings(request: Request):
         for key in forbidden_keys:
             raw.pop(key, None)
 
-        # ✅ Validar y construir el payload
-        payload = ClientSettingsPayload(**raw)
+        # ✅ Validar y construir el payload Pydantic
+        try:
+            payload = ClientSettingsPayload(**raw)
+        except Exception as e:
+            print(f"❌ Error al validar el payload con Pydantic: {e}")
+            raise HTTPException(status_code=422, detail=f"Error de validación: {str(e)}")
+
         payload_dict = {k: v for k, v in payload.dict().items() if v is not None}
 
         # 🔹 Verificar plan válido
@@ -128,13 +143,15 @@ async def upsert_client_settings(request: Request):
         response = supabase.table("client_settings").upsert(payload_dict, on_conflict="client_id").execute()
 
         if response.data:
-            print("✅ Configuración guardada correctamente.")
+            print("✅ Configuración guardada correctamente para client_id:", payload.client_id)
             return JSONResponse(
                 content={"message": "Configuración guardada correctamente.", "settings": response.data[0]}
             )
 
         raise HTTPException(status_code=500, detail="Error al guardar la configuración.")
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error en POST /client_settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -296,6 +313,8 @@ def get_client_settings(
 
         return JSONResponse(content=settings)
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error en GET /client_settings: {e}")
         raise HTTPException(status_code=500, detail=f"Error al obtener configuración: {str(e)}")
