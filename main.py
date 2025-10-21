@@ -6,6 +6,7 @@ import os
 import jwt
 from starlette.responses import Response
 import importlib.util, sys
+import subprocess
 
 # ✅ Cargar variables de entorno
 load_dotenv(".env")
@@ -74,6 +75,21 @@ from api.auth.google_calendar_callback import router as google_callback_router
 from api.calendar_routes import router as calendar_router
 from api.calendar_booking import router as calendar_booking_router
 
+# ----------------------------------------
+# 🩹 Auto-fix Render: asegura dependencias de Gmail/Calendar en runtime
+# ----------------------------------------
+google_libs = [
+    "google-auth",
+    "google-auth-oauthlib",
+    "google-api-python-client",
+    "google-auth-httplib2"
+]
+
+for lib in google_libs:
+    if importlib.util.find_spec(lib) is None:
+        print(f"⚙️ Librería faltante detectada: {lib} → instalando en runtime...")
+        subprocess.run(["pip", "install", lib], check=False)
+
 # ✅ Módulos opcionales (protegidos)
 try:
     from api.modules.assistant_rag import chat_email
@@ -83,7 +99,6 @@ except Exception as e:
     print(f"⚠️ No se pudo importar chat_email: {e}")
 
 try:
-    # 🔧 Fix: importar router directamente
     from api.modules.assistant_rag.get_client_by_email import router as get_client_by_email_router
     print("✅ get_client_by_email importado correctamente")
 except Exception as e:
@@ -137,13 +152,11 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        # Producción
         "https://clientuploader.onrender.com",
         "https://evolvianai.com",
         "https://evolvianai.net",
         "https://www.evolvianai.net",
         "https://evolvian-assistant.onrender.com",
-        # Local
         "http://localhost:4222",
         "http://localhost:4223",
         "http://localhost:5173",
