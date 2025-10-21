@@ -209,7 +209,7 @@ except Exception as e:
 # ----------------------------------------
 import importlib.util, sys
 
-gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
+gmail_oauth_path = os.path.join(os.path.dirname(__file__), "modules/email_integration/gmail_oauth.py")
 if os.path.exists(gmail_oauth_path):
     try:
         spec = importlib.util.spec_from_file_location("gmail_oauth", gmail_oauth_path)
@@ -217,11 +217,12 @@ if os.path.exists(gmail_oauth_path):
         sys.modules["gmail_oauth"] = gmail_oauth_module
         spec.loader.exec_module(gmail_oauth_module)
         app.include_router(gmail_oauth_module.router)
-        print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix)")
+        print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix ✅ PATH corregido)")
     except Exception as e:
         print(f"⚠️ Error al registrar Gmail OAuth router por ruta absoluta: {e}")
 else:
     print(f"⚠️ No se encontró gmail_oauth.py en: {gmail_oauth_path}")
+
 
 # ✅ Añadir routers dinámicamente si existen
 if chat_email: app.include_router(chat_email.router)
