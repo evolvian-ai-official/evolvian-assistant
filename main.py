@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 import jwt
 from starlette.responses import Response
+import importlib.util, sys
 
 # ✅ Cargar variables de entorno
 load_dotenv(".env")
@@ -57,7 +58,7 @@ from api.routes import reset  # Cron
 from api.routes import embed
 from api.delete_file import router as delete_file_router
 from api.channels import router as channels_router
-from api.modules.email_integration import (disconnect_gmail)
+from api.modules.email_integration import disconnect_gmail
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
@@ -82,10 +83,11 @@ except Exception as e:
     print(f"⚠️ No se pudo importar chat_email: {e}")
 
 try:
-    from api.modules.assistant_rag import get_client_by_email
+    # 🔧 Fix: importar router directamente
+    from api.modules.assistant_rag.get_client_by_email import router as get_client_by_email_router
     print("✅ get_client_by_email importado correctamente")
 except Exception as e:
-    get_client_by_email = None
+    get_client_by_email_router = None
     print(f"⚠️ No se pudo importar get_client_by_email: {e}")
 
 try:
@@ -205,8 +207,6 @@ routers = [
 # ----------------------------------------
 # 🔥 Registro forzado por ruta absoluta (Render fix)
 # ----------------------------------------
-import importlib.util, sys
-
 gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
 if os.path.exists(gmail_oauth_path):
     try:
@@ -223,7 +223,7 @@ else:
 
 # ✅ Añadir routers dinámicamente si existen
 if chat_email: app.include_router(chat_email.router)
-if get_client_by_email: app.include_router(get_client_by_email.router)
+if get_client_by_email_router: app.include_router(get_client_by_email_router)
 if register_email_channel: app.include_router(register_email_channel.router)
 if gmail_webhook: app.include_router(gmail_webhook.router)
 if gmail_oauth: app.include_router(gmail_oauth.router)
@@ -252,3 +252,8 @@ def root():
 @app.get("/test_routes")
 def test_routes():
     return [route.path for route in app.routes]
+
+# ✅ Ejecución local (opcional)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
