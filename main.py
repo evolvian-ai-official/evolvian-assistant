@@ -127,13 +127,22 @@ except Exception as e:
     gmail_oauth = None
     print(f"⚠️ No se pudo importar gmail_oauth: {e}")
 
-# ✅ NUEVO: Gmail Watch
+# ✅ NUEVO: Gmail Watch (ruta absoluta segura)
 try:
-    from api.modules.email_integration import gmail_watch
-    print("✅ gmail_watch importado correctamente ✅")
+    gmail_watch_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_watch.py")
+    if os.path.exists(gmail_watch_path):
+        spec = importlib.util.spec_from_file_location("gmail_watch", gmail_watch_path)
+        gmail_watch_module = importlib.util.module_from_spec(spec)
+        sys.modules["gmail_watch"] = gmail_watch_module
+        spec.loader.exec_module(gmail_watch_module)
+        gmail_watch = gmail_watch_module
+        print("✅ gmail_watch importado correctamente por ruta absoluta (Render fix)")
+    else:
+        gmail_watch = None
+        print(f"⚠️ No se encontró gmail_watch.py en: {gmail_watch_path}")
 except Exception as e:
     gmail_watch = None
-    print(f"⚠️ No se pudo importar gmail_watch: {e}")
+    print(f"⚠️ Error al importar gmail_watch: {e}")
 
 try:
     from api.modules.calendar import init_calendar_auth
