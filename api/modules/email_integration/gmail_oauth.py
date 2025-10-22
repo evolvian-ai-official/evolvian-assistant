@@ -64,10 +64,11 @@ async def authorize(client_id: str):
         redirect_uri=GMAIL_REDIRECT_URI,
     )
 
+    # ✅ Forzamos consentimiento limpio y tokens offline nuevos
     authorization_url, state = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent"
+        include_granted_scopes=False,  # 👈 importante para evitar mezclar permisos viejos
+        prompt="consent"               # 👈 fuerza reautorización completa
     )
 
     # Guardamos temporalmente el state
@@ -82,6 +83,7 @@ async def authorize(client_id: str):
         print(f"⚠️ Error guardando state temporal: {e}")
 
     return {"authorization_url": authorization_url}
+
 
 # ---------------------------------------------------------
 # 2️⃣ Callback de Google
@@ -114,6 +116,25 @@ async def oauth_callback(request: Request):
         )
         flow.fetch_token(code=code)
         credentials = flow.credentials
+
+        # ✅ Validación flexible de scopes (permite extras de Workspace)
+        required_scopes = set([
+            "https://mail.google.com/",
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/userinfo.profile",
+            "openid",
+        ])
+        received_scopes = set(credentials.scopes or [])
+        missing = required_scopes - received_scopes
+        if missing:
+            raise Exception(f"Missing required scopes: {missing}")
+
+        extra = received_scopes - required_scopes
+        if extra:
+            print(f"ℹ️ Scopes adicionales detectados (Workspace): {extra}")
 
         # Obtener email
         email = None
@@ -239,10 +260,10 @@ async def oauth_callback(request: Request):
         print(f"🔁 Reedirecting to Evolvian: {redirect_url}")
         return RedirectResponse(url=redirect_url, status_code=302)
 
-
     except Exception as e:
         print(f"🔥 Error procesando callback OAuth: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------------------------------------------------------
 # 3️⃣ Helper: crear servicio Gmail
@@ -257,6 +278,7 @@ def get_gmail_service(channel):
         scopes=SCOPES,
     )
     return build("gmail", "v1", credentials=creds)
+
 
 # ---------------------------------------------------------
 # 4️⃣ Endpoint: enviar correo con Gmail conectado
