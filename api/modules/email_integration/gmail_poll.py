@@ -1,4 +1,8 @@
 import os
+import time
+import json
+import base64
+import requests
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from googleapiclient.discovery import build
@@ -9,6 +13,7 @@ router = APIRouter(prefix="/gmail_poll", tags=["Gmail Automation"])
 
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
+WEBHOOK_URL = "https://evolvian-assistant.onrender.com/gmail_webhook"
 
 SCOPES = [
     "https://mail.google.com/",
@@ -65,7 +70,6 @@ async def check_new_emails():
                 continue
 
             plan_id = settings_resp.data[0].get("plan_id", "").strip().lower()
-
             if plan_id not in eligible_plans:
                 print(f"🟡 {email}: plan '{plan_id}', no es premium ni white_label.")
                 continue
@@ -93,7 +97,33 @@ async def check_new_emails():
                 if messages:
                     print(f"📩 {email}: {len(messages)} mensajes recientes.")
                     for msg in messages:
-                        print(f"   ➤ ID: {msg['id']}")
+                        msg_id = msg["id"]
+                        print(f"   ➤ ID: {msg_id}")
+
+                        # 🚀 Simular webhook Gmail (como Pub/Sub)
+                        payload = {
+                            "message": {
+                                "data": base64.b64encode(
+                                    json.dumps({
+                                        "emailAddress": email,
+                                        "historyId": str(msg_id)
+                                    }).encode("utf-8")
+                                ).decode("utf-8")
+                            }
+                        }
+
+                        try:
+                            resp = requests.post(
+                                WEBHOOK_URL,
+                                json=payload,
+                                headers={"Content-Type": "application/json"},
+                                timeout=30
+                            )
+                            print(f"📨 Webhook enviado → {resp.status_code}")
+                            time.sleep(2)  # Pequeña pausa entre webhooks
+                        except Exception as e:
+                            print(f"⚠️ Error enviando webhook para {email}: {e}")
+
                     processed.append(email)
                 else:
                     print(f"🟢 {email}: sin mensajes nuevos.")
