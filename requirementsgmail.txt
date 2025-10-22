@@ -1,12 +1,8 @@
 fastapi==0.115.0
 uvicorn==0.30.1
 
-# --- Supabase client ---
+# --- Supabase client (usa versiones internas compatibles) ---
 supabase==2.5.0
-postgrest==0.16.4
-gotrue==2.8.0
-realtime==2.0.2
-storage3==0.7.5
 
 # --- Google Gmail API ---
 google-api-python-client==2.138.0
