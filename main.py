@@ -144,6 +144,14 @@ except Exception as e:
     gmail_setup_watch = None
     print(f"⚠️ Error al importar gmail_setup_watch: {e}")
 
+# ✅ NUEVO: Gmail Poll (cron alternativo al watcher)
+try:
+    from api.modules.email_integration import gmail_poll
+    print("✅ gmail_poll importado correctamente ✅")
+except Exception as e:
+    gmail_poll = None
+    print(f"⚠️ No se pudo importar gmail_poll: {e}")
+
 try:
     from api.modules.calendar import init_calendar_auth
     print("✅ init_calendar_auth importado correctamente")
@@ -258,6 +266,7 @@ if register_email_channel: app.include_router(register_email_channel.router)
 if gmail_webhook: app.include_router(gmail_webhook.router)
 if gmail_oauth: app.include_router(gmail_oauth.router)
 if gmail_setup_watch: app.include_router(gmail_setup_watch.router)
+if gmail_poll: app.include_router(gmail_poll.router)
 if init_calendar_auth: app.include_router(init_calendar_auth.router)
 if calendar_status: app.include_router(calendar_status.router)
 if channels_router: app.include_router(channels_router)
