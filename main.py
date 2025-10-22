@@ -127,22 +127,22 @@ except Exception as e:
     gmail_oauth = None
     print(f"⚠️ No se pudo importar gmail_oauth: {e}")
 
-# ✅ NUEVO: Gmail Watch (ruta absoluta segura)
+# ✅ NUEVO: Gmail Setup Watch (ruta absoluta segura)
 try:
-    gmail_watch_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_watch.py")
+    gmail_watch_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_setup_watch.py")
     if os.path.exists(gmail_watch_path):
-        spec = importlib.util.spec_from_file_location("gmail_watch", gmail_watch_path)
+        spec = importlib.util.spec_from_file_location("gmail_setup_watch", gmail_watch_path)
         gmail_watch_module = importlib.util.module_from_spec(spec)
-        sys.modules["gmail_watch"] = gmail_watch_module
+        sys.modules["gmail_setup_watch"] = gmail_watch_module
         spec.loader.exec_module(gmail_watch_module)
-        gmail_watch = gmail_watch_module
-        print("✅ gmail_watch importado correctamente por ruta absoluta (Render fix)")
+        gmail_setup_watch = gmail_watch_module
+        print("✅ gmail_setup_watch importado correctamente por ruta absoluta (Render fix)")
     else:
-        gmail_watch = None
-        print(f"⚠️ No se encontró gmail_watch.py en: {gmail_watch_path}")
+        gmail_setup_watch = None
+        print(f"⚠️ No se encontró gmail_setup_watch.py en: {gmail_watch_path}")
 except Exception as e:
-    gmail_watch = None
-    print(f"⚠️ Error al importar gmail_watch: {e}")
+    gmail_setup_watch = None
+    print(f"⚠️ Error al importar gmail_setup_watch: {e}")
 
 try:
     from api.modules.calendar import init_calendar_auth
@@ -257,7 +257,7 @@ if get_client_by_email_router: app.include_router(get_client_by_email_router)
 if register_email_channel: app.include_router(register_email_channel.router)
 if gmail_webhook: app.include_router(gmail_webhook.router)
 if gmail_oauth: app.include_router(gmail_oauth.router)
-if gmail_watch: app.include_router(gmail_watch.router)
+if gmail_setup_watch: app.include_router(gmail_setup_watch.router)
 if init_calendar_auth: app.include_router(init_calendar_auth.router)
 if calendar_status: app.include_router(calendar_status.router)
 if channels_router: app.include_router(channels_router)
