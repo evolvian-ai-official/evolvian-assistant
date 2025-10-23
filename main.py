@@ -282,8 +282,8 @@ if (not oauth_included) and gmail_oauth:
     app.include_router(gmail_oauth.router)
 if gmail_setup_watch:
     app.include_router(gmail_setup_watch.router)
-if gmail_poll:
-    app.include_router(gmail_poll.router)
+#if gmail_poll:
+ #   app.include_router(gmail_poll.router)
 if init_calendar_auth:
     app.include_router(init_calendar_auth.router)
 if calendar_status:
