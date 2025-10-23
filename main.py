@@ -60,7 +60,6 @@ from api.routes import embed
 from api.delete_file import router as delete_file_router
 from api.channels import router as channels_router
 from api.modules.email_integration import disconnect_gmail
-from api.gmail_reset_watch import router as gmail_reset_router
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
@@ -207,6 +206,14 @@ class CORSMiddlewareStatic(StaticFiles):
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
 app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
+# ✅ Import diferido (Render fix seguro)
+try:
+    from api.gmail_reset_watch import router as gmail_reset_router
+    app.include_router(gmail_reset_router)
+    print("✅ gmail_reset_watch importado correctamente (Render safe load)")
+except Exception as e:
+    print(f"⚠️ No se pudo importar gmail_reset_watch: {e}")
+
 # ✅ Registro de routers principales
 routers = [
     upload_router,
@@ -241,7 +248,6 @@ routers = [
     calendar_booking_router,
     google_auth_router,
     google_callback_router,
-    gmail_reset_router,
 ]
 
 # ----------------------------------------
@@ -273,7 +279,6 @@ if init_calendar_auth: app.include_router(init_calendar_auth.router)
 if calendar_status: app.include_router(calendar_status.router)
 if channels_router: app.include_router(channels_router)
 if disconnect_gmail: app.include_router(disconnect_gmail.router)
-
 
 for r in routers:
     app.include_router(r)
