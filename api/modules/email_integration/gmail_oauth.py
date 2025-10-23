@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.discovery_cache.base import Cache
+from google.auth.transport.requests import Request
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from api.modules.assistant_rag.supabase_client import supabase
@@ -16,10 +16,10 @@ from api.modules.assistant_rag.supabase_client import supabase
 router = APIRouter(prefix="/gmail_oauth", tags=["Gmail OAuth"])
 
 # =====================================================
-# 📧 Gmail OAuth - Evolvian AI (Versión final optimizada Render)
+# 📧 Evolvian AI — Gmail OAuth Final (Render-Optimized)
 # =====================================================
 
-# Timeout global de red (para evitar bloqueos Render)
+# Timeout global (Render bloquea sockets lentos)
 socket.setdefaulttimeout(10)
 
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
@@ -44,13 +44,6 @@ if WORKSPACE_MODE:
         "https://www.googleapis.com/auth/gmail.addons.current.message.action",
         "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
     ]
-
-# 🚫 Desactivar file_cache del cliente Google
-class NoCache(Cache):
-    def get(self, url):
-        return None
-    def set(self, url, content):
-        pass
 
 
 # ---------------------------------------------------------
@@ -91,7 +84,7 @@ async def authorize(client_id: str):
 
 
 # ---------------------------------------------------------
-# 2️⃣ Callback de Google (con cronómetro de etapas)
+# 2️⃣ Callback de Google con tiempos y manejo limpio
 # ---------------------------------------------------------
 @router.get("/callback")
 async def oauth_callback(request: Request):
@@ -103,8 +96,7 @@ async def oauth_callback(request: Request):
         raise HTTPException(status_code=400, detail="Código de autorización faltante")
 
     try:
-        # Etapa 1️⃣: Intercambio de token
-        print("⏱️ [1] Iniciando fetch_token...")
+        print("⏱️ [1] Intercambiando código por tokens...")
         t1 = time.time()
         flow = Flow.from_client_config(
             {
@@ -118,14 +110,11 @@ async def oauth_callback(request: Request):
             scopes=SCOPES,
             redirect_uri=GMAIL_REDIRECT_URI,
         )
-
         flow.fetch_token(code=code)
         credentials = flow.credentials
-        print(f"✅ [1] fetch_token completado en {time.time() - t1:.2f}s")
+        print(f"✅ Tokens obtenidos en {time.time() - t1:.2f}s")
 
-        # Etapa 2️⃣: Verificación de id_token
-        print("⏱️ [2] Verificando id_token...")
-        t2 = time.time()
+        # Verificación de email del usuario
         email = None
         try:
             req = google_requests.Request(timeout=3)
@@ -133,15 +122,12 @@ async def oauth_callback(request: Request):
             email = info.get("email")
         except Exception as e:
             print(f"⚠️ Error verificando id_token: {e}")
-        print(f"✅ [2] Verificación completada en {time.time() - t2:.2f}s")
-
         if not email:
             raise HTTPException(status_code=400, detail="No se pudo obtener el email del usuario")
-        print(f"📧 Usuario Gmail detectado: {email}")
 
-        # Etapa 3️⃣: Buscar o crear usuario/cliente
-        print("⏱️ [3] Consultando usuario/cliente en Supabase...")
-        t3 = time.time()
+        print(f"📧 Usuario Gmail: {email}")
+
+        # Buscar o crear usuario/cliente
         user_resp = supabase.table("users").select("id").eq("email", email).maybe_single().execute()
         if user_resp and getattr(user_resp, "data", None) and user_resp.data.get("id"):
             user_id = user_resp.data["id"]
@@ -158,12 +144,9 @@ async def oauth_callback(request: Request):
                 "name": email.split('@')[0]
             }).execute()
             client_id = inserted.data[0]["id"]
-        print(f"✅ [3] Usuario/cliente procesado en {time.time() - t3:.2f}s")
 
-        # Etapa 4️⃣: Guardar canal Gmail
-        print("⏱️ [4] Guardando canal Gmail...")
-        t4 = time.time()
-        channel_query = (
+        # Guardar canal Gmail
+        existing_channel = (
             supabase.table("channels")
             .select("id")
             .eq("client_id", client_id)
@@ -173,11 +156,10 @@ async def oauth_callback(request: Request):
             .limit(1)
             .execute()
         )
+        existing = existing_channel.data if existing_channel and hasattr(existing_channel, "data") else []
 
-        existing_channel = channel_query.data if channel_query and hasattr(channel_query, "data") else []
-
-        if existing_channel:
-            channel_id = existing_channel[0]["id"]
+        if existing:
+            channel_id = existing[0]["id"]
             supabase.table("channels").update({
                 "gmail_access_token": credentials.token,
                 "gmail_refresh_token": credentials.refresh_token,
@@ -195,21 +177,20 @@ async def oauth_callback(request: Request):
                 "gmail_expiry": credentials.expiry.isoformat() if credentials.expiry else None,
                 "active": True
             }).execute()
-        print(f"✅ [4] Canal Gmail guardado en {time.time() - t4:.2f}s")
 
-        # Etapa 5️⃣: Limpieza final + redirección
+        print(f"✅ Canal Gmail sincronizado correctamente ({email})")
+
         try:
             supabase.table("channels").delete().eq("type", "oauth_state").execute()
         except Exception:
             pass
 
         total_time = time.time() - t0
-        print(f"🏁 Flujo completo Gmail OAuth terminado en {total_time:.2f}s")
+        print(f"🏁 Flujo Gmail OAuth completado en {total_time:.2f}s")
 
-        origin = request.headers.get("origin") or ""
         redirect_url = (
             "http://localhost:4223/services/email"
-            if "localhost" in origin or "127.0.0.1" in origin
+            if "localhost" in (request.headers.get("origin") or "")
             else "https://evolvianai.net/services/email"
         )
         return RedirectResponse(url=redirect_url, status_code=302)
@@ -220,18 +201,40 @@ async def oauth_callback(request: Request):
 
 
 # ---------------------------------------------------------
-# 3️⃣ Helper: servicio Gmail optimizado sin file_cache
+# 3️⃣ Servicio Gmail — sin file_cache + refresh controlado
 # ---------------------------------------------------------
 def get_gmail_service(channel):
     creds = Credentials(
-        token=channel["gmail_access_token"],
-        refresh_token=channel["gmail_refresh_token"],
+        token=channel.get("gmail_access_token"),
+        refresh_token=channel.get("gmail_refresh_token"),
         token_uri="https://oauth2.googleapis.com/token",
         client_id=GMAIL_CLIENT_ID,
         client_secret=GMAIL_CLIENT_SECRET,
         scopes=SCOPES,
     )
-    return build("gmail", "v1", credentials=creds, cache=NoCache())
+
+    # 🔁 Refrescar token manualmente si está vencido
+    if not creds.valid or creds.expired:
+        try:
+            creds.refresh(Request())
+            print("♻️ Token Gmail refrescado correctamente.")
+        except Exception as e:
+            print(f"⚠️ Error refrescando token Gmail: {e}")
+
+    # 🚫 Eliminar por completo el uso de file_cache o disco
+    try:
+        service = build(
+            "gmail",
+            "v1",
+            credentials=creds,
+            cache_discovery=False,
+            static_discovery=False,
+        )
+    except TypeError:
+        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+    print("✅ Gmail service inicializado sin cache_discovery.")
+    return service
 
 
 # ---------------------------------------------------------
@@ -251,13 +254,11 @@ async def send_reply(payload: dict):
         .maybe_single()
         .execute()
     )
-
     channel = res.data
     if not channel or not channel.get("gmail_access_token"):
         raise HTTPException(status_code=400, detail="Cliente no tiene Gmail conectado")
 
     service = get_gmail_service(channel)
-
     msg = MIMEText(payload.get("html") or "", "html")
     msg["to"] = payload.get("to_email")
     msg["subject"] = payload.get("subject")
