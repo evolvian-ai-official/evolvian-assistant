@@ -8,9 +8,10 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from google.auth.transport.requests import Request
+# ⛔️ NO importes Request aquí, evitar sombra de fastapi.Request
+# from google.auth.transport.requests import Request
 from google.oauth2 import id_token as google_id_token
-from google.auth.transport import requests as google_requests
+from google.auth.transport import requests as google_requests  # ✅ úsalo así
 from api.modules.assistant_rag.supabase_client import supabase
 
 router = APIRouter(prefix="/gmail_oauth", tags=["Gmail OAuth"])
@@ -24,10 +25,7 @@ socket.setdefaulttimeout(10)
 
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
-GMAIL_REDIRECT_URI = os.getenv(
-    "GMAIL_REDIRECT_URI",
-    "https://evolvianai.com/gmail_oauth/callback",
-)
+GMAIL_REDIRECT_URI = os.getenv("GMAIL_REDIRECT_URI", "https://evolvianai.com/gmail_oauth/callback")
 WORKSPACE_MODE = os.getenv("WORKSPACE_MODE", "false").lower() == "true"
 
 SCOPES = [
@@ -52,7 +50,7 @@ if WORKSPACE_MODE:
 # ---------------------------------------------------------
 # 1️⃣ Generar URL de autorización
 # ---------------------------------------------------------
-@router.get("/authorize", response_model=None)
+@router.get("/authorize", response_model=None)  # ✅ evita Pydantic con tipos raros
 async def authorize(client_id: str):
     flow = Flow.from_client_config(
         {
@@ -74,14 +72,12 @@ async def authorize(client_id: str):
     )
 
     try:
-        supabase.table("channels").insert(
-            {
-                "client_id": client_id,
-                "type": "oauth_state",
-                "provider": "gmail",
-                "gmail_access_token": state,
-            }
-        ).execute()
+        supabase.table("channels").insert({
+            "client_id": client_id,
+            "type": "oauth_state",
+            "provider": "gmail",
+            "gmail_access_token": state
+        }).execute()
     except Exception as e:
         print(f"⚠️ Error guardando state temporal: {e}")
 
@@ -91,7 +87,7 @@ async def authorize(client_id: str):
 # ---------------------------------------------------------
 # 2️⃣ Callback de Google con tiempos y manejo limpio
 # ---------------------------------------------------------
-@router.get("/callback", response_model=None)
+@router.get("/callback", response_model=None)  # ✅ igual aquí
 async def oauth_callback(request: Request):
     t0 = time.time()
     query_params = dict(request.query_params)
@@ -122,50 +118,32 @@ async def oauth_callback(request: Request):
         # Verificación de email del usuario
         email = None
         try:
-            req = google_requests.Request(timeout=3)
-            info = google_id_token.verify_oauth2_token(
-                credentials.id_token, req, GMAIL_CLIENT_ID
-            )
+            req = google_requests.Request(timeout=3)  # ✅ evitar sombra
+            info = google_id_token.verify_oauth2_token(credentials.id_token, req, GMAIL_CLIENT_ID)
             email = info.get("email")
         except Exception as e:
             print(f"⚠️ Error verificando id_token: {e}")
-
         if not email:
-            raise HTTPException(
-                status_code=400, detail="No se pudo obtener el email del usuario"
-            )
+            raise HTTPException(status_code=400, detail="No se pudo obtener el email del usuario")
 
         print(f"📧 Usuario Gmail: {email}")
 
         # Buscar o crear usuario/cliente
-        user_resp = (
-            supabase.table("users")
-            .select("id")
-            .eq("email", email)
-            .maybe_single()
-            .execute()
-        )
+        user_resp = supabase.table("users").select("id").eq("email", email).maybe_single().execute()
         if user_resp and getattr(user_resp, "data", None) and user_resp.data.get("id"):
             user_id = user_resp.data["id"]
         else:
             new_user = supabase.table("users").insert({"email": email}).execute()
             user_id = new_user.data[0]["id"]
 
-        client_resp = (
-            supabase.table("clients")
-            .select("id")
-            .eq("user_id", user_id)
-            .maybe_single()
-            .execute()
-        )
+        client_resp = supabase.table("clients").select("id").eq("user_id", user_id).maybe_single().execute()
         if client_resp and getattr(client_resp, "data", None) and client_resp.data.get("id"):
             client_id = client_resp.data["id"]
         else:
-            inserted = (
-                supabase.table("clients")
-                .insert({"user_id": user_id, "name": email.split("@")[0]})
-                .execute()
-            )
+            inserted = supabase.table("clients").insert({
+                "user_id": user_id,
+                "name": email.split('@')[0]
+            }).execute()
             client_id = inserted.data[0]["id"]
 
         # Guardar canal Gmail
@@ -179,38 +157,31 @@ async def oauth_callback(request: Request):
             .limit(1)
             .execute()
         )
-        existing = existing_channel.data if hasattr(existing_channel, "data") else []
+        existing = existing_channel.data if existing_channel and hasattr(existing_channel, "data") else []
 
         if existing:
             channel_id = existing[0]["id"]
-            supabase.table("channels").update(
-                {
-                    "gmail_access_token": credentials.token,
-                    "gmail_refresh_token": credentials.refresh_token,
-                    "gmail_expiry": credentials.expiry.isoformat()
-                    if credentials.expiry
-                    else None,
-                    "active": True,
-                }
-            ).eq("id", channel_id).execute()
+            supabase.table("channels").update({
+                "gmail_access_token": credentials.token,
+                "gmail_refresh_token": credentials.refresh_token,
+                "gmail_expiry": credentials.expiry.isoformat() if credentials.expiry else None,
+                "active": True
+            }).eq("id", channel_id).execute()
         else:
-            supabase.table("channels").insert(
-                {
-                    "client_id": client_id,
-                    "type": "email",
-                    "provider": "gmail",
-                    "value": email,
-                    "gmail_access_token": credentials.token,
-                    "gmail_refresh_token": credentials.refresh_token,
-                    "gmail_expiry": credentials.expiry.isoformat()
-                    if credentials.expiry
-                    else None,
-                    "active": True,
-                }
-            ).execute()
+            supabase.table("channels").insert({
+                "client_id": client_id,
+                "type": "email",
+                "provider": "gmail",
+                "value": email,
+                "gmail_access_token": credentials.token,
+                "gmail_refresh_token": credentials.refresh_token,
+                "gmail_expiry": credentials.expiry.isoformat() if credentials.expiry else None,
+                "active": True
+            }).execute()
 
         print(f"✅ Canal Gmail sincronizado correctamente ({email})")
 
+        # Limpieza de oauth_state
         try:
             supabase.table("channels").delete().eq("type", "oauth_state").execute()
         except Exception:
@@ -247,12 +218,12 @@ def get_gmail_service(channel):
     # 🔁 Refrescar token manualmente si está vencido
     if not creds.valid or creds.expired:
         try:
-            creds.refresh(Request())
+            creds.refresh(google_requests.Request())  # ✅ evitar sombra
             print("♻️ Token Gmail refrescado correctamente.")
         except Exception as e:
             print(f"⚠️ Error refrescando token Gmail: {e}")
 
-    # 🚫 Eliminar por completo el uso de file_cache o disco
+    # Sin disco / sin discovery cache
     try:
         service = build(
             "gmail",
@@ -271,7 +242,7 @@ def get_gmail_service(channel):
 # ---------------------------------------------------------
 # 4️⃣ Enviar correo Gmail
 # ---------------------------------------------------------
-@router.post("/send_reply", response_model=None)
+@router.post("/send_reply", response_model=None)  # ✅ evitar pydantic
 async def send_reply(payload: dict):
     client_id = payload.get("client_id")
     if not client_id:
@@ -287,9 +258,7 @@ async def send_reply(payload: dict):
     )
     channel = res.data
     if not channel or not channel.get("gmail_access_token"):
-        raise HTTPException(
-            status_code=400, detail="Cliente no tiene Gmail conectado"
-        )
+        raise HTTPException(status_code=400, detail="Cliente no tiene Gmail conectado")
 
     service = get_gmail_service(channel)
     msg = MIMEText(payload.get("html") or "", "html")

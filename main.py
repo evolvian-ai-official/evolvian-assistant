@@ -241,20 +241,22 @@ routers = [
 ]
 
 # =====================================================
-# ✅ Registro Gmail OAuth (Render fix)
+# ✅ Registro Gmail OAuth por ruta absoluta (sin duplicarlo)
 # =====================================================
+oauth_included = False
 gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
 if os.path.exists(gmail_oauth_path):
     try:
-        spec = importlib.util.spec_from_file_location("gmail_oauth", gmail_oauth_path)
+        spec = importlib.util.spec_from_file_location("gmail_oauth_path_mod", gmail_oauth_path)
         gmail_oauth_module = importlib.util.module_from_spec(spec)
-        sys.modules["gmail_oauth"] = gmail_oauth_module
+        sys.modules["gmail_oauth_path_mod"] = gmail_oauth_module
         spec.loader.exec_module(gmail_oauth_module)
         app.include_router(
             gmail_oauth_module.router,
             include_in_schema=True,
             responses={422: {"description": "Validation Error"}},
         )
+        oauth_included = True
         print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix, path corregido)")
     except Exception as e:
         print(f"⚠️ Error al registrar Gmail OAuth router por ruta absoluta: {e}")
@@ -262,7 +264,7 @@ else:
     print(f"⚠️ No se encontró gmail_oauth.py en: {gmail_oauth_path}")
 
 # =====================================================
-# ✅ Registro dinámico de routers opcionales
+# ✅ Registro dinámico de routers opcionales (evita duplicados)
 # =====================================================
 if chat_email:
     app.include_router(chat_email.router)
@@ -276,7 +278,7 @@ if gmail_webhook:
         include_in_schema=True,
         responses={422: {"description": "Validation Error"}},
     )
-if gmail_oauth:
+if (not oauth_included) and gmail_oauth:
     app.include_router(gmail_oauth.router)
 if gmail_setup_watch:
     app.include_router(gmail_setup_watch.router)

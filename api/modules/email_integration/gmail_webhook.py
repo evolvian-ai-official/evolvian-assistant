@@ -1,12 +1,13 @@
-import os
 import base64
 import json
 import asyncio
 import socket
 from datetime import datetime
 from email.utils import parseaddr
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
+
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.email_integration.gmail_oauth import get_gmail_service
 from api.modules.assistant_rag.chat_email import chat_email  # Pipeline RAG Evolvian
@@ -18,7 +19,7 @@ from api.modules.assistant_rag.chat_email import chat_email  # Pipeline RAG Evol
 router = APIRouter(
     prefix="/gmail_webhook",
     tags=["Gmail Listener"],
-    responses={422: {"description": "Validation Error"}},  # 👈 evita errores Pydantic
+    responses={422: {"description": "Validation Error"}},  # evita errores Pydantic
 )
 
 # ⏱️ Timeout global para evitar bloqueos en Gmail API
@@ -26,12 +27,12 @@ socket.setdefaulttimeout(10)
 
 
 @router.post("", response_model=None)
-async def gmail_webhook(request: Request, background_tasks: BackgroundTasks):
+async def gmail_webhook(request: Request):
     """
     📬 Gmail Webhook (Optimizado y No Bloqueante)
     - Acknowledge inmediato (200 OK) para evitar reintentos de Gmail
     - Control de duplicados, remitentes automáticos y seguridad
-    - Pipeline RAG ejecutado en segundo plano
+    - Pipeline RAG ejecutado en segundo plano con asyncio.create_task
     """
     try:
         body = await request.json()
@@ -44,10 +45,13 @@ async def gmail_webhook(request: Request, background_tasks: BackgroundTasks):
         email_address = decoded.get("emailAddress")
         history_id = decoded.get("historyId")
 
+        if not email_address:
+            raise HTTPException(status_code=400, detail="emailAddress faltante en Pub/Sub payload")
+
         print(f"📩 Gmail webhook recibido para {email_address} | historyId={history_id}")
 
-        # ✅ Respondemos inmediatamente para evitar reintentos de Google Pub/Sub
-        background_tasks.add_task(process_gmail_message, email_address, history_id)
+        # ✅ Responder inmediatamente y procesar en background
+        asyncio.create_task(process_gmail_message(email_address, history_id))
         return JSONResponse(status_code=200, content={"status": "accepted"})
 
     except Exception as e:
@@ -56,9 +60,9 @@ async def gmail_webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 # -------------------------------------------------------------
-# 🔧 Procesamiento en segundo plano (Background Task)
+# 🔧 Procesamiento en segundo plano (Background Task real)
 # -------------------------------------------------------------
-async def process_gmail_message(email_address: str, history_id: str):
+async def process_gmail_message(email_address: str, history_id: str | None):
     try:
         print(f"⚙️ Iniciando procesamiento async para {email_address}")
 
@@ -88,7 +92,9 @@ async def process_gmail_message(email_address: str, history_id: str):
         # 3️⃣ Obtener último mensaje no leído
         try:
             messages_resp = service.users().messages().list(
-                userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
+                userId="me",
+                labelIds=["INBOX", "UNREAD"],
+                maxResults=1
             ).execute()
         except Exception as e:
             print(f"⚠️ Error listando mensajes Gmail: {e}")
@@ -102,33 +108,40 @@ async def process_gmail_message(email_address: str, history_id: str):
         msg_id = messages[0]["id"]
         msg_data = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
 
-        headers = {h["name"].lower(): h["value"] for h in msg_data["payload"]["headers"]}
+        headers = {h["name"].lower(): h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
         from_email = parseaddr(headers.get("from", ""))[1]
         to_email = parseaddr(headers.get("to", ""))[1]
         subject = headers.get("subject", "Sin asunto")
         message_id = headers.get("message-id", "")
         thread_id = msg_data.get("threadId")
         snippet = msg_data.get("snippet", "")
-        labels = msg_data.get("labelIds", [])
+        labels = msg_data.get("labelIds", []) or []
+
+        if not message_id:
+            # En algunos correos raros, message-id puede faltar; genera un hash simple como fallback
+            message_id = f"fallback-{msg_id}"
 
         print(f"✉️ Nuevo correo de {from_email} | Asunto: {subject}")
 
         # 4️⃣ Detección de duplicados
-        existing = supabase.table("gmail_processed").select("id").eq("message_id", message_id).execute()
-        if existing.data:
-            print(f"⚠️ Duplicado detectado ({message_id}), se omite.")
-            return
+        try:
+            existing = supabase.table("gmail_processed").select("id").eq("message_id", message_id).execute()
+            if existing.data:
+                print(f"⚠️ Duplicado detectado ({message_id}), se omite.")
+                return
+        except Exception as e:
+            print(f"⚠️ Error verificando duplicados gmail_processed: {e}")
 
         # 5️⃣ Filtros de remitentes automáticos y correos no válidos
         blocked_keywords = [
             "no-reply", "noreply", "mailer-daemon", "newsletter", "bounce",
             "alert@", "salesforce", "marketing", "crm", "ads@", "updates@"
         ]
-        if any(kw in from_email.lower() for kw in blocked_keywords):
+        if from_email and any(kw in from_email.lower() for kw in blocked_keywords):
             print(f"🚫 Ignorado remitente automático: {from_email}")
             return
 
-        if to_email.lower() != assigned_email.lower():
+        if to_email and assigned_email and to_email.lower() != assigned_email.lower():
             print(f"🚫 Ignorado: destinatario incorrecto ({to_email})")
             return
 
@@ -140,7 +153,9 @@ async def process_gmail_message(email_address: str, history_id: str):
         try:
             threads = (
                 service.users().threads().list(
-                    userId="me", q=f"from:{from_email} subject:{subject}", maxResults=1
+                    userId="me",
+                    q=f"from:{from_email} subject:{subject}",
+                    maxResults=1
                 ).execute().get("threads", [])
             )
             target_thread_id = threads[0]["id"] if threads else thread_id
@@ -192,33 +207,38 @@ async def process_gmail_message(email_address: str, history_id: str):
         # 9️⃣ Marcar como leído
         try:
             service.users().messages().modify(
-                userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}
+                userId="me",
+                id=msg_id,
+                body={"removeLabelIds": ["UNREAD"]}
             ).execute()
             print(f"📬 Marcado como leído: {msg_id}")
         except Exception as e:
             print(f"⚠️ Error marcando mensaje leído: {e}")
 
-        # 🔟 Guardar historial Evolvian
-        supabase.table("history").insert({
-            "client_id": client_id,
-            "question": snippet,
-            "answer": answer,
-            "created_at": datetime.utcnow().isoformat(),
-            "channel": "email"
-        }).execute()
+        # 🔟 Guardar historial Evolvian (si tu tabla history lo soporta)
+        try:
+            supabase.table("history").insert({
+                "client_id": client_id,
+                "question": snippet,
+                "answer": answer,
+                "created_at": datetime.utcnow().isoformat(),
+                "channel": "email"
+            }).execute()
+        except Exception as e:
+            print(f"⚠️ Error insertando en history: {e}")
 
-        # 11️⃣ Registrar como procesado
-        supabase.table("gmail_processed").insert({
-            "client_id": client_id,
-            "message_id": message_id,
-            "thread_id": target_thread_id,
-            "from_email": from_email,
-            "subject": subject,
-            "processed_at": datetime.utcnow().isoformat(),
-            "created_at": datetime.utcnow().isoformat()
-        }).execute()
-
-        print(f"✅ Mensaje registrado correctamente: {message_id}")
+        # 11️⃣ Registrar como procesado (⚠️ NO incluir created_at si no existe en schema)
+        try:
+            supabase.table("gmail_processed").insert({
+                "client_id": client_id,
+                "message_id": message_id,
+                "history_id": history_id,
+                "from_email": from_email,
+                "processed_at": datetime.utcnow().isoformat()
+            }).execute()
+            print(f"✅ Mensaje registrado correctamente: {message_id}")
+        except Exception as e:
+            print(f"⚠️ Error insertando en gmail_processed: {e}")
 
     except Exception as e:
         print(f"🔥 Error en proceso Gmail: {e}")
