@@ -18,7 +18,7 @@ async def gmail_webhook(request: Request):
     - Procesa correos reales y responde automáticamente con el RAG de Evolvian
     - Ignora spam, marketing, newsletters o correos automáticos
     - Mantiene el hilo (thread) correcto
-    - Solo responde si el correo fue dirigido al email configurado del cliente
+    - Evita respuestas duplicadas (deduplicador de message_id)
     """
     try:
         body = await request.json()
@@ -90,6 +90,29 @@ async def gmail_webhook(request: Request):
         print(f"📜 Contenido detectado: {snippet[:300]}...")
 
         # ------------------------------------------------------
+        # 🧩 FIX 1: DEDUPLICADOR - evitar respuestas múltiples
+        # ------------------------------------------------------
+        try:
+            check = (
+                supabase.table("gmail_processed")
+                .select("id")
+                .eq("message_id", message_id)
+                .maybe_single()
+                .execute()
+            )
+            if check.data:
+                print(f"⚠️ Mensaje {message_id} ya procesado. Ignorando duplicado.")
+                return {"status": "duplicate_ignored"}
+
+            # Guardar registro de mensaje procesado
+            supabase.table("gmail_processed").insert({
+                "message_id": message_id,
+                "history_id": history_id
+            }).execute()
+        except Exception as e:
+            print(f"⚠️ No se pudo verificar duplicado: {e}")
+
+        # ------------------------------------------------------
         # 🚫 Filtro 1: Remitentes automáticos / marketing / no-reply
         # ------------------------------------------------------
         blocked_senders = [
@@ -119,47 +142,46 @@ async def gmail_webhook(request: Request):
         # 🚫 Filtro 4: Análisis semántico (solo consultas reales)
         # ------------------------------------------------------
         semantic_keywords = [
-            # Español - Consultas comerciales o informativas
             "hola", "buenos", "quiero", "necesito", "podrías", "pregunta",
             "precio", "ayuda", "información", "info", "duda", "consulta",
             "cotización", "servicio", "plan", "planes", "suscripción",
             "paquete", "detalle", "características", "requiero", "solicito",
             "presupuesto", "quieres", "cómo funciona", "contratar", "contactar",
-            # Español - Soporte técnico o atención
             "problema", "error", "soporte", "falla", "bug", "asistencia",
             "no funciona", "acceso", "login", "contraseña", "cuenta", "bloqueado",
             "iniciar sesión", "tengo un inconveniente", "no puedo entrar",
-            # Inglés - Información o ventas
             "hello", "hi", "please", "help", "question", "price", "need", "support",
             "info", "request", "inquiry", "details", "issue", "problem", "thanks",
             "plans", "subscription", "pricing", "package", "features", "quote",
             "buy", "purchase", "sign up", "trial", "demo", "access", "service",
-            # Inglés - Soporte o errores
             "error", "bug", "trouble", "cannot", "can't", "login", "password",
             "account", "blocked", "technical", "assistance"
         ]
-
-        # Buscamos coincidencias en el snippet o el subject
         text_to_check = f"{subject.lower()} {snippet.lower()}"
         if not any(k in text_to_check for k in semantic_keywords):
             print(f"🧩 Ignorado: no parece una consulta humana o de soporte.")
             return {"status": "ignored", "reason": "non-human text"}
 
         # ------------------------------------------------------
-        # 🧵 Buscar si ya existe un hilo con este remitente
+        # 🧵 FIX 2: Recuperar hilo correctamente
         # ------------------------------------------------------
         try:
+            # Buscar hilo existente desde Gmail API (por remitente o subject)
             threads_resp = service.users().threads().list(
-                userId="me", q=f"from:{from_email}", maxResults=1
+                userId="me", q=f"from:{from_email} subject:{subject}", maxResults=1
             ).execute()
             threads = threads_resp.get("threads", [])
             existing_thread_id = threads[0]["id"] if threads else None
+
+            target_thread_id = existing_thread_id or thread_id
+            if not target_thread_id:
+                # Último recurso: obtener threadId del mensaje original
+                target_thread_id = msg_data.get("threadId")
+
+            print(f"🧵 Usando threadId: {target_thread_id}")
         except Exception as e:
             print(f"⚠️ No se pudo obtener hilo existente: {e}")
-            existing_thread_id = None
-
-        target_thread_id = existing_thread_id or thread_id
-        print(f"🧵 Usando threadId: {target_thread_id}")
+            target_thread_id = thread_id or msg_data.get("threadId")
 
         # ------------------------------------------------------
         # 🧾 Preparar subject limpio
