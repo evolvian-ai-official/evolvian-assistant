@@ -1,24 +1,23 @@
 import base64
 import json
-import re
 from datetime import datetime
 from email.utils import parseaddr
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.email_integration.gmail_oauth import get_gmail_service
-from api.modules.assistant_rag.chat_email import chat_email  # pipeline RAG Evolvian
+from api.modules.assistant_rag.chat_email import chat_email  # Pipeline RAG Evolvian
 
 router = APIRouter(prefix="/gmail_webhook", tags=["Gmail Listener"])
+
 
 @router.post("")
 async def gmail_webhook(request: Request):
     """
-    📬 Webhook robusto de Gmail Automation (producción)
-    - Procesa correos reales y responde automáticamente con el RAG de Evolvian
-    - Ignora spam, marketing o correos automáticos
-    - Mantiene el hilo correcto
-    - Evita reprocesar correos ya atendidos (dedupe + marcar leído)
+    📬 Gmail Webhook (versión producción, limpia y robusta)
+    - Procesa nuevos correos Gmail de clientes premium/white-label
+    - Ejecuta pipeline RAG y responde automáticamente
+    - Previene reprocesos, ignora spam, y mantiene hilos
     """
     try:
         body = await request.json()
@@ -30,11 +29,10 @@ async def gmail_webhook(request: Request):
         decoded = json.loads(base64.b64decode(message_data).decode("utf-8"))
         email_address = decoded.get("emailAddress")
         history_id = decoded.get("historyId")
-
         print(f"📩 Notificación Gmail para {email_address}, historyId {history_id}")
 
         # ------------------------------------------------------
-        # 🔍 Buscar canal activo válido en Supabase
+        # 🔍 Buscar canal Gmail activo en Supabase
         # ------------------------------------------------------
         channel_resp = (
             supabase.table("channels")
@@ -61,7 +59,7 @@ async def gmail_webhook(request: Request):
         service = get_gmail_service(channel)
 
         # ------------------------------------------------------
-        # 📬 Obtener último mensaje recibido en INBOX
+        # 📬 Obtener último mensaje no leído
         # ------------------------------------------------------
         messages_resp = service.users().messages().list(
             userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
@@ -73,9 +71,7 @@ async def gmail_webhook(request: Request):
             return {"status": "no new messages"}
 
         msg_id = messages[0]["id"]
-        msg_data = service.users().messages().get(
-            userId="me", id=msg_id, format="full"
-        ).execute()
+        msg_data = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
 
         headers = {h["name"].lower(): h["value"] for h in msg_data["payload"]["headers"]}
         from_email = parseaddr(headers.get("from", ""))[1]
@@ -87,10 +83,10 @@ async def gmail_webhook(request: Request):
         labels = msg_data.get("labelIds", [])
 
         print(f"✉️ Correo recibido de {from_email} | Asunto: {subject}")
-        print(f"📜 Contenido detectado: {snippet[:300]}...")
+        print(f"📜 Contenido detectado: {snippet[:250]}...")
 
         # ------------------------------------------------------
-        # 🚫 Dedupe definitivo: evita reprocesar si ya fue respondido
+        # 🚫 Dedupe: evitar reprocesar mensajes ya atendidos
         # ------------------------------------------------------
         try:
             dedupe_check = supabase.table("gmail_processed").select("id").eq("message_id", message_id).execute()
@@ -101,14 +97,14 @@ async def gmail_webhook(request: Request):
             print(f"⚠️ Error verificando duplicado: {e}")
 
         # ------------------------------------------------------
-        # 🚫 Filtros de seguridad
+        # 🚫 Filtros de spam o remitentes automáticos
         # ------------------------------------------------------
-        blocked_senders = [
+        blocked_keywords = [
             "mailer-daemon", "postmaster", "no-reply", "noreply", "donotreply",
             "notifications", "marketing", "newsletter", "campaign", "mailer",
             "salesforce", "crm", "promo", "ads@", "updates@", "alert@", "bounce"
         ]
-        if any(kw in from_email.lower() for kw in blocked_senders):
+        if any(kw in from_email.lower() for kw in blocked_keywords):
             print(f"🚫 Ignorado remitente automático: {from_email}")
             return {"status": "ignored", "reason": "automated sender"}
 
@@ -121,7 +117,7 @@ async def gmail_webhook(request: Request):
             return {"status": "ignored", "reason": "not inbox"}
 
         # ------------------------------------------------------
-        # 🧵 Obtener hilo correcto
+        # 🧵 Determinar hilo (thread)
         # ------------------------------------------------------
         try:
             threads_resp = service.users().threads().list(
@@ -136,7 +132,7 @@ async def gmail_webhook(request: Request):
             target_thread_id = thread_id
 
         # ------------------------------------------------------
-        # 🤖 Ejecutar pipeline RAG
+        # 🤖 Ejecutar pipeline RAG Evolvian
         # ------------------------------------------------------
         fake_request = Request(scope={"type": "http"})
         fake_request._body = json.dumps({
@@ -153,16 +149,16 @@ async def gmail_webhook(request: Request):
             answer = "Gracias por tu mensaje. Pronto te responderemos."
 
         # ------------------------------------------------------
-        # ✉️ Responder en el mismo hilo
+        # ✉️ Preparar respuesta
         # ------------------------------------------------------
-        clean_subject = subject.strip()
-        if not clean_subject.lower().startswith("re:"):
-            clean_subject = f"Re: {clean_subject}"
+        reply_subject = subject.strip()
+        if not reply_subject.lower().startswith("re:"):
+            reply_subject = f"Re: {reply_subject}"
 
         reply_raw = (
             f"From: {email_address}\r\n"
             f"To: {from_email}\r\n"
-            f"Subject: {clean_subject}\r\n"
+            f"Subject: {reply_subject}\r\n"
             f"In-Reply-To: {message_id}\r\n"
             f"References: {message_id}\r\n"
             f"Content-Type: text/plain; charset='UTF-8'\r\n\r\n"
@@ -175,7 +171,7 @@ async def gmail_webhook(request: Request):
         }
 
         # ------------------------------------------------------
-        # 🚀 Enviar respuesta, marcar leído y registrar procesado
+        # 🚀 Enviar respuesta, marcar leído y registrar
         # ------------------------------------------------------
         try:
             service.users().messages().send(userId="me", body=reply_message).execute()
@@ -186,7 +182,7 @@ async def gmail_webhook(request: Request):
             ).execute()
             print(f"📬 Marcado como leído: {msg_id}")
 
-            # 💾 Guardar en history
+            # Guardar historial (user + assistant)
             supabase.table("history").insert({
                 "client_id": client_id,
                 "question": snippet,
@@ -195,20 +191,22 @@ async def gmail_webhook(request: Request):
                 "channel": "email"
             }).execute()
 
-            # 💾 Registrar como procesado
+            # Registrar mensaje procesado
             supabase.table("gmail_processed").insert({
                 "client_id": client_id,
                 "message_id": message_id,
                 "thread_id": target_thread_id,
                 "from_email": from_email,
-                "subject": subject
+                "subject": subject,
+                "created_at": datetime.utcnow().isoformat()
             }).execute()
-            print(f"✅ Mensaje marcado como procesado ({message_id})")
+
+            print(f"✅ Mensaje procesado y guardado: {message_id}")
 
         except Exception as e:
             print(f"⚠️ Error enviando correo o guardando historial: {e}")
 
-        return {"status": "ok", "message": "Respuesta enviada correctamente", "thread_id": target_thread_id}
+        return {"status": "ok", "thread_id": target_thread_id}
 
     except HTTPException as e:
         raise e

@@ -11,6 +11,9 @@ from api.modules.assistant_rag.supabase_client import supabase
 
 router = APIRouter(prefix="/gmail_poll", tags=["Gmail Automation"])
 
+# ------------------------------------------------------------
+# ⚙️ Configuración global
+# ------------------------------------------------------------
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
 WEBHOOK_URL = "https://evolvian-assistant.onrender.com/gmail_webhook"
@@ -20,15 +23,21 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
+MAX_RETRIES = 3          # Número de reintentos al enviar webhook
+TIMEOUT_SECONDS = 60     # Timeout por petición webhook
+SLEEP_BETWEEN = 2        # Pausa entre webhooks (segundos)
+
+
 # ------------------------------------------------------------
-# 📬 Poll manual de correos Gmail (clientes Premium y White Label)
+# 📬 Poll manual de correos Gmail (Premium y White Label)
 # ------------------------------------------------------------
 @router.post("/check")
 async def check_new_emails():
     """
-    🔍 Verifica correos nuevos en las cuentas Gmail conectadas
-    para clientes activos con plan Premium o White Label.
-    Ideal para ejecutarse como CRON cada 5 minutos.
+    🔍 Revisa nuevos correos Gmail para clientes con plan Premium o White Label.
+    - Se ejecuta como CRON cada pocos minutos.
+    - Emula notificaciones Pub/Sub enviando payloads al webhook.
+    - Incluye reintentos y timeouts seguros.
     """
 
     print("🚀 Iniciando revisión de correos Gmail para clientes Premium y White Label...")
@@ -44,20 +53,21 @@ async def check_new_emails():
         )
 
         if not channels_resp.data:
-            print("⚠️ No hay canales Gmail activos en la tabla channels.")
+            print("⚠️ No hay canales Gmail activos.")
             return {"status": "ok", "checked": [], "message": "Sin canales activos"}
 
         channels = channels_resp.data
         print(f"📊 {len(channels)} canales Gmail activos encontrados.")
-
         processed = []
+
         eligible_plans = ["premium", "white_label"]
 
-        # 2️⃣ Filtrar por plan_id
+        # 2️⃣ Procesar cada canal Gmail activo
         for ch in channels:
             client_id = ch.get("client_id")
             email = ch.get("value")
 
+            # Verificar plan del cliente
             settings_resp = (
                 supabase.table("client_settings")
                 .select("plan_id")
@@ -66,12 +76,12 @@ async def check_new_emails():
             )
 
             if not settings_resp.data:
-                print(f"⚠️ {email}: sin configuración de cliente.")
+                print(f"⚠️ {email}: sin configuración en client_settings.")
                 continue
 
             plan_id = settings_resp.data[0].get("plan_id", "").strip().lower()
             if plan_id not in eligible_plans:
-                print(f"🟡 {email}: plan '{plan_id}', no es premium ni white_label.")
+                print(f"🟡 {email}: plan '{plan_id}' no es Premium ni White Label.")
                 continue
 
             # 3️⃣ Revisar correos
@@ -94,49 +104,64 @@ async def check_new_emails():
                 )
 
                 messages = results.get("messages", [])
-                if messages:
-                    print(f"📩 {email}: {len(messages)} mensajes recientes.")
-                    for msg in messages:
-                        msg_id = msg["id"]
-                        print(f"   ➤ ID: {msg_id}")
+                if not messages:
+                    print(f"🟢 {email}: sin mensajes nuevos.")
+                    continue
 
-                        # 🚀 Simular webhook Gmail (como Pub/Sub)
-                        payload = {
-                            "message": {
-                                "data": base64.b64encode(
-                                    json.dumps({
-                                        "emailAddress": email,
-                                        "historyId": str(msg_id)
-                                    }).encode("utf-8")
-                                ).decode("utf-8")
-                            }
+                print(f"📩 {email}: {len(messages)} mensajes detectados.")
+
+                for msg in messages:
+                    msg_id = msg["id"]
+                    print(f"   ➤ ID: {msg_id}")
+
+                    # Payload emulando Pub/Sub
+                    payload = {
+                        "message": {
+                            "data": base64.b64encode(
+                                json.dumps({
+                                    "emailAddress": email,
+                                    "historyId": str(msg_id)
+                                }).encode("utf-8")
+                            ).decode("utf-8")
                         }
+                    }
 
+                    # 4️⃣ Enviar webhook con reintentos
+                    for attempt in range(1, MAX_RETRIES + 1):
                         try:
                             resp = requests.post(
                                 WEBHOOK_URL,
                                 json=payload,
                                 headers={"Content-Type": "application/json"},
-                                timeout=30
+                                timeout=TIMEOUT_SECONDS,
                             )
-                            print(f"📨 Webhook enviado → {resp.status_code}")
-                            time.sleep(2)  # Pequeña pausa entre webhooks
+
+                            if resp.status_code == 200:
+                                print(f"✅ Webhook enviado correctamente → {email} ({resp.status_code})")
+                                break
+                            else:
+                                print(f"⚠️ Intento {attempt}/{MAX_RETRIES} → respuesta {resp.status_code}")
                         except Exception as e:
-                            print(f"⚠️ Error enviando webhook para {email}: {e}")
+                            print(f"⚠️ Error intento {attempt}/{MAX_RETRIES} para {email}: {e}")
 
-                    processed.append(email)
-                else:
-                    print(f"🟢 {email}: sin mensajes nuevos.")
+                        if attempt < MAX_RETRIES:
+                            time.sleep(3)
+
+                    time.sleep(SLEEP_BETWEEN)
+
+                processed.append(email)
+
             except Exception as e:
-                print(f"⚠️ Error verificando {email}: {e}")
+                print(f"🔥 Error verificando correos para {email}: {e}")
 
-        if not processed:
-            print("✅ No se encontraron correos nuevos en clientes premium o white_label.")
+        # Resumen final
+        if processed:
+            print(f"✅ Procesados correctamente: {processed}")
         else:
-            print(f"✅ Procesados: {processed}")
+            print("✅ Sin correos nuevos en clientes Premium o White Label.")
 
         return JSONResponse({"status": "ok", "checked": processed})
 
     except Exception as e:
-        print(f"🔥 Error global en gmail_poll/check: {e}")
+        print(f"💥 Error global en gmail_poll/check: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
