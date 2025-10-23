@@ -15,18 +15,22 @@ from api.modules.assistant_rag.chat_email import chat_email  # Pipeline RAG Evol
 # 📬 Gmail Webhook — Evolvian AI (Versión final optimizada Render)
 # ==========================================================
 
-router = APIRouter(prefix="/gmail_webhook", tags=["Gmail Listener"])
+router = APIRouter(
+    prefix="/gmail_webhook",
+    tags=["Gmail Listener"],
+    responses={422: {"description": "Validation Error"}},  # 👈 evita errores Pydantic
+)
 
 # ⏱️ Timeout global para evitar bloqueos en Gmail API
 socket.setdefaulttimeout(10)
 
 
-@router.post("")
+@router.post("", response_model=None)
 async def gmail_webhook(request: Request, background_tasks: BackgroundTasks):
     """
     📬 Gmail Webhook (Optimizado y No Bloqueante)
     - Acknowledge inmediato (200 OK) para evitar reintentos de Gmail
-    - Control de duplicados, remitentes automáticos, y seguridad
+    - Control de duplicados, remitentes automáticos y seguridad
     - Pipeline RAG ejecutado en segundo plano
     """
     try:

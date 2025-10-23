@@ -55,8 +55,7 @@ from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
-from api.routes import reset  # Cron
-from api.routes import embed
+from api.routes import reset, embed  # Cron y embed
 from api.delete_file import router as delete_file_router
 from api.channels import router as channels_router
 from api.modules.email_integration import disconnect_gmail
@@ -75,22 +74,19 @@ from api.auth.google_calendar_callback import router as google_callback_router
 from api.calendar_routes import router as calendar_router
 from api.calendar_booking import router as calendar_booking_router
 
-# ----------------------------------------
 # 🩹 Auto-fix Render: asegura dependencias de Gmail/Calendar en runtime
-# ----------------------------------------
 google_libs = [
     "google-auth",
     "google-auth-oauthlib",
     "google-api-python-client",
-    "google-auth-httplib2"
+    "google-auth-httplib2",
 ]
-
 for lib in google_libs:
     if importlib.util.find_spec(lib) is None:
         print(f"⚙️ Librería faltante detectada: {lib} → instalando en runtime...")
         subprocess.run(["pip", "install", lib], check=False)
 
-# ✅ Módulos opcionales (protegidos)
+# ✅ Módulos opcionales protegidos
 try:
     from api.modules.assistant_rag import chat_email
     print("✅ chat_email importado correctamente")
@@ -112,7 +108,7 @@ except Exception as e:
     register_email_channel = None
     print(f"⚠️ No se pudo importar register_email_channel: {e}")
 
-# ✅ Gmail modules (separados para evitar bloqueo mutuo)
+# ✅ Gmail modules (separados)
 try:
     from api.modules.email_integration import gmail_webhook
     print("✅ gmail_webhook importado correctamente")
@@ -127,7 +123,7 @@ except Exception as e:
     gmail_oauth = None
     print(f"⚠️ No se pudo importar gmail_oauth: {e}")
 
-# ✅ NUEVO: Gmail Setup Watch (ruta absoluta segura)
+# ✅ Gmail Setup Watch (ruta absoluta)
 try:
     gmail_watch_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_setup_watch.py")
     if os.path.exists(gmail_watch_path):
@@ -144,7 +140,7 @@ except Exception as e:
     gmail_setup_watch = None
     print(f"⚠️ Error al importar gmail_setup_watch: {e}")
 
-# ✅ NUEVO: Gmail Poll (cron alternativo al watcher)
+# ✅ Gmail Poll (cron alternativo)
 try:
     from api.modules.email_integration import gmail_poll
     print("✅ gmail_poll importado correctamente ✅")
@@ -152,6 +148,7 @@ except Exception as e:
     gmail_poll = None
     print(f"⚠️ No se pudo importar gmail_poll: {e}")
 
+# ✅ Calendar modules
 try:
     from api.modules.calendar import init_calendar_auth
     print("✅ init_calendar_auth importado correctamente")
@@ -168,12 +165,12 @@ except Exception as e:
 
 print("🚀 Imports completados correctamente")
 
-# ----------------------------------------
-# ✅ Crear app antes de incluir routers
-# ----------------------------------------
-app = FastAPI()
+# =====================================================
+# ✅ Crear app FastAPI
+# =====================================================
+app = FastAPI(title="Evolvian Assistant API", version="1.0")
 
-# ✅ CORS para producción y desarrollo local
+# ✅ CORS config
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -192,9 +189,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 📂 Static con CORS headers habilitados
+# ✅ Static files con CORS
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-
 class CORSMiddlewareStatic(StaticFiles):
     async def get_response(self, path, scope):
         response: Response = await super().get_response(path, scope)
@@ -206,7 +202,9 @@ class CORSMiddlewareStatic(StaticFiles):
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
 app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
+# =====================================================
 # ✅ Registro de routers principales
+# =====================================================
 routers = [
     upload_router,
     history_router,
@@ -242,9 +240,9 @@ routers = [
     google_callback_router,
 ]
 
-# ----------------------------------------
-# 🔥 Registro forzado por ruta absoluta (Render fix)
-# ----------------------------------------
+# =====================================================
+# ✅ Registro Gmail OAuth (Render fix)
+# =====================================================
 gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
 if os.path.exists(gmail_oauth_path):
     try:
@@ -252,25 +250,46 @@ if os.path.exists(gmail_oauth_path):
         gmail_oauth_module = importlib.util.module_from_spec(spec)
         sys.modules["gmail_oauth"] = gmail_oauth_module
         spec.loader.exec_module(gmail_oauth_module)
-        app.include_router(gmail_oauth_module.router)
+        app.include_router(
+            gmail_oauth_module.router,
+            include_in_schema=True,
+            responses={422: {"description": "Validation Error"}},
+        )
         print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix, path corregido)")
     except Exception as e:
         print(f"⚠️ Error al registrar Gmail OAuth router por ruta absoluta: {e}")
 else:
     print(f"⚠️ No se encontró gmail_oauth.py en: {gmail_oauth_path}")
 
-# ✅ Añadir routers dinámicamente si existen
-if chat_email: app.include_router(chat_email.router)
-if get_client_by_email_router: app.include_router(get_client_by_email_router)
-if register_email_channel: app.include_router(register_email_channel.router)
-if gmail_webhook: app.include_router(gmail_webhook.router)
-if gmail_oauth: app.include_router(gmail_oauth.router)
-if gmail_setup_watch: app.include_router(gmail_setup_watch.router)
-if gmail_poll: app.include_router(gmail_poll.router)
-if init_calendar_auth: app.include_router(init_calendar_auth.router)
-if calendar_status: app.include_router(calendar_status.router)
-if channels_router: app.include_router(channels_router)
-if disconnect_gmail: app.include_router(disconnect_gmail.router)
+# =====================================================
+# ✅ Registro dinámico de routers opcionales
+# =====================================================
+if chat_email:
+    app.include_router(chat_email.router)
+if get_client_by_email_router:
+    app.include_router(get_client_by_email_router)
+if register_email_channel:
+    app.include_router(register_email_channel.router)
+if gmail_webhook:
+    app.include_router(
+        gmail_webhook.router,
+        include_in_schema=True,
+        responses={422: {"description": "Validation Error"}},
+    )
+if gmail_oauth:
+    app.include_router(gmail_oauth.router)
+if gmail_setup_watch:
+    app.include_router(gmail_setup_watch.router)
+if gmail_poll:
+    app.include_router(gmail_poll.router)
+if init_calendar_auth:
+    app.include_router(init_calendar_auth.router)
+if calendar_status:
+    app.include_router(calendar_status.router)
+if channels_router:
+    app.include_router(channels_router)
+if disconnect_gmail:
+    app.include_router(disconnect_gmail.router)
 
 for r in routers:
     app.include_router(r)
@@ -278,22 +297,24 @@ for r in routers:
 app.include_router(reset.router, tags=["subscriptions"])
 app.include_router(embed.router)
 
-# ✅ Healthcheck
+# =====================================================
+# ✅ Utilidades de diagnóstico
+# =====================================================
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
 
-# ✅ Root endpoint
 @app.get("/")
 def root():
     return {"message": "Evolvian Assistant API is running"}
 
-# ✅ Diagnóstico de rutas activas
 @app.get("/test_routes")
 def test_routes():
     return [route.path for route in app.routes]
 
-# ✅ Ejecución local (opcional)
+# =====================================================
+# ✅ Ejecución local
+# =====================================================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
