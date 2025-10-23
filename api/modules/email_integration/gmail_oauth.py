@@ -1,12 +1,14 @@
 import os
 import base64
 import time
+import socket
 from email.mime.text import MIMEText
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.discovery_cache.base import Cache
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from api.modules.assistant_rag.supabase_client import supabase
@@ -14,8 +16,11 @@ from api.modules.assistant_rag.supabase_client import supabase
 router = APIRouter(prefix="/gmail_oauth", tags=["Gmail OAuth"])
 
 # =====================================================
-# 📧 Gmail OAuth - Evolvian AI (Optimizado + Timers)
+# 📧 Gmail OAuth - Evolvian AI (Versión final optimizada Render)
 # =====================================================
+
+# Timeout global de red (para evitar bloqueos Render)
+socket.setdefaulttimeout(10)
 
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
@@ -39,6 +44,13 @@ if WORKSPACE_MODE:
         "https://www.googleapis.com/auth/gmail.addons.current.message.action",
         "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
     ]
+
+# 🚫 Desactivar file_cache del cliente Google
+class NoCache(Cache):
+    def get(self, url):
+        return None
+    def set(self, url, content):
+        pass
 
 
 # ---------------------------------------------------------
@@ -107,7 +119,7 @@ async def oauth_callback(request: Request):
             redirect_uri=GMAIL_REDIRECT_URI,
         )
 
-        flow.fetch_token(code=code, timeout=8)
+        flow.fetch_token(code=code)
         credentials = flow.credentials
         print(f"✅ [1] fetch_token completado en {time.time() - t1:.2f}s")
 
@@ -117,9 +129,7 @@ async def oauth_callback(request: Request):
         email = None
         try:
             req = google_requests.Request(timeout=3)
-            info = google_id_token.verify_oauth2_token(
-                credentials.id_token, req, GMAIL_CLIENT_ID
-            )
+            info = google_id_token.verify_oauth2_token(credentials.id_token, req, GMAIL_CLIENT_ID)
             email = info.get("email")
         except Exception as e:
             print(f"⚠️ Error verificando id_token: {e}")
@@ -127,24 +137,19 @@ async def oauth_callback(request: Request):
 
         if not email:
             raise HTTPException(status_code=400, detail="No se pudo obtener el email del usuario")
-
         print(f"📧 Usuario Gmail detectado: {email}")
 
         # Etapa 3️⃣: Buscar o crear usuario/cliente
         print("⏱️ [3] Consultando usuario/cliente en Supabase...")
         t3 = time.time()
-        user_resp = (
-            supabase.table("users").select("id").eq("email", email).maybe_single().execute()
-        )
+        user_resp = supabase.table("users").select("id").eq("email", email).maybe_single().execute()
         if user_resp and getattr(user_resp, "data", None) and user_resp.data.get("id"):
             user_id = user_resp.data["id"]
         else:
             new_user = supabase.table("users").insert({"email": email}).execute()
             user_id = new_user.data[0]["id"]
 
-        client_resp = (
-            supabase.table("clients").select("id").eq("user_id", user_id).maybe_single().execute()
-        )
+        client_resp = supabase.table("clients").select("id").eq("user_id", user_id).maybe_single().execute()
         if client_resp and getattr(client_resp, "data", None) and client_resp.data.get("id"):
             client_id = client_resp.data["id"]
         else:
@@ -215,7 +220,7 @@ async def oauth_callback(request: Request):
 
 
 # ---------------------------------------------------------
-# 3️⃣ Helper: servicio Gmail sin discovery
+# 3️⃣ Helper: servicio Gmail optimizado sin file_cache
 # ---------------------------------------------------------
 def get_gmail_service(channel):
     creds = Credentials(
@@ -226,7 +231,7 @@ def get_gmail_service(channel):
         client_secret=GMAIL_CLIENT_SECRET,
         scopes=SCOPES,
     )
-    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+    return build("gmail", "v1", credentials=creds, cache=NoCache())
 
 
 # ---------------------------------------------------------
