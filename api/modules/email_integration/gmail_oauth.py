@@ -1,5 +1,6 @@
 import os
 import base64
+import time
 from email.mime.text import MIMEText
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -8,18 +9,14 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
-from datetime import datetime
 from api.modules.assistant_rag.supabase_client import supabase
-
-# =====================================================
-# 📧 Gmail OAuth - Evolvian AI (Protección anti-duplicados + manejo seguro)
-# =====================================================
 
 router = APIRouter(prefix="/gmail_oauth", tags=["Gmail OAuth"])
 
-# ---------------------------------------------------------
-# 🔐 CONFIG
-# ---------------------------------------------------------
+# =====================================================
+# 📧 Gmail OAuth - Evolvian AI (Optimizado + Timers)
+# =====================================================
+
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
 GMAIL_REDIRECT_URI = os.getenv("GMAIL_REDIRECT_URI", "https://evolvianai.com/gmail_oauth/callback")
@@ -43,14 +40,12 @@ if WORKSPACE_MODE:
         "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
     ]
 
+
 # ---------------------------------------------------------
 # 1️⃣ Generar URL de autorización
 # ---------------------------------------------------------
 @router.get("/authorize")
 async def authorize(client_id: str):
-    """
-    Devuelve la URL de autorización para que el cliente conecte su Gmail.
-    """
     flow = Flow.from_client_config(
         {
             "web": {
@@ -64,14 +59,12 @@ async def authorize(client_id: str):
         redirect_uri=GMAIL_REDIRECT_URI,
     )
 
-    # ✅ Forzamos consentimiento limpio y tokens offline nuevos
     authorization_url, state = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes=False,  # 👈 importante para evitar mezclar permisos viejos
-        prompt="consent"               # 👈 fuerza reautorización completa
+        include_granted_scopes=False,
+        prompt="consent",
     )
 
-    # Guardamos temporalmente el state
     try:
         supabase.table("channels").insert({
             "client_id": client_id,
@@ -86,14 +79,11 @@ async def authorize(client_id: str):
 
 
 # ---------------------------------------------------------
-# 2️⃣ Callback de Google
+# 2️⃣ Callback de Google (con cronómetro de etapas)
 # ---------------------------------------------------------
 @router.get("/callback")
 async def oauth_callback(request: Request):
-    """
-    Recibe el código de Google y guarda los tokens en Supabase.
-    Previene duplicados, limpia oauth_state y actualiza canales existentes.
-    """
+    t0 = time.time()
     query_params = dict(request.query_params)
     code = query_params.get("code")
 
@@ -101,7 +91,9 @@ async def oauth_callback(request: Request):
         raise HTTPException(status_code=400, detail="Código de autorización faltante")
 
     try:
-        # Intercambiar code por tokens
+        # Etapa 1️⃣: Intercambio de token
+        print("⏱️ [1] Iniciando fetch_token...")
+        t1 = time.time()
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -114,120 +106,79 @@ async def oauth_callback(request: Request):
             scopes=SCOPES,
             redirect_uri=GMAIL_REDIRECT_URI,
         )
-        flow.fetch_token(code=code)
+
+        flow.fetch_token(code=code, timeout=8)
         credentials = flow.credentials
+        print(f"✅ [1] fetch_token completado en {time.time() - t1:.2f}s")
 
-        # ✅ Validación flexible de scopes (permite extras de Workspace)
-        required_scopes = set([
-            "https://mail.google.com/",
-            "https://www.googleapis.com/auth/gmail.readonly",
-            "https://www.googleapis.com/auth/gmail.send",
-            "https://www.googleapis.com/auth/gmail.modify",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/userinfo.profile",
-            "openid",
-        ])
-        received_scopes = set(credentials.scopes or [])
-        missing = required_scopes - received_scopes
-        if missing:
-            raise Exception(f"Missing required scopes: {missing}")
-
-        extra = received_scopes - required_scopes
-        if extra:
-            print(f"ℹ️ Scopes adicionales detectados (Workspace): {extra}")
-
-        # Obtener email
+        # Etapa 2️⃣: Verificación de id_token
+        print("⏱️ [2] Verificando id_token...")
+        t2 = time.time()
         email = None
-        if credentials.id_token:
-            try:
-                info = google_id_token.verify_oauth2_token(
-                    credentials.id_token,
-                    google_requests.Request(),
-                    GMAIL_CLIENT_ID
-                )
-                email = info.get("email")
-            except Exception as e:
-                print(f"⚠️ No se pudo decodificar id_token: {e}")
+        try:
+            req = google_requests.Request(timeout=3)
+            info = google_id_token.verify_oauth2_token(
+                credentials.id_token, req, GMAIL_CLIENT_ID
+            )
+            email = info.get("email")
+        except Exception as e:
+            print(f"⚠️ Error verificando id_token: {e}")
+        print(f"✅ [2] Verificación completada en {time.time() - t2:.2f}s")
 
         if not email:
             raise HTTPException(status_code=400, detail="No se pudo obtener el email del usuario")
 
-        print(f"✅ Gmail OAuth completado para {email}")
+        print(f"📧 Usuario Gmail detectado: {email}")
 
-        # -------------------------------------------------
-        # 3️⃣ Buscar o crear user y client correctamente
-        # -------------------------------------------------
-        client_id = None
-        user_id = None
-
+        # Etapa 3️⃣: Buscar o crear usuario/cliente
+        print("⏱️ [3] Consultando usuario/cliente en Supabase...")
+        t3 = time.time()
         user_resp = (
-            supabase.table("users")
-            .select("id")
-            .eq("email", email)
-            .maybe_single()
-            .execute()
+            supabase.table("users").select("id").eq("email", email).maybe_single().execute()
         )
-
         if user_resp and getattr(user_resp, "data", None) and user_resp.data.get("id"):
             user_id = user_resp.data["id"]
-            print(f"✅ Usuario encontrado: {user_id}")
         else:
-            print("🆕 Usuario no encontrado, creando nuevo...")
             new_user = supabase.table("users").insert({"email": email}).execute()
             user_id = new_user.data[0]["id"]
-            print(f"✅ Usuario creado: {user_id}")
 
         client_resp = (
-            supabase.table("clients")
-            .select("id, user_id")
-            .eq("user_id", user_id)
-            .maybe_single()
-            .execute()
+            supabase.table("clients").select("id").eq("user_id", user_id).maybe_single().execute()
         )
-
         if client_resp and getattr(client_resp, "data", None) and client_resp.data.get("id"):
             client_id = client_resp.data["id"]
-            print(f"✅ Cliente asociado encontrado: {client_id}")
         else:
             inserted = supabase.table("clients").insert({
                 "user_id": user_id,
                 "name": email.split('@')[0]
             }).execute()
             client_id = inserted.data[0]["id"]
-            print(f"✅ Cliente creado: {client_id}")
+        print(f"✅ [3] Usuario/cliente procesado en {time.time() - t3:.2f}s")
 
-        # -------------------------------------------------
-        # 4️⃣ Guardar canal Gmail con client_id correcto (sin duplicar)
-        # -------------------------------------------------
-        try:
-            channel_query = (
-                supabase.table("channels")
-                .select("id")
-                .eq("client_id", client_id)
-                .eq("type", "email")
-                .eq("provider", "gmail")
-                .eq("value", email)
-                .limit(1)
-                .execute()
-            )
-            existing_channel = channel_query.data if channel_query and hasattr(channel_query, "data") else []
-        except Exception as e:
-            print(f"⚠️ Error consultando canal Gmail existente: {e}")
-            existing_channel = []
+        # Etapa 4️⃣: Guardar canal Gmail
+        print("⏱️ [4] Guardando canal Gmail...")
+        t4 = time.time()
+        channel_query = (
+            supabase.table("channels")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("type", "email")
+            .eq("provider", "gmail")
+            .eq("value", email)
+            .limit(1)
+            .execute()
+        )
 
-        if existing_channel and len(existing_channel) > 0:
+        existing_channel = channel_query.data if channel_query and hasattr(channel_query, "data") else []
+
+        if existing_channel:
             channel_id = existing_channel[0]["id"]
-            print(f"🔁 Canal existente detectado ({email}), actualizando tokens...")
-
             supabase.table("channels").update({
                 "gmail_access_token": credentials.token,
                 "gmail_refresh_token": credentials.refresh_token,
                 "gmail_expiry": credentials.expiry.isoformat() if credentials.expiry else None,
                 "active": True
             }).eq("id", channel_id).execute()
-
-            print(f"✅ Canal Gmail actualizado correctamente para {email}")
-
         else:
             supabase.table("channels").insert({
                 "client_id": client_id,
@@ -239,34 +190,32 @@ async def oauth_callback(request: Request):
                 "gmail_expiry": credentials.expiry.isoformat() if credentials.expiry else None,
                 "active": True
             }).execute()
-            print(f"✅ Canal Gmail insertado correctamente para {email} → client_id {client_id}")
+        print(f"✅ [4] Canal Gmail guardado en {time.time() - t4:.2f}s")
 
-        # -------------------------------------------------
-        # 5️⃣ Limpiar estados OAuth huérfanos
-        # -------------------------------------------------
+        # Etapa 5️⃣: Limpieza final + redirección
         try:
             supabase.table("channels").delete().eq("type", "oauth_state").execute()
-            print("🧹 Limpieza: estados OAuth antiguos eliminados.")
-        except Exception as e:
-            print(f"⚠️ Error limpiando oauth_state: {e}")
+        except Exception:
+            pass
 
-        # Detectar entorno actual (local o producción)
+        total_time = time.time() - t0
+        print(f"🏁 Flujo completo Gmail OAuth terminado en {total_time:.2f}s")
+
         origin = request.headers.get("origin") or ""
-        if "localhost" in origin or "127.0.0.1" in origin:
-            redirect_url = "http://localhost:4223/services/email"
-        else:
-            redirect_url = "https://evolvianai.net/services/email"
-
-        print(f"🔁 Reedirecting to Evolvian: {redirect_url}")
+        redirect_url = (
+            "http://localhost:4223/services/email"
+            if "localhost" in origin or "127.0.0.1" in origin
+            else "https://evolvianai.net/services/email"
+        )
         return RedirectResponse(url=redirect_url, status_code=302)
 
     except Exception as e:
-        print(f"🔥 Error procesando callback OAuth: {e}")
+        print(f"🔥 Error en flujo OAuth: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------
-# 3️⃣ Helper: crear servicio Gmail
+# 3️⃣ Helper: servicio Gmail sin discovery
 # ---------------------------------------------------------
 def get_gmail_service(channel):
     creds = Credentials(
@@ -277,28 +226,27 @@ def get_gmail_service(channel):
         client_secret=GMAIL_CLIENT_SECRET,
         scopes=SCOPES,
     )
-    return build("gmail", "v1", credentials=creds)
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
 # ---------------------------------------------------------
-# 4️⃣ Endpoint: enviar correo con Gmail conectado
+# 4️⃣ Enviar correo Gmail
 # ---------------------------------------------------------
 @router.post("/send_reply")
 async def send_reply(payload: dict):
-    """
-    Envía un correo (nuevo o respuesta) usando las credenciales Gmail del cliente.
-    payload:
-      - client_id
-      - to_email
-      - subject
-      - html (contenido)
-      - thread_id (opcional)
-    """
     client_id = payload.get("client_id")
     if not client_id:
         raise HTTPException(status_code=400, detail="Falta client_id")
 
-    res = supabase.table("channels").select("*").eq("client_id", client_id).eq("type", "email").maybe_single().execute()
+    res = (
+        supabase.table("channels")
+        .select("*")
+        .eq("client_id", client_id)
+        .eq("type", "email")
+        .maybe_single()
+        .execute()
+    )
+
     channel = res.data
     if not channel or not channel.get("gmail_access_token"):
         raise HTTPException(status_code=400, detail="Cliente no tiene Gmail conectado")
