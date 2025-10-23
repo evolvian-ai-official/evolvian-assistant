@@ -16,7 +16,7 @@ async def gmail_webhook(request: Request):
     """
     📬 Webhook robusto de Gmail Automation (producción)
     - Procesa correos reales y responde automáticamente con el RAG de Evolvian
-    - Ignora spam, marketing, newsletters o correos automáticos
+    - Ignora spam, marketing o correos automáticos
     - Mantiene el hilo correcto
     - Evita reprocesar correos ya atendidos (dedupe + marcar leído)
     """
@@ -90,29 +90,18 @@ async def gmail_webhook(request: Request):
         print(f"📜 Contenido detectado: {snippet[:300]}...")
 
         # ------------------------------------------------------
-        # 🧩 FIX 1: Deduplicador confiable
+        # 🚫 Dedupe definitivo: evita reprocesar si ya fue respondido
         # ------------------------------------------------------
         try:
-            check_resp = (
-                supabase.table("gmail_processed")
-                .select("id")
-                .eq("message_id", message_id)
-                .maybe_single()
-                .execute()
-            )
-            if check_resp and getattr(check_resp, "data", None):
-                print(f"⚠️ Mensaje {message_id} ya procesado. Ignorando duplicado.")
+            dedupe_check = supabase.table("gmail_processed").select("id").eq("message_id", message_id).execute()
+            if dedupe_check.data and len(dedupe_check.data) > 0:
+                print(f"⚠️ Mensaje duplicado detectado ({message_id}). Se omite completamente.")
                 return {"status": "duplicate_ignored"}
-
-            supabase.table("gmail_processed").insert({
-                "message_id": message_id,
-                "history_id": history_id
-            }).execute()
         except Exception as e:
-            print(f"⚠️ Error verificando/insertando dedupe: {e}")
+            print(f"⚠️ Error verificando duplicado: {e}")
 
         # ------------------------------------------------------
-        # 🚫 Filtros de seguridad (igual que antes)
+        # 🚫 Filtros de seguridad
         # ------------------------------------------------------
         blocked_senders = [
             "mailer-daemon", "postmaster", "no-reply", "noreply", "donotreply",
@@ -186,20 +175,18 @@ async def gmail_webhook(request: Request):
         }
 
         # ------------------------------------------------------
-        # 🚀 Enviar respuesta, marcar leído y guardar historial
+        # 🚀 Enviar respuesta, marcar leído y registrar procesado
         # ------------------------------------------------------
         try:
             service.users().messages().send(userId="me", body=reply_message).execute()
             print(f"✅ Respuesta enviada a {from_email} dentro del hilo {target_thread_id}")
 
-            # ✅ Marcar mensaje como leído (removeLabelIds)
             service.users().messages().modify(
-                userId="me",
-                id=msg_id,
-                body={"removeLabelIds": ["UNREAD"]}
+                userId="me", id=msg_id, body={"removeLabelIds": ["UNREAD"]}
             ).execute()
             print(f"📬 Marcado como leído: {msg_id}")
 
+            # 💾 Guardar en history
             supabase.table("history").insert({
                 "client_id": client_id,
                 "question": snippet,
@@ -208,14 +195,20 @@ async def gmail_webhook(request: Request):
                 "channel": "email"
             }).execute()
 
+            # 💾 Registrar como procesado
+            supabase.table("gmail_processed").insert({
+                "client_id": client_id,
+                "message_id": message_id,
+                "thread_id": target_thread_id,
+                "from_email": from_email,
+                "subject": subject
+            }).execute()
+            print(f"✅ Mensaje marcado como procesado ({message_id})")
+
         except Exception as e:
             print(f"⚠️ Error enviando correo o guardando historial: {e}")
 
-        return {
-            "status": "ok",
-            "message": "Respuesta enviada correctamente",
-            "thread_id": target_thread_id
-        }
+        return {"status": "ok", "message": "Respuesta enviada correctamente", "thread_id": target_thread_id}
 
     except HTTPException as e:
         raise e

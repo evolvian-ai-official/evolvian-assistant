@@ -206,14 +206,6 @@ class CORSMiddlewareStatic(StaticFiles):
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
 app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
-# ✅ Import diferido (Render fix seguro)
-try:
-    from api.gmail_reset_watch import router as gmail_reset_router
-    app.include_router(gmail_reset_router)
-    print("✅ gmail_reset_watch importado correctamente (Render safe load)")
-except Exception as e:
-    print(f"⚠️ No se pudo importar gmail_reset_watch: {e}")
-
 # ✅ Registro de routers principales
 routers = [
     upload_router,
