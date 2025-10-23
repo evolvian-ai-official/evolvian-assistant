@@ -17,8 +17,8 @@ async def gmail_webhook(request: Request):
     📬 Webhook robusto de Gmail Automation (producción)
     - Procesa correos reales y responde automáticamente con el RAG de Evolvian
     - Ignora spam, marketing, newsletters o correos automáticos
-    - Mantiene el hilo (thread) correcto
-    - Evita respuestas duplicadas (deduplicador de message_id)
+    - Mantiene el hilo correcto
+    - Evita reprocesar correos ya atendidos (dedupe + marcar leído)
     """
     try:
         body = await request.json()
@@ -64,13 +64,13 @@ async def gmail_webhook(request: Request):
         # 📬 Obtener último mensaje recibido en INBOX
         # ------------------------------------------------------
         messages_resp = service.users().messages().list(
-            userId="me", labelIds=["INBOX"], maxResults=1
+            userId="me", labelIds=["INBOX", "UNREAD"], maxResults=1
         ).execute()
 
         messages = messages_resp.get("messages", [])
         if not messages:
-            print("ℹ️ No hay nuevos mensajes.")
-            return {"status": "no messages"}
+            print("ℹ️ No hay nuevos mensajes (INBOX vacío o todos leídos).")
+            return {"status": "no new messages"}
 
         msg_id = messages[0]["id"]
         msg_data = service.users().messages().get(
@@ -90,30 +90,29 @@ async def gmail_webhook(request: Request):
         print(f"📜 Contenido detectado: {snippet[:300]}...")
 
         # ------------------------------------------------------
-        # 🧩 FIX 1: DEDUPLICADOR - evitar respuestas múltiples
+        # 🧩 FIX 1: Deduplicador confiable
         # ------------------------------------------------------
         try:
-            check = (
+            check_resp = (
                 supabase.table("gmail_processed")
                 .select("id")
                 .eq("message_id", message_id)
                 .maybe_single()
                 .execute()
             )
-            if check.data:
+            if check_resp and getattr(check_resp, "data", None):
                 print(f"⚠️ Mensaje {message_id} ya procesado. Ignorando duplicado.")
                 return {"status": "duplicate_ignored"}
 
-            # Guardar registro de mensaje procesado
             supabase.table("gmail_processed").insert({
                 "message_id": message_id,
                 "history_id": history_id
             }).execute()
         except Exception as e:
-            print(f"⚠️ No se pudo verificar duplicado: {e}")
+            print(f"⚠️ Error verificando/insertando dedupe: {e}")
 
         # ------------------------------------------------------
-        # 🚫 Filtro 1: Remitentes automáticos / marketing / no-reply
+        # 🚫 Filtros de seguridad (igual que antes)
         # ------------------------------------------------------
         blocked_senders = [
             "mailer-daemon", "postmaster", "no-reply", "noreply", "donotreply",
@@ -124,71 +123,28 @@ async def gmail_webhook(request: Request):
             print(f"🚫 Ignorado remitente automático: {from_email}")
             return {"status": "ignored", "reason": "automated sender"}
 
-        # ------------------------------------------------------
-        # 🚫 Filtro 2: Correo no dirigido al email configurado
-        # ------------------------------------------------------
         if to_email.lower() != assigned_email.lower():
             print(f"🚫 Ignorado: correo dirigido a {to_email}, no al asignado {assigned_email}")
             return {"status": "ignored", "reason": "different recipient"}
 
-        # ------------------------------------------------------
-        # 🚫 Filtro 3: Mensajes fuera de bandeja INBOX
-        # ------------------------------------------------------
         if "INBOX" not in labels:
             print(f"🚫 Ignorado: mensaje fuera de INBOX ({labels})")
             return {"status": "ignored", "reason": "not inbox"}
 
         # ------------------------------------------------------
-        # 🚫 Filtro 4: Análisis semántico (solo consultas reales)
-        # ------------------------------------------------------
-        semantic_keywords = [
-            "hola", "buenos", "quiero", "necesito", "podrías", "pregunta",
-            "precio", "ayuda", "información", "info", "duda", "consulta",
-            "cotización", "servicio", "plan", "planes", "suscripción",
-            "paquete", "detalle", "características", "requiero", "solicito",
-            "presupuesto", "quieres", "cómo funciona", "contratar", "contactar",
-            "problema", "error", "soporte", "falla", "bug", "asistencia",
-            "no funciona", "acceso", "login", "contraseña", "cuenta", "bloqueado",
-            "iniciar sesión", "tengo un inconveniente", "no puedo entrar",
-            "hello", "hi", "please", "help", "question", "price", "need", "support",
-            "info", "request", "inquiry", "details", "issue", "problem", "thanks",
-            "plans", "subscription", "pricing", "package", "features", "quote",
-            "buy", "purchase", "sign up", "trial", "demo", "access", "service",
-            "error", "bug", "trouble", "cannot", "can't", "login", "password",
-            "account", "blocked", "technical", "assistance"
-        ]
-        text_to_check = f"{subject.lower()} {snippet.lower()}"
-        if not any(k in text_to_check for k in semantic_keywords):
-            print(f"🧩 Ignorado: no parece una consulta humana o de soporte.")
-            return {"status": "ignored", "reason": "non-human text"}
-
-        # ------------------------------------------------------
-        # 🧵 FIX 2: Recuperar hilo correctamente
+        # 🧵 Obtener hilo correcto
         # ------------------------------------------------------
         try:
-            # Buscar hilo existente desde Gmail API (por remitente o subject)
             threads_resp = service.users().threads().list(
                 userId="me", q=f"from:{from_email} subject:{subject}", maxResults=1
             ).execute()
             threads = threads_resp.get("threads", [])
             existing_thread_id = threads[0]["id"] if threads else None
-
             target_thread_id = existing_thread_id or thread_id
-            if not target_thread_id:
-                # Último recurso: obtener threadId del mensaje original
-                target_thread_id = msg_data.get("threadId")
-
             print(f"🧵 Usando threadId: {target_thread_id}")
         except Exception as e:
-            print(f"⚠️ No se pudo obtener hilo existente: {e}")
-            target_thread_id = thread_id or msg_data.get("threadId")
-
-        # ------------------------------------------------------
-        # 🧾 Preparar subject limpio
-        # ------------------------------------------------------
-        clean_subject = subject.strip()
-        if not clean_subject.lower().startswith("re:"):
-            clean_subject = f"Re: {clean_subject}"
+            print(f"⚠️ Error buscando hilo: {e}")
+            target_thread_id = thread_id
 
         # ------------------------------------------------------
         # 🤖 Ejecutar pipeline RAG
@@ -208,8 +164,12 @@ async def gmail_webhook(request: Request):
             answer = "Gracias por tu mensaje. Pronto te responderemos."
 
         # ------------------------------------------------------
-        # ✉️ Crear respuesta en el mismo hilo
+        # ✉️ Responder en el mismo hilo
         # ------------------------------------------------------
+        clean_subject = subject.strip()
+        if not clean_subject.lower().startswith("re:"):
+            clean_subject = f"Re: {clean_subject}"
+
         reply_raw = (
             f"From: {email_address}\r\n"
             f"To: {from_email}\r\n"
@@ -226,11 +186,19 @@ async def gmail_webhook(request: Request):
         }
 
         # ------------------------------------------------------
-        # 🚀 Enviar respuesta y registrar historial
+        # 🚀 Enviar respuesta, marcar leído y guardar historial
         # ------------------------------------------------------
         try:
             service.users().messages().send(userId="me", body=reply_message).execute()
             print(f"✅ Respuesta enviada a {from_email} dentro del hilo {target_thread_id}")
+
+            # ✅ Marcar mensaje como leído (removeLabelIds)
+            service.users().messages().modify(
+                userId="me",
+                id=msg_id,
+                body={"removeLabelIds": ["UNREAD"]}
+            ).execute()
+            print(f"📬 Marcado como leído: {msg_id}")
 
             supabase.table("history").insert({
                 "client_id": client_id,
