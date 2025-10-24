@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from api.modules.assistant_rag.supabase_client import supabase
-from api.modules.email.gmail_oauth import get_gmail_service  # ✅ ruta correcta
+from api.modules.email_integration.gmail_oauth import get_gmail_service  # ✅ ruta corregida
 from api.modules.assistant_rag.chat_email import chat_email  # Pipeline RAG Evolvian
 
 # ==========================================================
@@ -62,7 +62,7 @@ async def gmail_webhook(request: Request):
     """
     📬 Gmail Webhook (Optimizado y No Bloqueante)
     - Acknowledge inmediato (200 OK)
-    - Soporta payload Evolution (interno) y Pub/Sub (compat)
+    - Soporta payload Evolvian (interno) y Pub/Sub (compat)
     - Procesa en background
     """
     try:
