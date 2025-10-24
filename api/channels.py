@@ -21,16 +21,24 @@ async def get_channels(
         query = supabase.table("channels").select("*").eq("client_id", client_id)
 
         if type:
-            query = query.ilike("type", type)
+            query = query.eq("type", type)
         if provider:
-            query = query.ilike("provider", provider)
+            query = query.eq("provider", provider)
 
         result = query.execute()
         data = result.data or []
+        if isinstance(data, dict):
+            data = [data]
 
-        print(f"📦 Canales encontrados: {len(data)}")
+        print(f"📦 Canales encontrados: {len(data)} para client_id={client_id}")
+        for d in data:
+            print(f" → Canal: {d.get('provider')} ({d.get('value')}) activo={d.get('active')}")
+
+        if not data:
+            raise HTTPException(status_code=404, detail="No se encontraron canales")
+
         return data
 
     except Exception as e:
         print(f"🔥 Error consultando canales: {e}")
-        raise HTTPException(status_code=500, detail="Error interno al consultar canales")
+        raise HTTPException(status_code=500, detail=f"Error interno al consultar canales: {e}")
