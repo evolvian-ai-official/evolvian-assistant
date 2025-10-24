@@ -1,23 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from dotenv import load_dotenv
-import os
-import jwt
 from starlette.responses import Response
-import importlib.util, sys
-import subprocess
+from dotenv import load_dotenv
+import os, jwt, importlib.util, subprocess
 
-# ✅ Cargar variables de entorno
+# =========================
+# Entorno
+# =========================
 load_dotenv(".env")
 print("🔄 Variables de entorno cargadas desde .env")
-
-# 🔍 Diagnóstico explícito de entorno (solo en desarrollo)
 IS_PROD = os.getenv("ENV") == "prod"
 if not IS_PROD:
     print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
 
-# ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 if not supabase_key:
     print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env")
@@ -25,16 +21,13 @@ else:
     print(f"🔑 Prefijo SUPABASE_SERVICE_ROLE_KEY: {supabase_key[:10]}...")
     try:
         decoded = jwt.decode(supabase_key, options={"verify_signature": False})
-        role = decoded.get("role")
-        print("🔐 Supabase Key Role:", role)
-        if role != "service_role":
-            print("⚠️ ¡CUIDADO! Estás usando una clave con rol:", role)
-        else:
-            print("✅ Supabase configurado con la Service Role Key")
+        print("🔐 Supabase Key Role:", decoded.get("role"))
     except Exception as e:
         print("❌ Error al decodificar la key:", str(e))
 
-# ✅ Routers principales (core del sistema)
+# =========================
+# Imports core (obligatorios)
+# =========================
 from api.upload_document import router as upload_router
 from api.history_api import router as history_router
 from api.create_client_if_needed import router as client_router
@@ -61,150 +54,106 @@ from api.delete_file import router as delete_file_router
 from api.channels import router as channels_router
 from api.modules.email_integration import disconnect_gmail
 
-# ✅ Stripe
+# Stripe
 from api.stripe_webhook import router as stripe_router
 from api.create_checkout_session import router as checkout_router
 from api.stripe_cancel_subscription import router as stripe_cancel_router
 from api.stripe_change_plan import router as stripe_change_plan_router
 from api.reactivate_subscription import router as reactivate_subscription_router
 
-# ✅ Integraciones externas seguras
-from api.meta_webhook import router as meta_webhook_router
+# Google Calendar (obligatorios de auth/callback)
 from api.auth.google_calendar_auth import router as google_auth_router
 from api.auth.google_calendar_callback import router as google_callback_router
 from api.calendar_routes import router as calendar_router
 from api.calendar_booking import router as calendar_booking_router
 
-# 🩹 Auto-fix Render: asegura dependencias de Gmail/Calendar en runtime (solo dev)
-google_libs = [
-    "google-auth",
-    "google-auth-oauthlib",
-    "google-api-python-client",
-    "google-auth-httplib2",
-]
+# =========================
+# Dependencias Google en dev
+# =========================
 if not IS_PROD:
-    for lib in google_libs:
+    for lib in ["google-auth", "google-auth-oauthlib", "google-api-python-client", "google-auth-httplib2"]:
         if importlib.util.find_spec(lib) is None:
             print(f"⚙️ Librería faltante detectada: {lib} → instalando en runtime...")
             subprocess.run(["pip", "install", lib], check=False)
 
-# ✅ Módulos opcionales protegidos
+# =========================
+# Imports opcionales (si fallan, quedan en None)
+# =========================
+chat_email = None
+get_client_by_email_router = None
+register_email_channel = None
+gmail_webhook = None
+gmail_oauth = None
+gmail_setup_watch = None
+init_calendar_auth = None   # 👈 predeclara para evitar NameError
+calendar_status = None      # 👈 predeclara para evitar NameError
+
 try:
-    from api.modules.assistant_rag import chat_email
+    from api.modules.assistant_rag import chat_email as _chat_email
+    chat_email = _chat_email
     print("✅ chat_email importado correctamente")
 except Exception as e:
-    chat_email = None
     print(f"⚠️ No se pudo importar chat_email: {e}")
 
 try:
-    from api.modules.assistant_rag.get_client_by_email import router as get_client_by_email_router
+    from api.modules.assistant_rag.get_client_by_email import router as _get_client_by_email_router
+    get_client_by_email_router = _get_client_by_email_router
     print("✅ get_client_by_email importado correctamente")
 except Exception as e:
-    get_client_by_email_router = None
     print(f"⚠️ No se pudo importar get_client_by_email: {e}")
 
 try:
-    from api.routes import register_email_channel
+    from api.routes import register_email_channel as _register_email_channel
+    register_email_channel = _register_email_channel
     print("✅ register_email_channel importado correctamente")
 except Exception as e:
-    register_email_channel = None
     print(f"⚠️ No se pudo importar register_email_channel: {e}")
 
-# ==========================
-# ✅ Gmail: webhook + oauth
-# ==========================
-# 1) Intento como paquete
-gmail_webhook_router = None
+# —— Gmail modules (como paquete; gmail_webhook ya apunta a email_integration) —
 try:
-    from api.modules.email_integration import gmail_webhook
-    gmail_webhook_router = gmail_webhook.router
-    print("✅ gmail_webhook importado como paquete")
+    from api.modules.email_integration import gmail_webhook as _gmail_webhook
+    gmail_webhook = _gmail_webhook
+    print("✅ gmail_webhook importado correctamente")
 except Exception as e:
-    print(f"⚠️ No se pudo importar gmail_webhook como paquete: {e}")
+    print(f"⚠️ No se pudo importar gmail_webhook: {e}")
 
-gmail_oauth_router = None
 try:
-    from api.modules.email_integration import gmail_oauth
-    gmail_oauth_router = gmail_oauth.router
-    print("✅ gmail_oauth importado como paquete")
+    from api.modules.email_integration import gmail_oauth as _gmail_oauth
+    gmail_oauth = _gmail_oauth
+    print("✅ gmail_oauth importado correctamente")
 except Exception as e:
-    print(f"⚠️ No se pudo importar gmail_oauth como paquete: {e}")
+    print(f"⚠️ No se pudo importar gmail_oauth: {e}")
 
-# 2) Fallback por ruta absoluta (asegura carga en Render)
-if gmail_webhook_router is None:
-    try:
-        gmail_webhook_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_webhook.py")
-        if os.path.exists(gmail_webhook_path):
-            spec = importlib.util.spec_from_file_location("gmail_webhook_path_mod", gmail_webhook_path)
-            gmail_webhook_module = importlib.util.module_from_spec(spec)
-            sys.modules["gmail_webhook_path_mod"] = gmail_webhook_module
-            spec.loader.exec_module(gmail_webhook_module)
-            gmail_webhook_router = gmail_webhook_module.router
-            print("✅ gmail_webhook registrado por ruta absoluta (fallback)")
-        else:
-            print(f"❌ No se encontró gmail_webhook.py en: {gmail_webhook_path}")
-    except Exception as ee:
-        print(f"❌ Error al registrar gmail_webhook por ruta absoluta: {ee}")
-
-oauth_included = False
-if gmail_oauth_router is None:
-    gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
-    if os.path.exists(gmail_oauth_path):
-        try:
-            spec = importlib.util.spec_from_file_location("gmail_oauth_path_mod", gmail_oauth_path)
-            gmail_oauth_module = importlib.util.module_from_spec(spec)
-            sys.modules["gmail_oauth_path_mod"] = gmail_oauth_module
-            spec.loader.exec_module(gmail_oauth_module)
-            gmail_oauth_router = gmail_oauth_module.router
-            oauth_included = True
-            print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix, path corregido)")
-        except Exception as e:
-            print(f"⚠️ Error al registrar Gmail OAuth router por ruta absoluta: {e}")
-    else:
-        print(f"⚠️ No se encontró gmail_oauth.py en: {gmail_oauth_path}")
-else:
-    oauth_included = True
-
-# ==========================
-# ✅ Gmail: Poller (uno solo)
-# ==========================
-gmail_setup_watch_router = None
 try:
-    # preferimos import de paquete si está disponible
-    from api.modules.email_integration import gmail_setup_watch
-    gmail_setup_watch_router = gmail_setup_watch.router
-    print("✅ gmail_setup_watch importado como paquete")
+    from api.modules.email_integration import gmail_setup_watch as _gmail_setup_watch
+    gmail_setup_watch = _gmail_setup_watch
+    print("✅ gmail_setup_watch importado correctamente")
 except Exception as e:
-    print(f"⚠️ No se pudo importar gmail_setup_watch como paquete: {e}")
-    try:
-        gmail_watch_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_setup_watch.py")
-        if os.path.exists(gmail_watch_path):
-            spec = importlib.util.spec_from_file_location("gmail_setup_watch", gmail_watch_path)
-            gmail_watch_module = importlib.util.module_from_spec(spec)
-            sys.modules["gmail_setup_watch"] = gmail_watch_module
-            spec.loader.exec_module(gmail_watch_module)
-            gmail_setup_watch_router = gmail_watch_module.router
-            print("✅ gmail_setup_watch importado por ruta absoluta (fallback)")
-        else:
-            print(f"⚠️ No se encontró gmail_setup_watch.py en: {gmail_watch_path}")
-    except Exception as e2:
-        print(f"⚠️ Error al importar gmail_setup_watch: {e2}")
+    print(f"⚠️ No se pudo importar gmail_setup_watch: {e}")
 
-# (Si tienes otro poller, NO lo montes simultáneamente)
-# try:
-#     from api.modules.email_integration import gmail_poll
-#     gmail_poll_router = gmail_poll.router
-# except Exception:
-#     gmail_poll_router = None
+# —— Calendar opcionales —
+try:
+    from api.modules.calendar import init_calendar_auth as _init_calendar_auth
+    init_calendar_auth = _init_calendar_auth
+    print("✅ init_calendar_auth importado correctamente")
+except Exception as e:
+    print(f"⚠️ No se pudo importar init_calendar_auth: {e}")
+
+try:
+    from api import calendar_status as _calendar_status
+    calendar_status = _calendar_status
+    print("✅ calendar_status importado correctamente")
+except Exception as e:
+    print(f"⚠️ No se pudo importar calendar_status: {e}")
 
 print("🚀 Imports completados correctamente")
 
-# =====================================================
-# ✅ Crear app FastAPI
-# =====================================================
+# =========================
+# FastAPI app
+# =========================
 app = FastAPI(title="Evolvian Assistant API", version="1.0")
 
-# ✅ CORS config
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -224,7 +173,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Static files con CORS
+# Static con CORS
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 class CORSMiddlewareStatic(StaticFiles):
     async def get_response(self, path, scope):
@@ -237,9 +186,9 @@ class CORSMiddlewareStatic(StaticFiles):
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
 app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
-# =====================================================
-# ✅ Registro de routers principales
-# =====================================================
+# =========================
+# Registro routers core
+# =========================
 routers = [
     upload_router,
     history_router,
@@ -275,34 +224,22 @@ routers = [
     google_callback_router,
 ]
 
-# =====================================================
-# ✅ Registro de routers (sin duplicados)
-# =====================================================
+# =========================
+# Registro routers opcionales (si están)
+# =========================
 if chat_email:
     app.include_router(chat_email.router)
 if get_client_by_email_router:
     app.include_router(get_client_by_email_router)
 if register_email_channel:
     app.include_router(register_email_channel.router)
-
-if gmail_webhook_router:
-    app.include_router(
-        gmail_webhook_router,
-        include_in_schema=True,
-        responses={422: {"description": "Validation Error"}},
-    )
-if gmail_oauth_router and oauth_included:
-    app.include_router(
-        gmail_oauth_router,
-        include_in_schema=True,
-        responses={422: {"description": "Validation Error"}},
-    )
-if gmail_setup_watch_router:
-    app.include_router(gmail_setup_watch_router)
-
-# if gmail_poll_router:
-#     app.include_router(gmail_poll_router)  # ← NO montar a la vez que setup_watch
-
+if gmail_webhook:
+    app.include_router(gmail_webhook.router, include_in_schema=True, responses={422: {"description": "Validation Error"}})
+if gmail_oauth:
+    app.include_router(gmail_oauth.router, include_in_schema=True, responses={422: {"description": "Validation Error"}})
+if gmail_setup_watch:
+    app.include_router(gmail_setup_watch.router)
+# (No montar gmail_poll junto con setup_watch)
 if init_calendar_auth:
     app.include_router(init_calendar_auth.router)
 if calendar_status:
@@ -318,9 +255,9 @@ for r in routers:
 app.include_router(reset.router, tags=["subscriptions"])
 app.include_router(embed.router)
 
-# =====================================================
-# ✅ Utilidades de diagnóstico
-# =====================================================
+# =========================
+# Health & root
+# =========================
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
@@ -333,9 +270,9 @@ def root():
 def test_routes():
     return [route.path for route in app.routes]
 
-# =====================================================
-# ✅ Ejecución local
-# =====================================================
+# =========================
+# Run local
+# =========================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
