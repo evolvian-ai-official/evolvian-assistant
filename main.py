@@ -289,6 +289,7 @@ routers = [
     stripe_cancel_router,
     stripe_change_plan_router,
     reactivate_subscription_router,
+    channels_router,
 ]
 
 # ======================================
