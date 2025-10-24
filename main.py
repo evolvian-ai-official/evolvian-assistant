@@ -318,8 +318,8 @@ if register_email_channel: app.include_router(register_email_channel.router)
 # Gmail
 if gmail_webhook: app.include_router(gmail_webhook.router)
 if gmail_oauth: app.include_router(gmail_oauth.router)
-if gmail_setup_watch: app.include_router(gmail_setup_watch.router)
-# if gmail_poll: app.include_router(gmail_poll.router)  # ← NO montar junto con setup_watch
+#if gmail_setup_watch: app.include_router(gmail_setup_watch.router)
+if gmail_poll: app.include_router(gmail_poll.router)  # ← NO montar junto con setup_watch
 
 # Integraciones externas seguras
 if meta_webhook_router: app.include_router(meta_webhook_router)
