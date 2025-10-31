@@ -258,6 +258,19 @@ class CORSMiddlewareStatic(StaticFiles):
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
 app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
+
+# ======================================
+# ✅ Servir frontend React (clientuploader)
+# ======================================
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "clientuploader/dist")
+
+if os.path.exists(FRONTEND_DIST):
+    print(f"🪄 Sirviendo frontend estático desde: {FRONTEND_DIST}")
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+else:
+    print(f"⚠️ No se encontró clientuploader/dist en: {FRONTEND_DIST}")
+
+
 # ======================================
 # ✅ Registro de routers principales (siempre)
 # ======================================
@@ -338,15 +351,13 @@ app.include_router(reset.router, tags=["subscriptions"])
 app.include_router(embed.router)
 
 # ======================================
-# ✅ Healthcheck y utilidades
+# ✅ Healthcheck y utilidadess
 # ======================================
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
 
-@app.get("/")
-def root():
-    return {"message": "Evolvian Assistant API is running"}
+
 
 @app.get("/test_routes")
 def test_routes():
