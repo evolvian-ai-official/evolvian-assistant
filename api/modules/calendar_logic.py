@@ -10,36 +10,50 @@ from api.modules.calendar.schedule_event import schedule_event
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.modules.calendar.notify_business_owner import notify_business_owner
 
-
-
 logger = logging.getLogger(__name__)
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
-def refresh_access_token(refresh_token: str) -> str:
-    logger.info("🔄 Refrescando access_token con refresh_token...")
-    token_url = "https://oauth2.googleapis.com/token"
-    payload = {
-        "client_id": GOOGLE_CLIENT_ID,
-        "client_secret": GOOGLE_CLIENT_SECRET,
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token"
-    }
 
-    response = requests.post(token_url, data=payload)
-    response.raise_for_status()
-    new_access_token = response.json().get("access_token")
+# ============================================================
+# 🔄 Refrescar token de acceso si expiró
+# ============================================================
+def refresh_access_token(refresh_token: str, client_id: str) -> str:
+    try:
+        logger.info("🔄 Refrescando access_token con refresh_token...")
+        token_url = "https://oauth2.googleapis.com/token"
+        payload = {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token"
+        }
 
-    if not new_access_token:
-        raise ValueError("No se pudo obtener un nuevo access_token")
+        response = requests.post(token_url, data=payload)
+        response.raise_for_status()
+        new_access_token = response.json().get("access_token")
 
-    return new_access_token
+        if not new_access_token:
+            raise ValueError("No se pudo obtener un nuevo access_token")
+
+        # Guardar nuevo token + expiración estimada
+        supabase.table("calendar_integrations").update({
+            "access_token": new_access_token,
+            "expires_at": (datetime.datetime.utcnow() + timedelta(hours=1)).isoformat()
+        }).eq("client_id", client_id).execute()
+
+        logger.info("✅ Token actualizado correctamente en Supabase")
+        return new_access_token
+
+    except Exception as e:
+        logger.exception("❌ Error al refrescar access_token")
+        raise
 
 
-
-
-
+# ============================================================
+# 📅 Consultar disponibilidad desde Google Calendar
+# ============================================================
 def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -> dict:
     try:
         logger.info(f"📅 Verificando disponibilidad real para client_id: {client_id}")
@@ -47,6 +61,7 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
         now = datetime.datetime.now(tz)
         end_range = now + timedelta(days=days_ahead)
 
+        # Buscar integración activa
         resp = (
             supabase.table("calendar_integrations")
             .select("access_token, refresh_token, calendar_id")
@@ -57,7 +72,28 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
         )
         data = resp.data if resp else None
         if not data:
-            return {"available_slots": [], "message": "❌ No se encontró integración con Google Calendar"}
+            # Fallback: si no hay integración, usar configuración manual
+            manual = (
+                supabase.table("client_schedule_settings")
+                .select("*")
+                .eq("client_id", client_id)
+                .maybe_single()
+                .execute()
+            )
+            if not manual.data:
+                return {"available_slots": [], "message": "❌ No se encontró integración ni horario manual"}
+            config = manual.data
+            start_hour = int(config.get("availability_start", 9))
+            end_hour = int(config.get("availability_end", 18))
+            working_days = config.get("working_days", [1, 2, 3, 4, 5])
+            available_slots = []
+            for d in range(days_ahead):
+                day = now + timedelta(days=d)
+                if day.isoweekday() in working_days:
+                    for hour in range(start_hour, end_hour):
+                        slot = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+                        available_slots.append(slot.isoformat())
+            return {"available_slots": available_slots[:10], "message": "🕒 Horarios manuales generados"}
 
         access_token = data["access_token"]
         refresh_token = data["refresh_token"]
@@ -80,10 +116,7 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
 
         if res.status_code == 401:
             logger.warning("⚠️ Token expirado. Intentando refrescar...")
-            access_token = refresh_access_token(refresh_token)
-            supabase.table("calendar_integrations")\
-                .update({"access_token": access_token})\
-                .eq("client_id", client_id).execute()
+            access_token = refresh_access_token(refresh_token, client_id)
             res = fetch_busy_times(access_token)
 
         res.raise_for_status()
@@ -93,7 +126,8 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
             (
                 datetime.datetime.fromisoformat(b["start"]).astimezone(tz),
                 datetime.datetime.fromisoformat(b["end"]).astimezone(tz)
-            ) for b in busy
+            )
+            for b in busy
         ]
 
         available_slots = []
@@ -103,7 +137,11 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
         while current < end_range:
             if 9 <= current.hour < 18:
                 if not any(start <= current < end for start, end in busy_ranges):
-                    available_slots.append(current.isoformat())
+                    available_slots.append({
+                        "utc": current.astimezone(ZoneInfo("UTC")).isoformat(),
+                        "local": current.isoformat(),
+                        "display": current.strftime("%A %d %B, %I:%M %p")
+                    })
             current += slot_duration
 
         logger.info(f"✅ {len(available_slots)} horarios disponibles encontrados.")
@@ -113,18 +151,20 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
         logger.exception("❌ Error al consultar disponibilidad en Google Calendar")
         return {"available_slots": [], "message": f"Error al consultar disponibilidad: {str(e)}"}
 
-def save_appointment_if_valid(client_id: str, scheduled_time_str: str) -> str:
+
+# ============================================================
+# 📆 Guardar cita validando disponibilidad
+# ============================================================
+def save_appointment_if_valid(client_id: str, scheduled_time_str: str, user_email: str = "invitado@evolvian.com", user_name: str = "Invitado", user_phone: str = None, session_id: str = None, channel: str = "chat") -> str:
     try:
-        # 1. Convertir string a datetime con zona horaria correcta
+        # Convertir a UTC
         scheduled_time_local = datetime.datetime.fromisoformat(scheduled_time_str)
         scheduled_time_utc = scheduled_time_local.astimezone(ZoneInfo("UTC"))
-        logger.info(f"🕓 Hora en UTC convertida: {scheduled_time_utc.isoformat()}")
+        logger.info(f"🕓 Hora UTC convertida: {scheduled_time_utc.isoformat()}")
 
-        # 2. Definir ventana de 1 minuto para evitar colisiones
+        # Prevenir duplicados
         start_window = scheduled_time_utc.isoformat()
         end_window = (scheduled_time_utc + timedelta(minutes=1)).isoformat()
-
-        # 3. Verificar si ya hay cita
         res = (
             supabase.table("appointments")
             .select("id")
@@ -134,10 +174,9 @@ def save_appointment_if_valid(client_id: str, scheduled_time_str: str) -> str:
             .execute()
         )
         if res and res.data:
-            logger.warning(f"⚠️ Ya existe una cita en ese horario: {res.data[0]}")
             return "⛔ Ese horario ya está ocupado. Elige otro, por favor."
 
-        # 4. Obtener user_id desde clients
+        # Obtener email de empresa
         client_data = (
             supabase.table("clients")
             .select("user_id")
@@ -147,10 +186,8 @@ def save_appointment_if_valid(client_id: str, scheduled_time_str: str) -> str:
         )
         user_id = client_data.data["user_id"] if client_data.data else None
         if not user_id:
-            logger.error("❌ No se encontró user_id asociado al cliente")
             return "❌ No se encontró el propietario de esta cuenta."
 
-        # 5. Obtener email del usuario (empresa)
         user_data = (
             supabase.table("users")
             .select("email")
@@ -159,51 +196,52 @@ def save_appointment_if_valid(client_id: str, scheduled_time_str: str) -> str:
             .execute()
         )
         empresa_email = user_data.data["email"] if user_data.data else None
-        if not empresa_email:
-            logger.error("❌ No se encontró el email del cliente para notificación")
-            return "❌ No se pudo encontrar el correo del cliente para enviar la notificación."
 
-        logger.info(f"📨 Email del cliente obtenido: {empresa_email}")
+        # Insertar cita en Supabase
+        appointment_data = {
+            "client_id": client_id,
+            "user_email": user_email,
+            "user_name": user_name,
+            "user_phone": user_phone,
+            "scheduled_time": scheduled_time_utc.isoformat(),
+            "channel": channel,
+            "session_id": session_id,
+            "created_at": datetime.datetime.utcnow().isoformat()
+        }
+        supabase.table("appointments").insert(appointment_data).execute()
+        logger.info(f"💾 Cita guardada en Supabase: {appointment_data}")
 
-        # 6. Crear evento en Google Calendar
+        # Crear evento en Google Calendar
         schedule_event({
             "client_id": client_id,
             "start": scheduled_time_utc.isoformat(),
-            "user_email": "invitado@evolvian.com",  # Placeholder para futuro
-            "user_name": "Sin nombre"
+            "user_email": user_email,
+            "user_name": user_name
         })
         logger.info("📤 Evento enviado a Google Calendar")
 
-        # 7. Preparar texto de hora y fecha local
+        # Formatear hora local
         local_time = scheduled_time_local.astimezone(ZoneInfo("America/Mexico_City"))
         date_str = local_time.strftime("%-d de %B de %Y")
-        hour_str = local_time.strftime("%I:%M %p").lstrip("0").replace("AM", "AM").replace("PM", "PM")
+        hour_str = local_time.strftime("%I:%M %p").lstrip("0")
 
-        # 8. Notificar a la empresa
-        try:
-            notify_business_owner(
-                empresa_email=empresa_email,
-                slot_time=f"{date_str} a las {hour_str}",
-                user_email="invitado@evolvian.com",  # Placeholder
-                user_name="Sin nombre"
-            )
-            logger.info("📧 Correo de notificación a empresa enviado")
-        except Exception as e:
-            logger.error(f"❌ Error al enviar notificación a cliente: {str(e)}")
+        # Notificar empresa
+        notify_business_owner(
+            empresa_email=empresa_email,
+            slot_time=f"{date_str} a las {hour_str}",
+            user_email=user_email,
+            user_name=user_name
+        )
 
-        # 9. Confirmación al usuario (más adelante será real)
-        try:
-            send_confirmation_email(
-                to_email="invitado@evolvian.com",
-                date_str=date_str,
-                hour_str=hour_str
-            )
-            logger.info("📧 Correo de confirmación enviado al usuario")
-        except Exception as e:
-            logger.error(f"❌ Error al enviar email de confirmación: {str(e)}")
+        # Confirmar usuario
+        send_confirmation_email(
+            to_email=user_email,
+            date_str=date_str,
+            hour_str=hour_str
+        )
 
         return f"✅ ¡Cita agendada para {scheduled_time_local.strftime('%Y-%m-%d %H:%M')}!"
 
     except Exception as e:
-        logger.exception("❌ Excepción al guardar la cita:")
+        logger.exception("❌ Error al guardar la cita")
         return "❌ Ocurrió un error inesperado. Intenta más tarde."

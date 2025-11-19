@@ -128,11 +128,4 @@ async def cancel_subscription_immediately_if_exists(subscription_id: str):
         print(f"❌ Error al cancelar suscripción inmediatamente: {e}")
         raise
 
-def get_plan_from_price_id(price_id: str):
-    plans = {
-        "price_free": "free",
-        "price_starter": "starter",
-        "price_premium": "premium",
-    }
-    return plans.get(price_id, "free")
 

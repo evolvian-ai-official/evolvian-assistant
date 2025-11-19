@@ -44,6 +44,23 @@ class ClientSettingsPayload(BaseModel):
     widget_height: Optional[int] = None
     widget_border_radius: Optional[int] = None
 
+    # 🆕 Campos nuevos del widget (legal / tooltip / consent)
+    show_tooltip: Optional[bool] = False
+    tooltip_text: Optional[str] = "💡 Ask me anything!"
+    tooltip_bg_color: Optional[str] = "#FFF8E1"
+    tooltip_text_color: Optional[str] = "#5C4B00"
+
+    show_legal_links: Optional[bool] = False
+    terms_url: Optional[str] = None
+    privacy_url: Optional[str] = None
+
+    require_email_consent: Optional[bool] = False
+    require_terms_consent: Optional[bool] = False
+    consent_bg_color: Optional[str] = "#FFF8E6"
+    consent_text_color: Optional[str] = "#7A4F00"
+
+    max_messages_per_session: Optional[int] = 20
+
     # 📆 Subscripción
     daily_message_limit: Optional[int] = None
     subscription_id: Optional[str] = None
@@ -218,6 +235,18 @@ def get_client_settings(
                 widget_height,
                 widget_border_radius,
                 session_message_limit,
+                show_tooltip,
+                tooltip_text,
+                tooltip_bg_color,
+                tooltip_text_color,
+                show_legal_links,
+                terms_url,
+                privacy_url,
+                require_email_consent,
+                require_terms_consent,
+                consent_bg_color,
+                consent_text_color,
+                max_messages_per_session,
                 plan:plan_id(
                     id,
                     name,
@@ -245,8 +274,13 @@ def get_client_settings(
         settings = response.data
 
         # Normalizar booleanos
-        for key in ["require_email", "require_phone", "require_terms", "show_powered_by", "show_logo"]:
-            settings[key] = bool(settings.get(key, key != "show_powered_by"))
+        for key in [
+            "require_email", "require_phone", "require_terms",
+            "show_powered_by", "show_logo",
+            "show_tooltip", "show_legal_links",
+            "require_email_consent", "require_terms_consent"
+        ]:
+            settings[key] = bool(settings.get(key, False))
 
         # Fallback de plan
         plan = settings.get("plan", {})
@@ -296,6 +330,11 @@ def get_client_settings(
                 "widget_height": settings.get("widget_height") or 420,
                 "widget_border_radius": settings.get("widget_border_radius") or 13,
                 "show_logo": settings.get("show_logo", True),
+                "tooltip_bg_color": settings.get("tooltip_bg_color") or "#FFF8E1",
+                "tooltip_text_color": settings.get("tooltip_text_color") or "#5C4B00",
+                "consent_bg_color": settings.get("consent_bg_color") or "#FFF8E6",
+                "consent_text_color": settings.get("consent_text_color") or "#7A4F00",
+                "max_messages_per_session": settings.get("max_messages_per_session") or 20
             })
 
         # Listar planes disponibles

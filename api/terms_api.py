@@ -1,10 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query
+# api/terms_api.py
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
-from api.modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.supabase_client import supabase  # ✅ import corregido
 
-# ✅ Inicialización del router
 router = APIRouter()
 
 # 📦 Modelo para payload de aceptación
@@ -27,15 +27,39 @@ def check_accepted_terms(client_id: str = Query(...)):
             .execute()
         )
 
+        # 🚫 No hay registro → nunca aceptó
         if not response.data or len(response.data) == 0:
-            return JSONResponse(content={"has_accepted": False})
+            return JSONResponse(content={"has_accepted": False, "reason": "not_found"})
 
         record = response.data[0]
+        accepted = bool(record.get("accepted"))
+        accepted_at = record.get("accepted_at")
+        version = record.get("version", "v1")
+
+        # ⚙️ Si aceptó, verificar vigencia (30 días)
+        if accepted and accepted_at:
+            try:
+                accepted_dt = datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
+                days_since = (datetime.now(timezone.utc) - accepted_dt).days
+
+                if days_since >= 30:
+                    print(f"⚠️ Terms expired ({days_since} days old).")
+                    return JSONResponse(
+                        content={
+                            "has_accepted": False,
+                            "reason": "expired",
+                            "accepted_at": accepted_at,
+                            "version": version,
+                        }
+                    )
+            except Exception:
+                print("⚠️ Invalid accepted_at format:", accepted_at)
+
         return JSONResponse(
             content={
-                "has_accepted": bool(record.get("accepted")),
-                "accepted_at": record.get("accepted_at"),
-                "version": record.get("version", "v1"),
+                "has_accepted": accepted,
+                "accepted_at": accepted_at,
+                "version": version,
             }
         )
 
@@ -46,12 +70,16 @@ def check_accepted_terms(client_id: str = Query(...)):
 
 # ✅ POST — Registrar la aceptación de términos
 @router.post("/accept_terms")
-def accept_terms(payload: AcceptTermsPayload):
+async def accept_terms(payload: AcceptTermsPayload, request: Request):
     """
     Registers or updates a client's acceptance of Terms & Conditions.
+    Stores timestamp, IP, and User-Agent for audit tracking.
     """
     try:
         now = datetime.now(timezone.utc).isoformat()
+
+        ip = request.client.host if request.client else None
+        ua = request.headers.get("user-agent", "unknown")
 
         response = (
             supabase.table("client_terms_acceptance")
@@ -61,6 +89,8 @@ def accept_terms(payload: AcceptTermsPayload):
                     "accepted": True,
                     "accepted_at": now,
                     "version": "v1",
+                    "ip_address": ip,
+                    "user_agent": ua,
                 },
                 on_conflict="client_id",
             )
@@ -68,22 +98,27 @@ def accept_terms(payload: AcceptTermsPayload):
         )
 
         if response.data:
-            return JSONResponse(content={"message": "✅ Terms accepted successfully", "updated_at": now})
-        else:
-            raise HTTPException(status_code=500, detail="Failed to register terms acceptance")
+            print(f"✅ Terms accepted by client {payload.client_id} ({ip})")
+            return JSONResponse(
+                content={
+                    "message": "✅ Terms accepted successfully",
+                    "accepted_at": now,
+                }
+            )
+
+        raise HTTPException(status_code=500, detail="Failed to save acceptance")
 
     except Exception as e:
-        print("❌ Error in /accept_terms:", e)
+        print("❌ Error saving T&C acceptance:", e)
         raise HTTPException(status_code=500, detail="Error saving T&C acceptance")
 
 
-# 🔁 GET — Controlar si debe mostrarse el WelcomeModal cada mes
+# 🔁 GET — Determinar si debe mostrarse el WelcomeModal
 @router.get("/should_show_welcome")
 def should_show_welcome(client_id: str = Query(...)):
     """
     Determines if the WelcomeModal should be shown again.
-    It is displayed every 30 days (1 month) since last acceptance.
-    Uses client_terms_acceptance.accepted_at as reference.
+    The modal is displayed if there is no record or if 30+ days passed since last acceptance.
     """
     try:
         response = (
@@ -95,26 +130,24 @@ def should_show_welcome(client_id: str = Query(...)):
 
         now = datetime.now(timezone.utc)
 
-        # 🚀 No hay registro → mostrar modal
+        # 🚀 Sin registro → mostrar modal
         if not response.data or len(response.data) == 0:
-            return {"show": True, "reason": "No acceptance record found"}
+            return {"show": True, "reason": "no_record"}
 
         record = response.data[0]
         accepted_at = record.get("accepted_at")
 
-        # 🚀 Registro sin fecha → mostrar modal
+        # 🚀 Sin fecha → mostrar modal
         if not accepted_at:
-            return {"show": True, "reason": "Missing accepted_at"}
+            return {"show": True, "reason": "missing_accepted_at"}
 
-        # 📆 Calcular días transcurridos
         accepted_dt = datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
         days_since = (now - accepted_dt).days
 
         if days_since >= 30:
-            # Mostrar modal si han pasado 30 días o más
-            return {"show": True, "reason": f"{days_since} days since last acceptance"}
+            print(f"🔁 Showing WelcomeModal again — {days_since} days since acceptance.")
+            return {"show": True, "reason": "expired", "days_since": days_since}
         else:
-            # No mostrar si aún no ha pasado el mes
             return {"show": False, "days_remaining": 30 - days_since}
 
     except Exception as e:

@@ -66,7 +66,12 @@ def fetch_signed_documents(client_id: str) -> List[str]:
         return []
 
 
-def ask_question(messages: List[Dict[str, str]] | str, client_id: str, session_id: str = None) -> str:
+def ask_question(
+    messages: List[Dict[str, str]] | str,
+    client_id: str,
+    session_id: str = None,
+    disable_rag: bool = False  # 👈 NUEVO parámetro opcional
+) -> str:
     try:
         session_id = session_id or str(uuid.uuid4())
         prompt = get_prompt_for_client(client_id)
@@ -90,8 +95,28 @@ def ask_question(messages: List[Dict[str, str]] | str, client_id: str, session_i
         convo_tail = norm_messages[-10:]
         logging.info(f"🧩 Pregunta procesada: {question}")
 
-                # 🌍 Language detection (English as default, but respect user input)
-        # 🌍 Smart language detection with English fallback
+        # =====================================================
+        # 🚀 NUEVO: modo directo (sin RAG) — usado por calendario o email
+        # =====================================================
+        if disable_rag:
+            logging.info("🧠 RAG disabled — using direct system prompt only.")
+            try:
+                from api.modules.assistant_rag.llm import openai_chat
+                messages_payload = [
+                    {"role": "system", "content": prompt or "You are Evolvian Assistant."},
+                    {"role": "user", "content": question}
+                ]
+                response = openai_chat(messages_payload, temperature=temperature)
+                logging.info(f"✅ Direct mode response generated successfully.")
+                return response
+            except Exception as e:
+                logging.error(f"⚠️ Error executing direct chat mode: {e}")
+                # fallback a RAG normal si falla
+                disable_rag = False
+
+        # =====================================================
+        # 🌍 Language detection (English as default, but respect user input)
+        # =====================================================
         try:
             from langdetect import detect
             detected_lang = detect(question)
@@ -113,7 +138,6 @@ def ask_question(messages: List[Dict[str, str]] | str, client_id: str, session_i
         else:
             user_lang = "en"  # Fallback seguro
 
-        # 🧭 Si no se detecta nada, usar inglés
         if not user_lang or user_lang.strip() == "":
             user_lang = "en"
 
@@ -123,7 +147,6 @@ def ask_question(messages: List[Dict[str, str]] | str, client_id: str, session_i
             else "Always respond in English."
         )
         logging.info(f"🈶 Idioma final del usuario: {user_lang}")
-
 
         # 👋 Saludo rápido
         greetings_es = {"hola", "buenas", "hey"}

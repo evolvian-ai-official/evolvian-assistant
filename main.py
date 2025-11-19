@@ -1,6 +1,8 @@
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from dotenv import load_dotenv
 import os
@@ -9,34 +11,34 @@ import importlib.util, sys
 import subprocess
 
 # ======================================
-# ✅ Entorno
+# ✅ Environment
 # ======================================
 load_dotenv(".env")
-print("🔄 Variables de entorno cargadas desde .env")
+print("🔄 Environment variables loaded from .env")
 
 IS_PROD = os.getenv("ENV") == "prod"
 if not IS_PROD:
     print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
 
-# ✅ Verificar contenido real de la SUPABASE_SERVICE_ROLE_KEY
+# ✅ Validate Supabase Key
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 if not supabase_key:
-    print("❌ SUPABASE_SERVICE_ROLE_KEY no está definida en .env")
+    print("❌ SUPABASE_SERVICE_ROLE_KEY missing in .env")
 else:
-    print(f"🔑 Prefijo SUPABASE_SERVICE_ROLE_KEY: {supabase_key[:10]}...")
+    print(f"🔑 SUPABASE key prefix: {supabase_key[:10]}...")
     try:
         decoded = jwt.decode(supabase_key, options={"verify_signature": False})
         role = decoded.get("role")
         print("🔐 Supabase Key Role:", role)
         if role != "service_role":
-            print("⚠️ ¡CUIDADO! Estás usando una clave con rol:", role)
+            print("⚠️ Using key with role:", role)
         else:
-            print("✅ Supabase configurado con la Service Role Key")
+            print("✅ Supabase service role key verified")
     except Exception as e:
-        print("❌ Error al decodificar la key:", str(e))
+        print("❌ Error decoding key:", str(e))
 
 # ======================================
-# ✅ Routers principales (core del sistema)
+# ✅ Core Routers
 # ======================================
 from api.upload_document import router as upload_router
 from api.history_api import router as history_router
@@ -50,7 +52,6 @@ from api.chat_widget_api import router as chat_widget_router
 from api.check_email_exists import router as check_email_router
 from api.dashboard_summary import router as dashboard_summary_router
 from api.user_flags import router as user_flags_router
-from api.widget_consents_api import router as widget_consents_router
 from api.terms_api import router as terms_router
 from api.clear_new_user_flag import router as clear_new_user_flag_router
 from api.client_profile_api import router as client_profile_router
@@ -64,6 +65,12 @@ from api.routes import embed
 from api.delete_file import router as delete_file_router
 from api.channels import router as channels_router
 from api.modules.email_integration import disconnect_gmail
+# ✅ Widget Consents
+from api.register_consent import router as register_consent_router
+from api.check_consent import router as check_consent_router
+from api.blog.blog_router import router as blog_router
+
+
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
@@ -72,8 +79,12 @@ from api.stripe_cancel_subscription import router as stripe_cancel_router
 from api.stripe_change_plan import router as stripe_change_plan_router
 from api.reactivate_subscription import router as reactivate_subscription_router
 
+# ✅ Google Calendar core tables
+from api.delete_appointment import router as delete_appointment_router
+from api.appointments import router as appointments_router
+
 # ======================================
-# 🩹 Auto-fix Render: dependencias Google (solo dev)
+# 🩹 Auto-install Google libs in dev
 # ======================================
 google_libs = [
     "google-auth",
@@ -84,13 +95,12 @@ google_libs = [
 if not IS_PROD:
     for lib in google_libs:
         if importlib.util.find_spec(lib) is None:
-            print(f"⚙️ Librería faltante detectada: {lib} → instalando en runtime...")
+            print(f"⚙️ Missing library: {lib} → installing at runtime...")
             subprocess.run(["pip", "install", lib], check=False)
 
 # ======================================
-# ✅ Módulos opcionales (protegidos)
+# ✅ Optional Modules (protected)
 # ======================================
-# Predeclaración por seguridad (evita NameError)
 chat_email = None
 get_client_by_email_router = None
 register_email_channel = None
@@ -100,8 +110,6 @@ gmail_setup_watch = None
 gmail_poll = None
 init_calendar_auth = None
 calendar_status = None
-
-# Integraciones externas (opcionales)
 meta_webhook_router = None
 google_auth_router = None
 google_callback_router = None
@@ -112,40 +120,39 @@ calendar_booking_router = None
 try:
     from api.modules.assistant_rag import chat_email as _chat_email
     chat_email = _chat_email
-    print("✅ chat_email importado correctamente")
+    print("✅ chat_email imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar chat_email: {e}")
+    print(f"⚠️ chat_email import failed: {e}")
 
 try:
     from api.modules.assistant_rag.get_client_by_email import router as _get_client_by_email_router
     get_client_by_email_router = _get_client_by_email_router
-    print("✅ get_client_by_email importado correctamente")
+    print("✅ get_client_by_email imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar get_client_by_email: {e}")
+    print(f"⚠️ get_client_by_email import failed: {e}")
 
 try:
     from api.routes import register_email_channel as _register_email_channel
     register_email_channel = _register_email_channel
-    print("✅ register_email_channel importado correctamente")
+    print("✅ register_email_channel imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar register_email_channel: {e}")
+    print(f"⚠️ register_email_channel import failed: {e}")
 
-# --- Gmail (paquete)
+# --- Gmail
 try:
     from api.modules.email_integration import gmail_webhook as _gmail_webhook
     gmail_webhook = _gmail_webhook
-    print("✅ gmail_webhook importado correctamente")
+    print("✅ gmail_webhook imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar gmail_webhook: {e}")
+    print(f"⚠️ gmail_webhook import failed: {e}")
 
 try:
     from api.modules.email_integration import gmail_oauth as _gmail_oauth
     gmail_oauth = _gmail_oauth
-    print("✅ gmail_oauth importado correctamente ✅")
+    print("✅ gmail_oauth imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar gmail_oauth: {e}")
+    print(f"⚠️ gmail_oauth import failed: {e}")
 
-# Gmail Setup Watch (ruta absoluta segura, por si el import de paquete falla)
 try:
     gmail_watch_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_setup_watch.py")
     if os.path.exists(gmail_watch_path):
@@ -154,79 +161,69 @@ try:
         sys.modules["gmail_setup_watch"] = gmail_watch_module
         spec.loader.exec_module(gmail_watch_module)
         gmail_setup_watch = gmail_watch_module
-        print("✅ gmail_setup_watch importado correctamente por ruta absoluta (Render fix)")
+        print("✅ gmail_setup_watch imported (Render fix)")
     else:
-        print(f"⚠️ No se encontró gmail_setup_watch.py en: {gmail_watch_path}")
+        print(f"⚠️ gmail_setup_watch.py not found at: {gmail_watch_path}")
 except Exception as e:
-    print(f"⚠️ Error al importar gmail_setup_watch: {e}")
+    print(f"⚠️ gmail_setup_watch import failed: {e}")
 
-# Gmail Poll (opcional; NO montar si usas setup_watch a la vez)
 try:
     from api.modules.email_integration import gmail_poll as _gmail_poll
     gmail_poll = _gmail_poll
-    print("✅ gmail_poll importado correctamente ✅")
+    print("✅ gmail_poll imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar gmail_poll: {e}")
+    print(f"⚠️ gmail_poll import failed: {e}")
 
-# Calendar opcionales
-try:
-    from api.modules.calendar import init_calendar_auth as _init_calendar_auth
-    init_calendar_auth = _init_calendar_auth
-    print("✅ init_calendar_auth importado correctamente")
-except Exception as e:
-    print(f"⚠️ No se pudo importar init_calendar_auth: {e}")
 
 try:
     from api import calendar_status as _calendar_status
     calendar_status = _calendar_status
-    print("✅ calendar_status importado correctamente")
+    print("✅ calendar_status imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar calendar_status: {e}")
+    print(f"⚠️ calendar_status import failed: {e}")
 
-# Integraciones externas seguras (opcionales) — ahora con try/except
+# --- Calendar
+try:
+    from api.calendar_routes import router as _calendar_router
+    calendar_router = _calendar_router
+    print("✅ calendar_routes imported and ready")
+except Exception as e:
+    print(f"⚠️ calendar_routes import failed: {e}")
+
+
+# --- External Integrations
 try:
     from api.meta_webhook import router as _meta_webhook_router
     meta_webhook_router = _meta_webhook_router
-    print("✅ meta_webhook importado correctamente")
+    print("✅ meta_webhook imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar meta_webhook: {e}")
+    print(f"⚠️ meta_webhook import failed: {e}")
 
 try:
     from api.auth.google_calendar_auth import router as _google_auth_router
     google_auth_router = _google_auth_router
-    print("✅ google_calendar_auth importado correctamente")
+    print("✅ google_calendar_auth imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar google_calendar_auth: {e}")
+    print(f"⚠️ google_calendar_auth import failed: {e}")
 
 try:
     from api.auth.google_calendar_callback import router as _google_callback_router
     google_callback_router = _google_callback_router
-    print("✅ google_calendar_callback importado correctamente")
+    print("✅ google_calendar_callback imported")
 except Exception as e:
-    print(f"⚠️ No se pudo importar google_calendar_callback: {e}")
+    print(f"⚠️ google_calendar_callback import failed: {e}")
 
-try:
-    from api.calendar_routes import router as _calendar_router
-    calendar_router = _calendar_router
-    print("✅ calendar_routes importado correctamente")
-except Exception as e:
-    print(f"⚠️ No se pudo importar calendar_routes: {e}")
 
-try:
-    from api.calendar_booking import router as _calendar_booking_router
-    calendar_booking_router = _calendar_booking_router
-    print("✅ calendar_booking importado correctamente")
-except Exception as e:
-    print(f"⚠️ No se pudo importar calendar_booking: {e}")
 
-print("🚀 Imports completados correctamente")
+
+print("🚀 Imports completed successfully")
 
 # ======================================
-# ✅ Crear app antes de incluir routers
+# ✅ Create FastAPI app
 # ======================================
 app = FastAPI(title="Evolvian Assistant API", version="1.0")
 
-# ✅ CORS para prod y dev
+# ✅ CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -239,13 +236,14 @@ app.add_middleware(
         "http://localhost:4223",
         "http://localhost:5173",
         "http://localhost:5180",
+         "http://localhost:5177",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 📂 Static con CORS headers habilitados
+# 📂 Static
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 class CORSMiddlewareStatic(StaticFiles):
     async def get_response(self, path, scope):
@@ -258,56 +256,30 @@ class CORSMiddlewareStatic(StaticFiles):
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
 app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
-
-# ======================================
-# ✅ Servir frontend React (clientuploader)
-# ======================================
+# ✅ Frontend React
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "clientuploader/dist")
-
 if os.path.exists(FRONTEND_DIST):
-    print(f"🪄 Sirviendo frontend estático desde: {FRONTEND_DIST}")
+    print(f"🪄 Serving frontend from: {FRONTEND_DIST}")
     app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 else:
-    print(f"⚠️ No se encontró clientuploader/dist en: {FRONTEND_DIST}")
+    print(f"⚠️ clientuploader/dist not found at: {FRONTEND_DIST}")
 
-
-# ======================================
-# ✅ Registro de routers principales (siempre)
-# ======================================
+# ✅ Routers (core)
 routers = [
-    upload_router,
-    history_router,
-    client_router,
-    ask_router,
-    twilio_router,
-    initialize_user_router,
-    client_settings_router,
-    link_whatsapp_router,
-    chat_widget_router,
-    check_email_router,
-    dashboard_summary_router,
-    user_flags_router,
-    widget_consents_router,
-    terms_router,
-    clear_new_user_flag_router,
-    client_profile_router,
-    accept_terms_router,
-    list_files_router,
-    list_chunks_router,
-    delete_chunks_router,
-    embed_router,
-    delete_file_router,
-    stripe_router,
-    checkout_router,
-    stripe_cancel_router,
-    stripe_change_plan_router,
-    reactivate_subscription_router,
-    channels_router,
+    upload_router, history_router, client_router, ask_router, twilio_router,
+    initialize_user_router, client_settings_router, link_whatsapp_router,
+    chat_widget_router, check_email_router, dashboard_summary_router,
+    user_flags_router, terms_router,
+    clear_new_user_flag_router, client_profile_router, accept_terms_router,
+    list_files_router, list_chunks_router, delete_chunks_router,
+    embed_router, delete_file_router, stripe_router, checkout_router,
+    stripe_cancel_router, stripe_change_plan_router,
+    reactivate_subscription_router, channels_router, register_consent_router, check_consent_router,
+    blog_router,
+
 ]
 
-# ======================================
-# 🔥 Registro Gmail OAuth por ruta absoluta (fallback)
-# ======================================
+# ✅ Gmail OAuth fallback
 gmail_oauth_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_oauth.py")
 if os.path.exists(gmail_oauth_path):
     try:
@@ -316,15 +288,13 @@ if os.path.exists(gmail_oauth_path):
         sys.modules["gmail_oauth_path_mod"] = gmail_oauth_module
         spec.loader.exec_module(gmail_oauth_module)
         app.include_router(gmail_oauth_module.router)
-        print("✅ Gmail OAuth router registrado por ruta absoluta (Render fix, path corregido)")
+        print("✅ Gmail OAuth router registered (Render fix)")
     except Exception as e:
-        print(f"⚠️ Error al registrar Gmail OAuth router por ruta absoluta: {e}")
-else:
-    print(f"⚠️ No se encontró gmail_oauth.py en: {gmail_oauth_path}")
+        print(f"⚠️ Error registering Gmail OAuth router: {e}")
 
-# ======================================
-# ✅ Registro de routers opcionales (solo si existen)
-# ======================================
+
+
+# ✅ Optional Routers
 if chat_email: app.include_router(chat_email.router)
 if get_client_by_email_router: app.include_router(get_client_by_email_router)
 if register_email_channel: app.include_router(register_email_channel.router)
@@ -332,17 +302,25 @@ if register_email_channel: app.include_router(register_email_channel.router)
 # Gmail
 if gmail_webhook: app.include_router(gmail_webhook.router)
 if gmail_oauth: app.include_router(gmail_oauth.router)
-#if gmail_setup_watch: app.include_router(gmail_setup_watch.router)
-if gmail_poll: app.include_router(gmail_poll.router)  # ← NO montar junto con setup_watch
+if gmail_poll: app.include_router(gmail_poll.router)
 
-# Integraciones externas seguras
+# Integrations
 if meta_webhook_router: app.include_router(meta_webhook_router)
 if calendar_router: app.include_router(calendar_router)
 if calendar_booking_router: app.include_router(calendar_booking_router)
 if google_auth_router: app.include_router(google_auth_router)
 if google_callback_router: app.include_router(google_callback_router)
+if init_calendar_auth: app.include_router(init_calendar_auth.router)
+if delete_appointment_router: app.include_router(delete_appointment_router)
+if appointments_router: app.include_router(appointments_router)
 
-# Core (no opcionales)
+# ✅ Mount Calendar Router (to expose /calendar/book)
+if calendar_router:
+    app.include_router(calendar_router, prefix="")
+    print("✅ Mounted calendar_routes at /calendar/book")
+
+
+# Core routers
 for r in routers:
     app.include_router(r)
 
@@ -350,22 +328,79 @@ for r in routers:
 app.include_router(reset.router, tags=["subscriptions"])
 app.include_router(embed.router)
 
-# ======================================
-# ✅ Healthcheck y utilidadess
-# ======================================
+# ✅ Force calendar_routes registration (manual fix)
+try:
+    import api.calendar_routes as calendar_routes
+    app.include_router(calendar_routes.router)
+    print("✅ calendar_routes manually registered (fix applied)")
+except Exception as e:
+    print(f"❌ Failed to register calendar_routes manually: {e}")
+
+try:
+    from api.auth import calendar_ui_status
+    app.include_router(calendar_ui_status.router)
+    print("✅ calendar_ui_status imported")
+except Exception as e:
+    print(f"⚠️ calendar_ui_status import failed: {e}")
+
+# ============================================================
+# 🗓️ Calendar Settings — Load client availability preferences
+# ============================================================
+try:
+    from api import calendar_settings
+    app.include_router(calendar_settings.router)
+    print("✅ calendar_settings imported")
+except Exception as e:
+    print(f"⚠️ calendar_settings import failed: {e}")
+
+# ============================================================
+# 🧠 Calendar Prompt — Dynamic AI Scheduling Context
+# ============================================================
+try:
+    from api.modules.assistant_rag.prompts import calendar_prompt
+    print("✅ calendar_prompt module loaded successfully")
+except Exception as e:
+    print(f"⚠️ calendar_prompt import failed: {e}")
+
+# ============================================================
+# 🤖 LLM — OpenAI Direct Chat Module
+# ============================================================
+try:
+    from api.modules.assistant_rag import llm as _llm
+    llm = _llm
+    print("✅ llm imported successfully (OpenAI Chat Module)")
+except Exception as e:
+    print(f"⚠️ llm import failed: {e}")
+
+
+# --- Calendar
+try:
+    from api.modules.calendar import init_calendar_auth as _init_calendar_auth
+    init_calendar_auth = _init_calendar_auth
+    app.include_router(init_calendar_auth.router, prefix="/api")  # ✅ AGREGA ESTO
+    print("✅ init_calendar_auth mounted under /api")
+except Exception as e:
+    print(f"⚠️ init_calendar_auth import failed: {e}")
+
+# CORS preflight handler
+from fastapi.responses import JSONResponse
+
+@app.options("/{rest_of_path:path}")
+async def options_handler(rest_of_path: str):
+    """Allow all OPTIONS requests for CORS preflight."""
+    return JSONResponse(content={"status": "ok"})
+
+
+# ✅ Healthcheck
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
-
-
 
 @app.get("/test_routes")
 def test_routes():
     return [route.path for route in app.routes]
 
-# ======================================
 # ✅ Run local
-# ======================================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))

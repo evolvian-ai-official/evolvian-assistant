@@ -1,0 +1,225 @@
+{
+  "name": "Evolvian Email Auto-Responder (Multi-Client)",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerOn": "newEmail",
+        "additionalFields": {
+          "includeAttachments": false
+        }
+      },
+      "id": "gmailTrigger",
+      "name": "📥 Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "credentials": {
+        "gmailOAuth2Api": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{\n  json: {\n    from_email: $json[\"From\"]?.match(/<(.+)>/)?.[1] || $json[\"From\"],\n    to_email: $json[\"To\"]?.match(/<(.+)>/)?.[1] || $json[\"To\"],\n    subject: $json[\"Subject\"],\n    message: $json[\"snippet\"] || $json[\"textPlain\"],\n    threadId: $json[\"threadId\"] || $json[\"id\"]\n  }\n}];"
+      },
+      "id": "extractData",
+      "name": "🧩 Extract Email Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:8001/get_client_by_email?email={{ $json[\"to_email\"] }}",
+        "responseFormat": "json",
+        "options": {
+          "ignoreResponseCode": true
+        }
+      },
+      "id": "getClient",
+      "name": "🌐 Get Client by Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "if ($json.client_id) {\n  return [{json: {...$json}}];\n} else {\n  return [{json: {fallback: true, to_email: $json.to_email, from_email: $json.from_email, subject: $json.subject, threadId: $json.threadId}}];\n}"
+      },
+      "id": "checkClient",
+      "name": "🔎 Check Client Found",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:8001/chat",
+        "method": "POST",
+        "responseFormat": "json",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\n  \"client_id\": \"{{ $json[\"client_id\"] }}\",\n  \"message\": \"{{ $json[\"message\"] }}\",\n  \"channel\": \"email\"\n}"
+      },
+      "id": "chatRag",
+      "name": "🤖 Ask RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [1240, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{\n  json: {\n    to_email: $json[\"from_email\"],\n    subject: `Re: ${$json[\"subject\"]}`,\n    message: $json[\"answer\"] || 'Gracias por tu mensaje.',\n    threadId: $json[\"threadId\"]\n  }\n}];"
+      },
+      "id": "prepareReply",
+      "name": "📤 Prepare Reply",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "toEmail": "={{ $json[\"to_email\"] }}",
+        "subject": "={{ $json[\"subject\"] }}",
+        "message": "={{ $json[\"message\"] }}",
+        "additionalFields": {
+          "threadId": "={{ $json[\"threadId\"] }}",
+          "emailFormat": "html"
+        }
+      },
+      "id": "sendReply",
+      "name": "✉️ Gmail Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1760, 200],
+      "credentials": {
+        "gmailOAuth2Api": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{json: {\n  to_email: $json.to_email,\n  subject: `Re: ${$json.subject}`,\n  message: `Hola 👋, esta dirección (${ $json.to_email }) no tiene un asistente Evolvian activo todavía.`,\n  threadId: $json.threadId\n}}];"
+      },
+      "id": "fallbackMessage",
+      "name": "⚠️ Fallback Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [1240, 420]
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "toEmail": "={{ $json[\"to_email\"] }}",
+        "subject": "={{ $json[\"subject\"] }}",
+        "message": "={{ $json[\"message\"] }}",
+        "additionalFields": {
+          "threadId": "={{ $json[\"threadId\"] }}",
+          "emailFormat": "html"
+        }
+      },
+      "id": "sendFallback",
+      "name": "📭 Gmail Fallback Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1500, 420],
+      "credentials": {
+        "gmailOAuth2Api": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "gmailTrigger": {
+      "main": [
+        [
+          {
+            "node": "extractData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extractData": {
+      "main": [
+        [
+          {
+            "node": "getClient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "getClient": {
+      "main": [
+        [
+          {
+            "node": "checkClient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "checkClient": {
+      "main": [
+        [
+          {
+            "node": "chatRag",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "fallbackMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "chatRag": {
+      "main": [
+        [
+          {
+            "node": "prepareReply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepareReply": {
+      "main": [
+        [
+          {
+            "node": "sendReply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fallbackMessage": {
+      "main": [
+        [
+          {
+            "node": "sendFallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "evolvian-b2c-email-multiclient"
+}

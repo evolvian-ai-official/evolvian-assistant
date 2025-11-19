@@ -1,14 +1,13 @@
-# api/modules/calendar/send_confirmation_email.py
-
 import os
 import requests
 import logging
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+logger = logging.getLogger(__name__)
 
 def send_confirmation_email(to_email: str, date_str: str, hour_str: str):
     if not RESEND_API_KEY:
-        logging.error("❌ RESEND_API_KEY no está definido.")
+        logger.error("❌ RESEND_API_KEY no está definido.")
         return
 
     response = requests.post(
@@ -18,14 +17,19 @@ def send_confirmation_email(to_email: str, date_str: str, hour_str: str):
             "Content-Type": "application/json",
         },
         json={
-            "from": "Evolvian <noreply@evolvian.ai>",
+            "from": "Evolvian AI <noreply@notifications.evolvianai.com>",
             "to": [to_email],
             "subject": "✅ Confirmación de tu cita",
-            "html": f"<p>Tu cita ha sido agendada para el <strong>{date_str}</strong> a las <strong>{hour_str}</strong>.</p><p>Gracias por usar Evolvian!</p>",
+            "html": f"""
+                <p>Hola 👋</p>
+                <p>Tu cita ha sido agendada para el <strong>{date_str}</strong> a las <strong>{hour_str}</strong>.</p>
+                <p>Gracias por usar Evolvian AI 💙</p>
+                <p style='color:#888;font-size:12px;'>Enviado automáticamente por Evolvian AI</p>
+            """,
         },
     )
 
     if response.status_code != 200:
-        logging.error(f"❌ Error al enviar correo: {response.status_code} - {response.text}")
+        logger.error(f"❌ Error al enviar correo: {response.status_code} - {response.text}")
     else:
-        logging.info("✅ Correo de confirmación enviado correctamente.")
+        logger.info(f"✅ Correo de confirmación enviado correctamente a {to_email}")

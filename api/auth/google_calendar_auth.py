@@ -17,7 +17,7 @@ GOOGLE_REDIRECT_URI = (
     else os.getenv("GOOGLE_REDIRECT_URI_LOCAL")
 )
 
-@router.get("/auth/google_calendar/init")
+@router.get("/api/auth/google_calendar/init")
 def google_calendar_init(request: Request):
     client_id_param = request.query_params.get("client_id")
     if not client_id_param:
