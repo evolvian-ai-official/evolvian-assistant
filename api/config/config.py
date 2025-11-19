@@ -6,7 +6,7 @@ if os.getenv("RENDER") is None:
     load_dotenv()
 
 from supabase import create_client
-import httpx  # 👈 necesario para forzar HTTP/1.1
+import httpx  # necesario para HTTP/1.1
 
 # Variables de entorno
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -20,16 +20,14 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
 if not OPENAI_API_KEY:
     raise ValueError("Missing OPENAI_API_KEY in environment variables")
 
-# Registrar la API key de OpenAI en el entorno global
+# Registrar la API key de OpenAI
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-# 🚑 FIX obligatorio en Render → forzar HTTP/1.1
+# 🚑 FIX Render — Forzar HTTP/1.1
 transport = httpx.HTTPTransport(http2=False)
 
 supabase = create_client(
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY,
-    options={
-        "http_client": httpx.Client(transport=transport)
-    }
+    http_client=httpx.Client(transport=transport)  # 👈 esto sí funciona
 )
