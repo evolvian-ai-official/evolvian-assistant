@@ -58,3 +58,6 @@ typing-extensions
 # Optional (if used)
 langdetect==1.0.9
 protobuf
+
+
+pytz
