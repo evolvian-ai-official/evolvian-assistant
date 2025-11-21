@@ -3,6 +3,7 @@
 # ------------------------------------------------------------
 # Controla la configuración del calendario por cliente.
 # Usa "calendar_status" en lugar de boolean para evitar conflictos.
+# Auto-crea el registro si no existe (fix para PROD).
 # ============================================================
 
 from fastapi import APIRouter, Query, HTTPException
@@ -32,16 +33,17 @@ class CalendarSettingsPayload(BaseModel):
     allow_same_day: bool = True
     timezone: str = "America/Mexico_City"
 
-
 # ============================================================
-# 📘 GET /calendar/settings
+# 📘 GET /calendar/settings — AUTO-CREA SI NO EXISTE (FIX)
 # ============================================================
 @router.get("/calendar/settings")
 def get_calendar_settings(client_id: str = Query(...)):
     """
     Devuelve las configuraciones de calendario del cliente.
+    Si no existen, las crea automáticamente (importante para producción).
     """
     try:
+        # Buscar la fila
         res = (
             supabase.table("calendar_settings")
             .select("*")
@@ -50,17 +52,29 @@ def get_calendar_settings(client_id: str = Query(...)):
             .execute()
         )
 
+        # Si existe → devolverla
         if res.data:
             return JSONResponse(content=res.data[0])
 
-        return JSONResponse(
-            content=CalendarSettingsPayload(client_id=client_id).model_dump()
+        # Si NO existe → crearla con defaults
+        logger.warning(f"⚠️ No calendar_settings found for {client_id}. Creating default row...")
+
+        defaults = CalendarSettingsPayload(client_id=client_id).model_dump()
+
+        insert_res = (
+            supabase.table("calendar_settings")
+            .insert(defaults)
+            .execute()
         )
+
+        logger.info(f"🆕 Default calendar_settings created for {client_id}")
+
+        # Devolver lo recién insertado
+        return JSONResponse(content=defaults)
 
     except Exception as e:
         logger.exception("❌ Error fetching calendar settings")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ============================================================
 # 💾 POST /calendar/settings
@@ -69,14 +83,13 @@ def get_calendar_settings(client_id: str = Query(...)):
 def upsert_calendar_settings(payload: CalendarSettingsPayload):
     """
     Guarda o actualiza las configuraciones del calendario.
-    Usa 'calendar_status' en lugar de boolean para estado.
+    Usa 'calendar_status' en lugar de boolean para evitar conflictos.
     """
     try:
         data = payload.model_dump()
         client_id = data.pop("client_id")
         data["updated_at"] = datetime.utcnow().isoformat()
 
-        # Validar el valor del status
         if data["calendar_status"] not in ["active", "inactive"]:
             raise HTTPException(status_code=400, detail="Invalid calendar_status value")
 
@@ -90,41 +103,32 @@ def upsert_calendar_settings(payload: CalendarSettingsPayload):
         )
 
         if existing.data:
-            res = (
-                supabase.table("calendar_settings")
-                .update(data)
-                .eq("client_id", client_id)
-                .execute()
-            )
+            # Update
+            supabase.table("calendar_settings").update(data).eq("client_id", client_id).execute()
             logger.info(f"🔄 Updated calendar_status={data['calendar_status']} for {client_id}")
         else:
-            res = (
-                supabase.table("calendar_settings")
-                .insert({"client_id": client_id, **data})
-                .execute()
-            )
+            # Insert
+            supabase.table("calendar_settings").insert({ "client_id": client_id, **data }).execute()
             logger.info(f"🆕 Created new settings with calendar_status={data['calendar_status']}")
 
         # Confirmar guardado
         confirm = (
             supabase.table("calendar_settings")
-            .select("client_id, calendar_status, updated_at")
+            .select("*")
             .eq("client_id", client_id)
             .limit(1)
             .execute()
         )
 
-        saved = confirm.data[0] if confirm.data else {"client_id": client_id, **data}
-        logger.info(f"✅ Persisted calendar_status={saved.get('calendar_status')}")
+        saved = confirm.data[0]
         return JSONResponse(content={"success": True, "settings": saved})
 
     except Exception as e:
         logger.exception("❌ Error saving calendar settings")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # ============================================================
-# 🧪 PATCH /calendar/status (toggle rápido)
+# 🧪 PATCH /calendar/status (toggle rápido)d
 # ============================================================
 @router.patch("/calendar/status")
 def toggle_calendar_status(client_id: str = Query(...), status: str = Query(...)):
@@ -135,14 +139,31 @@ def toggle_calendar_status(client_id: str = Query(...), status: str = Query(...)
         if status not in ["active", "inactive"]:
             raise HTTPException(status_code=400, detail="Invalid status value")
 
-        res = (
+        # Si no existe → crear la fila con ese estado
+        existing = (
             supabase.table("calendar_settings")
-            .update({"calendar_status": status, "updated_at": datetime.utcnow().isoformat()})
+            .select("client_id")
             .eq("client_id", client_id)
+            .limit(1)
             .execute()
         )
 
+        if not existing.data:
+            supabase.table("calendar_settings").insert({
+                "client_id": client_id,
+                "calendar_status": status,
+                "updated_at": datetime.utcnow().isoformat()
+            }).execute()
+            logger.info(f"🆕 Created calendar_settings via toggle for {client_id}")
+
+        else:
+            supabase.table("calendar_settings").update({
+                "calendar_status": status,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("client_id", client_id).execute()
+
         logger.info(f"🔘 Calendar status changed to {status} for {client_id}")
+
         return JSONResponse(content={"success": True, "calendar_status": status})
 
     except Exception as e:
