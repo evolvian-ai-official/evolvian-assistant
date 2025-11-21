@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import requests
 from fastapi import APIRouter, HTTPException
 from supabase import create_client
@@ -86,11 +87,20 @@ def schedule_event(payload: dict):
         timezone = integration.get("timezone") or "UTC"
         owner_email = integration.get("connected_email", "owner@evolvian.com")
 
-        # 2️⃣ Validate slot_time format
+        # 2️⃣ Parse slot_time respecting the client's timezone
         try:
-            start_dt = datetime.fromisoformat(slot_time)
+            dt = datetime.fromisoformat(slot_time)
+
+            # If no timezone is provided, apply the client's timezone
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo(timezone))
+
+            start_dt = dt
+
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid datetime format")
+
+        logger.info(f"🕒 Final datetime with TZ applied: {start_dt.isoformat()}")
 
         # 3️⃣ Build attendees list safely
         attendees = []
@@ -104,24 +114,26 @@ def schedule_event(payload: dict):
             attendees.append({"email": owner_email})
             logger.info(f"📧 Using connected_email as fallback attendee: {owner_email}")
 
-        # ✅ Asegurar que el owner siempre esté como invitado (además del usuario)
+        # owner must always be in attendees
         if owner_email and owner_email not in [a["email"] for a in attendees]:
             attendees.append({"email": owner_email})
-            logger.info(f"📧 Added owner_email as attendee: {owner_email}")
 
         # 4️⃣ Prepare event details
         event_data = {
             "summary": f"Sesión agendada con {user_name}",
             "description": f"Evento creado automáticamente desde Evolvian AI para {user_name}.",
-            "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
-            "end": {"dateTime": (start_dt + timedelta(minutes=30)).isoformat(), "timeZone": timezone},
+            "start": {
+                "dateTime": start_dt.isoformat(),
+                "timeZone": timezone
+            },
+            "end": {
+                "dateTime": (start_dt + timedelta(minutes=30)).isoformat(),
+                "timeZone": timezone
+            },
             "organizer": {"email": owner_email, "displayName": "Evolvian AI"},
             "attendees": attendees,
             "reminders": {"useDefault": True},
         }
-
-        if attendees:
-            event_data["attendees"] = attendees
 
         # 5️⃣ Create event in Google Calendar
         create_event = requests.post(

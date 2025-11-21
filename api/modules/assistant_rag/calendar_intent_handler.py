@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, time as dtime
 from api.modules.assistant_rag.prompts.calendar_prompt import get_calendar_prompt
 from api.modules.assistant_rag.llm import openai_chat
 from api.modules.assistant_rag.supabase_client import supabase
+from zoneinfo import ZoneInfo
+
 
 logger = logging.getLogger("calendar_intent_handler")
 
@@ -36,18 +38,26 @@ def _coerce_dict(val):
 
 
 def _is_yes(msg: str) -> bool:
-    """
-    Detecta confirmaciones aunque estén dentro de frases largas.
-    """
     s = msg.strip().lower()
-    yes_keywords = [
-        "si", "sí", "yes", "yep", "sure", "ok", "okay", "vale", "confirmo",
-        "confirmar", "confirmada", "reserva", "book", "schedule", "agendar", "proceed"
+
+    # Palabras muy claras de confirmación
+    strong_yes = [
+        "si", "sí", "yes", "yep", "sure", "ok", "okay", "vale",
+        "confirmo", "confirmar", "confirmada", "confirmada", 
+        "proceed", "procede"
     ]
-    for kw in yes_keywords:
+
+    for kw in strong_yes:
         if kw in s:
             return True
+
+    # Evitar palabras de intent como "agendar", "book", "schedule"
+    intent_words = ["agendar", "book", "schedule", "reservar"]
+    if any(w in s for w in intent_words):
+        return False
+
     return False
+
 
 
 
@@ -78,31 +88,110 @@ def _normalize_time_str(hhmm_ampm: str) -> str:
         h = 0
     return f"{h:02d}:{m:02d}"
 
+def _safe_datetime(dt_str: str) -> str | None:
+    """
+    Verifica que un datetime ISO sea válido.
+    Evita errores como horas 24, 25, 99 o minutos inválidos.
+    Retorna el mismo string si es válido, o None si no lo es.
+    """
+    try:
+        # Reemplazo de Z por ISO normal
+        datetime.fromisoformat(dt_str.replace("Z", ""))
+        return dt_str
+    except Exception:
+        logger.warning(f"⚠️ Invalid datetime detected and ignored: {dt_str}")
+        return None
+
+
 
 def _resolve_date_token(text: str) -> str | None:
     s = text.lower()
     now = datetime.now()
 
+    # ===============================
+    # 1. Expresiones absolutas simples (hoy, mañana...)
+    # ===============================
     if "hoy" in s or "today" in s:
         return now.strftime("%Y-%m-%d")
+
+    if "pasado mañana" in s or "day after tomorrow" in s:
+        return (now + timedelta(days=2)).strftime("%Y-%m-%d")
+
     if "mañana" in s or "manana" in s or "tomorrow" in s:
         return (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # ===============================
+    # 2. Expresiones relativas por semanas
+    # ===============================
+    # “en dos semanas”, “en 3 semanas”, “in two weeks”, “in 3 weeks”
+    m = re.search(r"\ben\s+(\d+)\s+seman", s)
+    if m:
+        n = int(m.group(1))
+        return (now + timedelta(days=7*n)).strftime("%Y-%m-%d")
+
+    m = re.search(r"\bin\s+(\d+)\s+week", s)
+    if m:
+        n = int(m.group(1))
+        return (now + timedelta(days=7*n)).strftime("%Y-%m-%d")
+
+    # ===============================
+    # 3. Expresiones como “en 3 días”, “in 2 days”
+    # ===============================
+    m = re.search(r"\ben\s+(\d+)\s+d[ií]as", s)
+    if m:
+        return (now + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
+
+    m = re.search(r"\bin\s+(\d+)\s+day", s)
+    if m:
+        return (now + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
+
+    # ===============================
+    # 4. Detección de modificadores tipo Calendly
+    # ===============================
+    modifiers_next = [
+        "siguiente", "próximo", "proximo", "que viene", 
+        "upcoming", "next", "following"
+    ]
+    modifiers_this = [
+        "este", "esta", "this"
+    ]
+
+    # ===============================
+    # 5. Días de la semana (ES)
+    # ===============================
     for wd, idx in WEEKDAYS_ES.items():
         if wd in s:
-            return _next_weekday(now, idx).strftime("%Y-%m-%d")
+            base = _next_weekday(now, idx)
+
+            # “el siguiente lunes” → +7 días extra
+            if any(m in s for m in modifiers_next):
+                base += timedelta(days=7)
+
+            # “este lunes” → lunes de esta semana (solo si todavía no pasó)
+            if any(m in s for m in modifiers_this):
+                if now.weekday() <= idx:
+                    base = now + timedelta(days=(idx - now.weekday()))
+            return base.strftime("%Y-%m-%d")
+
+    # ===============================
+    # 6. Días de la semana (EN)
+    # ===============================
     for wd, idx in WEEKDAYS_EN.items():
         if wd in s:
-            return _next_weekday(now, idx).strftime("%Y-%m-%d")
+            base = _next_weekday(now, idx)
 
-    m = re.search(r"\b(\d{1,2})/(\d{1,2})\b", s)
-    if m:
-        d, mo = int(m.group(1)), int(m.group(2))
-        try:
-            return datetime(now.year, mo, d).strftime("%Y-%m-%d")
-        except Exception:
-            return None
+            if any(m in s for m in modifiers_next):
+                base += timedelta(days=7)
 
+            if any(m in s for m in modifiers_this):
+                if now.weekday() <= idx:
+                    base = now + timedelta(days=(idx - now.weekday()))
+
+            return base.strftime("%Y-%m-%d")
+
+    # ===============================
+    # 7. Fechas explícitas tipo “14 de noviembre”
+    # ===============================
     m = re.search(r"\b(\d{1,2})\s+de\s+([a-záéíóú]+)\b", s)
     if m:
         d = int(m.group(1))
@@ -110,70 +199,106 @@ def _resolve_date_token(text: str) -> str | None:
         if mo:
             try:
                 return datetime(now.year, mo, d).strftime("%Y-%m-%d")
-            except Exception:
+            except:
                 return None
 
-    m = re.search(r"\b([a-z]+)\s+(\d{1,2})\b", s)  # November 14
+    # ===============================
+    # 8. Fechas explícitas inglés: “November 14”
+    # ===============================
+    m = re.search(r"\b([a-z]+)\s+(\d{1,2})\b", s)
     if m and m.group(1).lower() in MONTHS_EN:
         mo = MONTHS_EN[m.group(1).lower()]
         d = int(m.group(2))
         try:
             return datetime(now.year, mo, d).strftime("%Y-%m-%d")
-        except Exception:
+        except:
             return None
 
-    m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+of\s+([a-z]+)\b", s)  # 14th of November
+    # ===============================
+    # 9. Estilo “14th of November”
+    # ===============================
+    m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+of\s+([a-z]+)\b", s)
     if m and m.group(2).lower() in MONTHS_EN:
         d = int(m.group(1))
         mo = MONTHS_EN[m.group(2).lower()]
         try:
             return datetime(now.year, mo, d).strftime("%Y-%m-%d")
-        except Exception:
+        except:
             return None
 
     return None
 
 
 def _extract_times_from_text(text: str) -> list[str]:
-    times = []
-    for a, _ in RANGE_RE.findall(text):
-        times.append(a)
-    if not times:
-        for m in TIME_RE.findall(text):
-            times.append(m.strip())
-    return times
+    text = text.lower().strip()
+
+    # 0️⃣ Clean fake "21:" tokens coming from list formatting
+    text = re.sub(r"\b(\d{1,2}):\s*(?=,|$)", "", text)
+
+    # 1️⃣ Time ranges "10:00-11:00"
+    ranges = RANGE_RE.findall(text)
+    if ranges:
+        return [r[0] for r in ranges]
+
+    # 2️⃣ HH:MM with optional AM/PM
+    matches = re.findall(
+        r"\b(1[0-2]|0?[1-9]|1[3-9]|2[0-3]):([0-5][0-9])\s*(am|pm)?\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if matches:
+        result = []
+        for hh, mm, ampm in matches:
+            # Prevent 24–99 hours from entering
+            if int(hh) > 23:
+                continue
+            t = f"{hh}:{mm}"
+            if ampm:
+                t += ampm
+            result.append(t)
+        return result
+
+    # 3️⃣ "9am", "11pm"
+    relaxed = re.findall(
+        r"\b(1[0-2]|0?[1-9])\s*(am|pm)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if relaxed:
+        return [f"{hh}{ampm}" for hh, ampm in relaxed]
+
+    return []
+
 
 
 def _looks_like_name(message: str) -> bool:
     s = message.strip()
     low = s.lower()
+
+    # ❗ Nuevo: evitar que confirmaciones o rechazos sean marcados como nombre
+    if _is_yes(low) or _is_no(low):
+        return False
+
+    # Ya existente:
     if any(ch.isdigit() for ch in s) or "@" in low:
         return False
     if low in YES_TOKENS or low in NO_TOKENS:
         return False
+
     forbidden = [
-        "horario",
-        "disponible",
-        "agendar",
-        "reservar",
-        "cita",
-        "llamada",
-        "dame",
-        "book",
-        "schedule",
-        "available",
-        "options",
-        "opciones",
-        "number",
-        "número",
-        "numero",
-        "option",
+        "horario", "disponible", "agendar", "reservar", "cita",
+        "llamada", "dame", "book", "schedule", "available",
+        "options", "opciones", "number", "número", "numero",
+        "option", "confirm", "confirmar", "confirmo", "confirmada"
     ]
     if any(w in low for w in forbidden):
         return False
+
     if not re.search(r"[a-záéíóúñ]", low):
         return False
+
     return len(s.split()) >= 2
+
 
 
 def _extract_selection_index(msg: str) -> int | None:
@@ -204,16 +329,28 @@ def _validate_slot(settings: dict, iso_str: str) -> tuple[bool, str | None]:
     except Exception:
         return False, "Fecha/hora inválida."
 
-    now = datetime.now()
+    # -----------------------------------------------------------
+    # 🔧 FIX: comparar aware vs aware (timezone correcto)
+    # -----------------------------------------------------------
+    if dt.tzinfo is not None:
+        now = datetime.now(dt.tzinfo)   # aware (mismo timezone del cliente)
+    else:
+        now = datetime.now()            # naive fallback
+
     min_h = int(settings.get("min_notice_hours") or 0)
     if dt < now + timedelta(hours=min_h):
         return False, f"Debe respetar aviso mínimo de {min_h} horas."
 
+    # -----------------------------------------------------------
+    # Horario laboral dentro del timezone del cliente
+    # -----------------------------------------------------------
     start = settings.get("start_time")
     end = settings.get("end_time")
     if start and end:
         s_h, s_m = map(int, start.split(":"))
         e_h, e_m = map(int, end.split(":"))
+
+        # dt.hour y dt.minute ya están en TZ del cliente
         if not (dtime(s_h, s_m) <= dtime(dt.hour, dt.minute) <= dtime(e_h, e_m)):
             return False, f"Fuera del horario laboral ({start}–{end})."
 
@@ -235,7 +372,7 @@ def _book_appointment(client_id: str, collected: dict) -> bool:
         return False
 
 
-def _extract_fields(message: str, state: dict) -> dict:
+def _extract_fields(message: str, state: dict, settings: dict) -> dict:
     msg = message.strip()
     low = msg.lower()
     EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
@@ -243,41 +380,135 @@ def _extract_fields(message: str, state: dict) -> dict:
 
     out = {}
 
+    # -----------------------------------------------------------
+    # 📧 Email
+    # -----------------------------------------------------------
     m = EMAIL_RE.search(msg)
     if m:
         out["user_email"] = m.group(0)
 
+    # -----------------------------------------------------------
+    # 📱 Phone
+    # -----------------------------------------------------------
     m = PHONE_RE.search(msg)
     if m:
         out["user_phone"] = re.sub(r"\s+", "", m.group(0))
 
+    # -----------------------------------------------------------
+    # 🧑 Name
+    # -----------------------------------------------------------
     if _looks_like_name(msg):
         out["user_name"] = msg.title()
 
+    # -----------------------------------------------------------
+    # 🔢 Selected option from proposed slots
+    # -----------------------------------------------------------
     if state.get("proposed_slots"):
         idx = _extract_selection_index(msg)
         if idx is not None and 0 <= idx < len(state["proposed_slots"]):
             out["scheduled_time"] = state["proposed_slots"][idx]["start_iso"]
 
+    # -----------------------------------------------------------
+    # 📅 Date extracted
+    # -----------------------------------------------------------
     date_iso = _resolve_date_token(low)
     if date_iso:
         out["scheduled_date_hint"] = date_iso
 
+    # -----------------------------------------------------------
+    # ⏰ Time extracted
+    # -----------------------------------------------------------
     times = _extract_times_from_text(msg)
     if times:
         out["scheduled_time_hint"] = times[0]
 
-    if out.get("scheduled_date_hint") and out.get("scheduled_time_hint"):
-        out["scheduled_time"] = f"{out['scheduled_date_hint']}T{_normalize_time_str(out['scheduled_time_hint'])}:00"
+    # ===========================================================
+    # 🧠 Unified SAFE scheduled_time construction
+    # ===========================================================
+    date_hint = out.get("scheduled_date_hint") or state.get("last_date_hint")
+    time_hint = out.get("scheduled_time_hint")
+
+    if date_hint and time_hint:
+
+        from dateutil import parser
+
+        # -----------------------------------------------
+        # Normalize time ("5"→"05:00", "5pm"→"17:00")
+        # -----------------------------------------------
+        def normalize_time_str(t: str) -> str:
+            t = t.strip().lower()
+
+            # Try smart parser
+            try:
+                dt = parser.parse(t)
+                return dt.strftime("%H:%M")
+            except:
+                pass
+
+            # If only hour
+            if t.isdigit():
+                return f"{int(t):02d}:00"
+
+            # Fix formats like "9:0"
+            if ":" in t:
+                hh, mm = t.split(":", 1)
+                hh = f"{int(hh):02d}"
+                mm = f"{int(mm):02d}" if mm.isdigit() else "00"
+                return f"{hh}:{mm}"
+
+            # Fallback
+            return "00:00"
+
+        norm_time = normalize_time_str(time_hint)
+
+        iso_candidate = f"{date_hint}T{norm_time}:00"
+
+        # -----------------------------------------------
+        # Validate datetime format
+        # -----------------------------------------------
+        safe_iso = _safe_datetime(iso_candidate)
+
+        # -----------------------------------------------
+        # Apply timezone
+        # -----------------------------------------------
+        client_tz = None
+        if settings and settings.get("timezone"):
+            try:
+                client_tz = ZoneInfo(settings["timezone"])
+            except:
+                client_tz = ZoneInfo("UTC")
+
+        if safe_iso:
+            dt = datetime.fromisoformat(safe_iso)
+            aware = dt.replace(tzinfo=client_tz)
+            out["scheduled_time"] = aware.isoformat()
+
+        # Save for next turn
+        state["last_date_hint"] = date_hint
 
     return out
+
 
 
 def handle_calendar_intent(client_id: str, message: str, session_id: str, channel: str, lang: str):
     logger.info(f"🧭 [LLM-Only Mode] Calendar intent for client_id={client_id}")
 
     # ============================================================
-    # 🧠 Cargar estado previo de la conversación
+    # 🛡️ Ensure settings always exists
+    # ============================================================
+    settings = None
+
+    # ============================================================
+    # ⚙️ Load calendar settings FIRST
+    # ============================================================
+    try:
+        settings = _load_settings(client_id)
+    except Exception as e:
+        logger.warning(f"⚠️ Could not load calendar_settings: {e}")
+        settings = None
+
+    # ============================================================
+    # 🧠 Load previous conversation state
     # ============================================================
     try:
         res = (
@@ -298,32 +529,46 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
     state.setdefault("collected", {})
     collected = state["collected"]
 
+    # 🛡️ Corregir estado corrupto: nunca permitir pending_confirmation sin horario
+    if state.get("status") == "pending_confirmation" and not collected.get("scheduled_time"):
+        logger.warning("⚠️ Resetting invalid pending_confirmation state (missing scheduled_time)")
+        state["status"] = "collecting"
+
+
     # ============================================================
-    # 🧩 Extraer campos del mensaje (nombre, email, hora, fecha…)
+    # 🧩 Extract data from message (NOW settings is safe)
     # ============================================================
-    new_data = _extract_fields(message, state)
+    new_data = _extract_fields(message, state, settings)
+
     for k, v in new_data.items():
         if v:
             collected[k] = v
 
-    if "scheduled_time" not in collected and collected.get("scheduled_time_hint"):
-        date_hint = collected.get("scheduled_date_hint") or state.get("last_date_hint")
-        if date_hint:
-            collected["scheduled_time"] = f"{date_hint}T{_normalize_time_str(collected['scheduled_time_hint'])}:00"
-
-    if collected.get("scheduled_date_hint"):
-        state["last_date_hint"] = collected["scheduled_date_hint"]
+    
 
     # ============================================================
-    # ⚙️ Cargar reglas de configuración del calendario
+    # 🔄 Cambiar a pending_confirmation cuando ya tengo todos los datos
     # ============================================================
-    settings = _load_settings(client_id)
+    if (
+        collected.get("user_name")
+        and collected.get("user_email")
+        and collected.get("user_phone")
+        and collected.get("scheduled_time")
+        and state.get("status") not in ["pending_confirmation", "confirmed"]
+    ):
+        logger.info("🟦 Switching status to pending_confirmation (all data collected).")
+        state["status"] = "pending_confirmation"
+        state.pop("proposed_slots", None)
+
+
 
     # ============================================================
     # 📅 Confirmar cita si ya hay horario propuesto
     # ============================================================
     if collected.get("scheduled_time"):
         if state.get("status") == "pending_confirmation" and _is_yes(message):
+
+            # Validar slot con settings
             if settings:
                 ok, reason = _validate_slot(settings, collected["scheduled_time"])
                 if not ok:
@@ -337,6 +582,7 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
                         if lang == "es"
                         else "Shall I propose valid options?"
                     )
+
                     state["collected"] = collected
                     try:
                         supabase.table("conversation_state").upsert(
@@ -349,7 +595,9 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
                         ).execute()
                     except Exception:
                         pass
+
                     return reply
+
 
             # ====================================================
             # 💾 Registrar cita en appointments
@@ -449,8 +697,6 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
     # ============================================================
     # 🔁 Si aún está recopilando datos, actualizar estado
     # ============================================================
-    if state.get("status") == "collecting":
-        state["status"] = "pending_confirmation"
 
     state["collected"] = collected
     try:
@@ -477,7 +723,7 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
     ]
 
     try:
-        ai_response = openai_chat(messages, temperature=0.35)
+        ai_response = openai_chat(messages, temperature=0.35, use_calendar_model=True)
     except Exception as e:
         logger.error(f"❌ Error invoking LLM calendar prompt: {e}")
         return (
@@ -486,60 +732,7 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
             else "❌ There was a problem with the calendar assistant."
         )
 
-    # ============================================================
-    # 📅 Extraer posibles horarios sugeridos por el LLM
-    # ============================================================
-    proposed = []
-    date_from_llm = _resolve_date_token(ai_response.lower())
-    if date_from_llm:
-        state["last_date_hint"] = date_from_llm
-        collected.setdefault("scheduled_date_hint", date_from_llm)
-
-    lines = [ln.strip() for ln in ai_response.splitlines() if ln.strip()]
-    for ln in lines:
-        rng = RANGE_RE.search(ENUM_PREFIX_RE.sub("", ln))
-        if rng:
-            base_date = collected.get("scheduled_date_hint") or date_from_llm
-            start_hhmm = _normalize_time_str(rng.group(1))
-            end_hhmm = _normalize_time_str(rng.group(2))
-            if base_date:
-                proposed.append(
-                    {
-                        "start_iso": f"{base_date}T{start_hhmm}:00",
-                        "end_iso": f"{base_date}T{end_hhmm}:00",
-                    }
-                )
-
-    # ============================================================
-    # 🕓 Si hay horarios válidos, mostrarlos al usuario
-    # ============================================================
-    if proposed:
-        state["proposed_slots"] = proposed
-        try:
-            supabase.table("conversation_state").upsert(
-                {"client_id": client_id, "session_id": session_id, "state": state},
-                on_conflict="client_id,session_id",
-            ).execute()
-        except Exception as e:
-            logger.warning(f"⚠️ Could not save proposed slots: {e}")
-
-        reply_lines = []
-        for i, slot in enumerate(proposed, 1):
-            start_iso = slot.get("start_iso")
-            end_iso = slot.get("end_iso")
-            if start_iso and end_iso:
-                t_start = start_iso.split("T")[1][:5]
-                t_end = end_iso.split("T")[1][:5]
-                reply_lines.append(f"{i}. {t_start} - {t_end}")
-
-        reply = (
-            f"Para {base_date}, aquí tienes algunas opciones disponibles:\n\n"
-            + "\n".join(reply_lines)
-            if lang == "es"
-            else f"For {base_date}, here are some available options:\n\n"
-            + "\n".join(reply_lines)
-        )
-        return reply
+    
 
     # ============================================================
     # 💾 Guardar estado final y respuesta
