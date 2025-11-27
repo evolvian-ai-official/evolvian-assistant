@@ -64,8 +64,19 @@ def _contains_any(haystack: str, needles: list[str]) -> bool:
     return any(n in haystack for n in needles)
 
 def _looks_like_schedule_intent(msg_norm: str) -> bool:
-    """Estrategia en capas para minimizar falsos positivos."""
     if not msg_norm:
+        return False
+
+    # 🚀 1. Detección dura: priorizar intención de agendar aunque existan saludos
+    HAS_STRONG_INTENT = (
+        _contains_any(msg_norm, SPANISH_KEYWORDS) or
+        _contains_any(msg_norm, ENGLISH_KEYWORDS) or
+        DATE_TIME_HINT.search(msg_norm)
+    )
+
+    if HAS_STRONG_INTENT:
+        return True
+
         return False
 
     # 0) Preguntas cortas

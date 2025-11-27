@@ -160,9 +160,9 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
     """
     Devuelve: "calendar" | "rag"
     Mantiene el intent 'calendar' activo mientras el flujo esté en progreso.
-    Además, valida que el calendario esté activo y que el plan lo permita.
+    Permite salir del flujo solo si el usuario realmente cambia de tema.
     """
-    # 🎨 Códigos de color para terminal
+    # 🎨 Colores para logs
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
     RED = "\033[91m"
@@ -176,30 +176,53 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
         "servicios", "productos", "qué es", "que es"
     }
 
-    # 🧹 Reinicia intent si mensaje es genérico
-    if any(text.startswith(g) for g in GREETINGS) or any(k in text for k in GENERIC_INFO):
-        print(f"{YELLOW}🔄 Resetting intent for general message: '{message}'{RESET}")
-        upsert_state(client_id, session_id, {"intent": None})
-        return "rag"
+    # 🧠 Detectar agenda ANTES de ignorar saludos
+    if detect_intent_to_schedule(message):
+        print(f"{GREEN}📅 Schedule intent detected (ignoring greeting){RESET}")
+    else:
+        # 🧹 Saludos y preguntas generales → modo RAG
+        if any(text.startswith(g) for g in GREETINGS) or any(k in text for k in GENERIC_INFO):
+            print(f"{YELLOW}🔄 Resetting intent for general message: '{message}'{RESET}")
+            upsert_state(client_id, session_id, {"intent": None})
+            return "rag"
 
-    # 📍 Cargar estado actual
+    # 📍 Estado actual
     active_state = get_state(client_id, session_id)
     active_intent = active_state.get("intent")
     status = active_state.get("status", "")
 
-    # 📅 Mantener sticky intent mientras recolecta datos
+    # 🆕 Palabras que indican que el usuario quiere SALIR del flujo de agenda
+    EXIT_CALENDAR_KEYWORDS = {
+        "price", "prices", "plan", "plans", "premium", "starter", "free",
+        "cost", "how much", "billing", "upgrade", "downgrade",
+        "precio", "precios", "cuánto", "cuanto", "coste", "planes"
+    }
+
+    def user_wants_to_exit_calendar(msg: str) -> bool:
+        t = (msg or "").lower()
+        return any(k in t for k in EXIT_CALENDAR_KEYWORDS)
+
+    # 📅 Mantener sticky intent (pero permitir salir si cambia de tema)
     if active_intent == "calendar" and status in ["collecting", "pending_confirmation"]:
+
+        # 🚪 El usuario explícitamente cambia de tema → SALIR DEL FLUJO
+        if user_wants_to_exit_calendar(message):
+            print(f"{YELLOW}🚪 Topic changed → exiting calendar flow{RESET}")
+            upsert_state(client_id, session_id, {"intent": None})
+            return "rag"
+
+        # 👉 Si sigue en agenda aunque diga nombre/email/etc → CONTINUAR
         print(f"{GREEN}🧠 Continuing calendar flow (status={status}){RESET}")
         return "calendar"
 
-    # 🕵️ Detectar si el usuario intenta agendar una cita
+    # 🕵️ Activar flujo calendario desde cero
     if detect_intent_to_schedule(message):
         try:
-            # 1️⃣ Verificar si el plan tiene el feature calendar_sync
+            # 1️⃣ Validar feature calendar_sync
             from api.utils.plan_features_logic import client_has_feature
             has_calendar_feature = client_has_feature(client_id, "calendar_sync")
 
-            # 2️⃣ Consultar estado real del calendario
+            # 2️⃣ Validar estado del calendario
             res = (
                 supabase.table("calendar_settings")
                 .select("calendar_status")
@@ -209,22 +232,21 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
             )
             calendar_status = res.data.get("calendar_status") if res and res.data else None
 
-            print(f"📡 Client={client_id} | has_feature={has_calendar_feature} | calendar_status={calendar_status}")
+            print(f"📡 Client={client_id} | has_feature={has_calendar_feature} | status={calendar_status}")
 
-            # 🚫 Bloquear si no tiene feature o el calendario está inactivo
+            # 🚫 Bloqueo si no aplica
             if not has_calendar_feature or calendar_status != "active":
                 lang = detect_language(message)
-                print(f"{RED}🚫 Calendar intent blocked → has_feature={has_calendar_feature}, status={calendar_status}{RESET}")
+                print(f"{RED}🚫 Calendar intent blocked{RESET}")
                 return (
                     "⚠️ Tu plan actual no incluye la función de agenda o está desactivada."
                     if lang == "es"
                     else "⚠️ Your current plan does not include scheduling or it's disabled."
                 )
 
-            # ✅ Si pasa ambas validaciones, activar intent calendar
+            # ✅ Activar calendario
             set_intent(client_id, session_id, "calendar")
 
-            # Guardar estado actualizado con meta-info
             state = get_state(client_id, session_id)
             state.update({
                 "intent": "calendar",
@@ -234,21 +256,23 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
             })
             upsert_state(client_id, session_id, state)
 
-            print(f"{GREEN}✅ Calendar intent ACTIVATED → client={client_id} | status={calendar_status}{RESET}")
+            print(f"{GREEN}✅ Calendar intent ACTIVATED{RESET}")
             return "calendar"
 
         except Exception as e:
-            print(f"{RED}⚠️ Error verifying calendar_status or plan feature: {e}{RESET}")
+            print(f"{RED}⚠️ Error verifying calendar feature: {e}{RESET}")
 
-    # 🧹 Si había intent calendar previo pero ya no aplica
+    # 🧹 Si había calendar pero ya no aplica (esto es fallback)
     if active_intent == "calendar":
-        print(f"{YELLOW}🧹 Non-calendar message detected, clearing sticky intent.{RESET}")
+        print(f"{YELLOW}🧹 Calendar intent cleared (fallback){RESET}")
         upsert_state(client_id, session_id, {"intent": None})
         return "rag"
 
-    # 💬 Default → flujo RAG
-    print(f"{YELLOW}💬 Routing → RAG (default path){RESET}")
+    # 💬 Default → RAG
+    print(f"{YELLOW}💬 Routing → RAG (default){RESET}")
     return "rag"
+
+
 
 # ============================================================
 # 🎯 Orquestador principal (router + handlers)

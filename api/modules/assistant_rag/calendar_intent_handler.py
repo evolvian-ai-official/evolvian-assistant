@@ -9,6 +9,11 @@ from api.modules.assistant_rag.prompts.calendar_prompt import get_calendar_promp
 from api.modules.assistant_rag.llm import openai_chat
 from api.modules.assistant_rag.supabase_client import supabase
 from zoneinfo import ZoneInfo
+from api.modules.calendar.get_booked_slots import get_booked_slots
+
+
+
+
 
 
 logger = logging.getLogger("calendar_intent_handler")
@@ -24,6 +29,29 @@ RANGE_RE = re.compile(r"\b(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\b", re.I)
 
 YES_TOKENS = {"si", "sí", "yes", "yep", "sure", "ok", "okay", "vale", "confirmo", "confirm", "proceed"}
 NO_TOKENS = {"no", "nop", "nope", "cancel", "cancelar", "stop"}
+
+
+
+def _is_valid_email(email: str) -> bool:
+    """
+    Valida emails reales, evitando casos como:
+    - doble punto
+    - dominios inválidos
+    - sin TLD
+    - espacios
+    - rarezas como test@test, test@.com
+    """
+    if not email:
+        return False
+
+    email = email.strip()
+
+    pattern = re.compile(
+        r"^(?!.*\.\.)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$",
+        re.IGNORECASE,
+    )
+
+    return bool(pattern.match(email))
 
 
 def _coerce_dict(val):
@@ -302,16 +330,28 @@ def _looks_like_name(message: str) -> bool:
 
 
 def _extract_selection_index(msg: str) -> int | None:
+    """
+    Solo acepta selección clara de opciones:
+    - "option 1"
+    - "opcion 2"
+    - "#3"
+    - "3." o "3)"
+    - Mensaje que solo contenga un número (ej. "2")
+    NO acepta números dentro de emails, teléfonos o textos largos.
+    """
     low = msg.lower().strip()
-    m = re.search(r"(?:^|\s)(?:option|opcion|opción|number|número|numero|#)?\s*(\d{1,2})(?:[\.\)]|$|\s)", low)
-    if m:
-        try:
-            return int(m.group(1)) - 1
-        except Exception:
-            return None
-    if re.fullmatch(r"\d{1,2}", low):
+
+    # Caso donde el mensaje es únicamente un número
+    if re.fullmatch(r"[1-9]|1[0-9]|2[0-9]", low):
         return int(low) - 1
+
+    # Opciones explícitas tipo `option 3`, `opción 2`, `#4`
+    m = re.search(r"(option|opcion|opción|number|número|numero|#)\s*(\d{1,2})", low)
+    if m:
+        return int(m.group(2)) - 1
+
     return None
+
 
 
 def _load_settings(client_id: str) -> dict | None:
@@ -372,6 +412,160 @@ def _book_appointment(client_id: str, collected: dict) -> bool:
         return False
 
 
+
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from api.modules.assistant_rag.supabase_client import supabase
+import logging
+
+logger = logging.getLogger("calendar_intent_handler")
+
+
+def _get_booked_slots(client_id: str, start_date: datetime, end_date: datetime):
+    """
+    Obtiene todas las citas ocupadas de Supabase dentro de un rango de fechas.
+    Retorna una lista de datetime (timezone-aware), listos para comparación
+    en _generate_available_slots().
+    """
+    try:
+        logger.info(
+            f"🔍 Fetching booked slots for {client_id} between "
+            f"{start_date.isoformat()} and {end_date.isoformat()}"
+        )
+
+        res = (
+            supabase.table("appointments")
+            .select("scheduled_time")
+            .eq("client_id", client_id)
+            .gte("scheduled_time", start_date.isoformat())
+            .lte("scheduled_time", end_date.isoformat())
+            .execute()
+        )
+
+        if not res or not res.data:
+            return []
+
+        booked = []
+        for item in res.data:
+            iso_str = item["scheduled_time"]
+
+            try:
+                # Convert ISO from DB to datetime
+                dt = datetime.fromisoformat(iso_str)
+
+                # Ensure timezone aware (DB may return UTC or naive)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+
+                booked.append(dt)
+
+            except Exception as parse_err:
+                logger.warning(f"⚠️ Could not parse stored datetime: {iso_str} ({parse_err})")
+
+        logger.info(f"⛔ Found {len(booked)} booked slots in Supabase")
+        return booked
+
+    except Exception as e:
+        logger.error(f"❌ Error fetching booked slots: {e}")
+        return []
+
+
+def _generate_available_slots(settings, client_id):
+    """
+    Genera todos los horarios disponibles basados en:
+    - calendario del cliente
+    - citas ya ocupadas (Supabase)
+    - horario laboral
+    - slot duration
+    - buffer
+    - min notice
+    - max days ahead
+    """
+    tz = ZoneInfo(settings["timezone"])
+    now = datetime.now(tz)
+
+    max_days = settings["max_days_ahead"]
+    slot_duration = settings["slot_duration_minutes"]
+    buffer = settings["buffer_minutes"]
+    min_notice = settings["min_notice_hours"]
+    allow_same_day = settings["allow_same_day"]
+
+    start_h, start_m = map(int, settings["start_time"].split(":"))
+    end_h, end_m = map(int, settings["end_time"].split(":"))
+
+    # selected days → ["mon","tue","wed"]
+    selected_days = [d.lower()[:3] for d in settings["selected_days"]]
+
+    # 1️⃣ Rango de fechas
+    date_end = now + timedelta(days=max_days)
+
+    # 2️⃣ Obtener citas ocupadas de Supabase
+    booked_raw = _get_booked_slots(client_id, now, date_end)
+
+    # Convertir a timezone del cliente
+    booked = []
+    for b in booked_raw:
+        if b.tzinfo is None:
+            b = b.replace(tzinfo=ZoneInfo("UTC"))
+        booked.append(b.astimezone(tz))
+
+    free_slots = []
+
+    # Función para detectar solapamientos reales
+    def _overlap(slot_start):
+        slot_end = slot_start + timedelta(minutes=slot_duration)
+
+        for b in booked:
+            b_end = b + timedelta(minutes=slot_duration)
+
+            if (slot_start < b_end) and (slot_end > b):
+                return True
+
+        return False
+
+    # 3️⃣ Día por día
+    day = now
+    while day <= date_end:
+
+        if day.strftime("%a").lower()[:3] in selected_days:
+
+            day_start = day.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+            day_end = day.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
+
+            slot = day_start
+            while slot + timedelta(minutes=slot_duration) <= day_end:
+
+                # ⛔️ Aviso mínimo
+                if slot < now + timedelta(hours=min_notice):
+                    slot += timedelta(minutes=slot_duration + buffer)
+                    continue
+
+                # ⛔️ No permitir mismo día si está desactivado
+                if not allow_same_day and slot.date() == now.date():
+                    slot += timedelta(minutes=slot_duration + buffer)
+                    continue
+
+                # ⛔️ Revisar si se empalma con citas reservadas
+                if _overlap(slot):
+                    slot += timedelta(minutes=slot_duration + buffer)
+                    continue
+
+                # Slot válido
+                free_slots.append({
+                    "start_iso": slot.isoformat(),
+                    "readable": slot.strftime("%Y-%m-%d %H:%M")
+                })
+
+                slot += timedelta(minutes=slot_duration + buffer)
+
+        day += timedelta(days=1)
+
+    return free_slots
+
+
+
+
 def _extract_fields(message: str, state: dict, settings: dict) -> dict:
     msg = message.strip()
     low = msg.lower()
@@ -383,9 +577,13 @@ def _extract_fields(message: str, state: dict, settings: dict) -> dict:
     # -----------------------------------------------------------
     # 📧 Email
     # -----------------------------------------------------------
-    m = EMAIL_RE.search(msg)
+    # Captura emails buenos y malos — luego se validan aparte
+    EMAIL_LOOSE_RE = re.compile(r"[^\s]+@[^\s]+", re.I)
+
+    m = EMAIL_LOOSE_RE.search(msg)
     if m:
-        out["user_email"] = m.group(0)
+        out["user_email"] = m.group(0).strip()
+
 
     # -----------------------------------------------------------
     # 📱 Phone
@@ -540,11 +738,67 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
     # ============================================================
     new_data = _extract_fields(message, state, settings)
 
+    # ============================================================
+    # 📧 EMAIL STRONG VALIDATION — Detect attempts & block invalids
+    # ============================================================
+
+    raw_msg = message.strip()
+
+    # 1️⃣ Detecta que el usuario INTENTÓ dar un email, pero no tiene '@'
+    looks_like_email_attempt = (
+        "@" in raw_msg or
+        "." in raw_msg or
+        "email" in raw_msg.lower() or
+        "correo" in raw_msg.lower()
+    )
+
+    # 2️⃣ Si extract_fields detectó un email (bueno o malo)
+    if "user_email" in new_data:
+        email = new_data["user_email"].strip()
+
+        # But it's invalid → return error
+        if not _is_valid_email(email):
+
+            # Remove invalid email from collected
+            collected.pop("user_email", None)
+
+            reply = (
+                "⚠️ El correo que escribiste no parece válido. ¿Podrías escribirlo de nuevo?"
+                if lang == "es"
+                else "⚠️ The email you entered doesn’t look valid. Could you write it again?"
+            )
+
+            state["collected"] = collected
+            supabase.table("conversation_state").upsert(
+                {"client_id": client_id, "session_id": session_id, "state": state},
+                on_conflict="client_id,session_id",
+            ).execute()
+
+            return reply
+
+    # 3️⃣ User typed something email-like but extractor did NOT detect (e.g. “aldo.benitez.cort”)
+    elif looks_like_email_attempt and "@" not in raw_msg and "." in raw_msg:
+
+        reply = (
+            "⚠️ Parece que intentaste escribir un correo, pero no es válido. Inténtalo de nuevo."
+            if lang == "es"
+            else "⚠️ It seems like you tried to provide an email, but it’s not valid. Could you write it again?"
+        )
+
+        collected.pop("user_email", None)
+        state["collected"] = collected
+        supabase.table("conversation_state").upsert(
+            {"client_id": client_id, "session_id": session_id, "state": state},
+            on_conflict="client_id,session_id",
+        ).execute()
+
+        return reply
+
+    # 4️⃣ Si el email es válido → guardar normalmente
     for k, v in new_data.items():
         if v:
             collected[k] = v
 
-    
 
     # ============================================================
     # 🔄 Cambiar a pending_confirmation cuando ya tengo todos los datos
@@ -710,6 +964,33 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
     except Exception as e:
         logger.error(f"⚠️ Could not persist updated state: {e}")
 
+
+    # ============================================================
+    # 🟦 Generate real available slots (backend-calculated)
+    # ============================================================
+    try:
+        if (settings and state.get("status") == "collecting" and not collected.get("scheduled_time")):
+            available_slots = _generate_available_slots(settings, client_id)
+
+            # Guardarlos en el estado para que el LLM NO invente horarios
+            state["proposed_slots"] = available_slots
+
+            supabase.table("conversation_state").upsert(
+                {
+                    "client_id": client_id,
+                    "session_id": session_id,
+                    "state": state,
+                },
+                on_conflict="client_id,session_id",
+            ).execute()
+
+            logger.info(f"🟦 Proposed slots generated: {len(available_slots)}")
+    except Exception as e:
+        logger.error(f"❌ Error generating proposed slots: {e}")
+
+
+
+    
     # ============================================================
     # 💬 Generar respuesta LLM si no hay cita confirmada
     # ============================================================
@@ -717,6 +998,36 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
     if not calendar_prompt:
         return "⚠️ No hay configuración activa de calendario para este cliente."
 
+
+    # ============================================================
+    # 🔐 Inject real backend slots into the LLM prompt
+    # ============================================================
+    slot_text = ""
+
+    if state.get("proposed_slots"):
+        try:
+            slot_text = "\n".join(
+                f"- {s['readable']}"
+                for s in state["proposed_slots"]
+            )
+        except Exception:
+            slot_text = "No available slots."
+
+    if slot_text:
+        calendar_prompt += (
+            "\n\nIMPORTANT:\n"
+            "You MUST ONLY offer the following time slots.\n"
+            "Do NOT invent new times or modify them.\n"
+            "Offer them exactly as listed below:\n\n"
+            f"{slot_text}\n\n"
+            "If the user writes something like 'Friday at 9', match ONLY if it exists in the list.\n"
+            "If not, ask the user to pick one of the listed times.\n"
+        )
+
+
+    # ============================================================
+    # 📩 Compose messages for LLM
+    # ============================================================
     messages = [
         {"role": "system", "content": calendar_prompt},
         {"role": "user", "content": message},
@@ -732,7 +1043,7 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
             else "❌ There was a problem with the calendar assistant."
         )
 
-    
+        
 
     # ============================================================
     # 💾 Guardar estado final y respuesta
