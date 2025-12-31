@@ -82,3 +82,23 @@ def get_temperature_for_client(client_id: str) -> float:
     except Exception as e:
         print(f"⚠️ Error obteniendo temperatura personalizada: {e}")
         return 0.7
+
+def get_language_for_client(client_id: str) -> str:
+    """
+    Devuelve el language del cliente ('es', 'en', o 'auto').
+    Si hay error, devuelve 'auto'.
+    """
+    try:
+        res = (
+            supabase.table("client_settings")
+            .select("language")
+            .eq("client_id", client_id)
+            .single()
+            .execute()
+        )
+        data = res.data or {}
+        return (data.get("language") or "auto").lower()
+    except Exception as e:
+        print(f"⚠️ Error obteniendo language del cliente: {e}")
+        return "auto"
+
