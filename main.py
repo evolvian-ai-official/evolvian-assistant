@@ -83,6 +83,13 @@ from api.reactivate_subscription import router as reactivate_subscription_router
 from api.delete_appointment import router as delete_appointment_router
 from api.appointments import router as appointments_router
 
+
+#Whatsapp
+
+from api.modules.whatsapp.webhook import router as whatsapp_webhook_router
+
+
+
 # ======================================
 # 🩹 Auto-install Google libs in dev
 # ======================================
@@ -313,6 +320,7 @@ if google_callback_router: app.include_router(google_callback_router)
 if init_calendar_auth: app.include_router(init_calendar_auth.router)
 if delete_appointment_router: app.include_router(delete_appointment_router)
 if appointments_router: app.include_router(appointments_router)
+if whatsapp_webhook_router: app.include_router(whatsapp_webhook_router)
 
 # ✅ Mount Calendar Router (to expose /calendar/book)
 if calendar_router:
@@ -371,6 +379,15 @@ try:
     print("✅ llm imported successfully (OpenAI Chat Module)")
 except Exception as e:
     print(f"⚠️ llm import failed: {e}")
+
+
+# Mount all WhatsApp routes
+try:
+    from api.modules.whatsapp import router as whatsapp_router
+    app.include_router(whatsapp_router)
+    print("✅ whatsapp_router mounted")
+except Exception as e:
+    print("⚠️ Failed to mount whatsapp_router:", e)
 
 
 # --- Calendar
