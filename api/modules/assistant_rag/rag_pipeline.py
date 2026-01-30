@@ -435,3 +435,27 @@ Core Rules:
     except Exception as e:
         logging.exception(f"❌ Error inesperado procesando pregunta para {client_id}: {e}")
         return "Error: ocurrió un problema inesperado al procesar tu pregunta."
+
+
+# ------------------------------------------------------------------
+# 🔁 Alias de compatibilidad para canales externos (WhatsApp, Email)
+# NO rompe widget ni flujos existentes
+# ------------------------------------------------------------------
+
+async def handle_message(
+    client_id: str,
+    session_id: str,
+    user_message: str,
+    channel: str = "chat"
+) -> str:
+    result = ask_question(
+        messages=user_message,
+        client_id=client_id,
+        session_id=session_id
+    )
+
+    # 🛡️ Blindaje total: si es coroutine, la resolvemos
+    if hasattr(result, "__await__"):
+        result = await result
+
+    return str(result)

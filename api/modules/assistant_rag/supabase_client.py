@@ -326,6 +326,32 @@ def get_whatsapp_credentials(client_id: str) -> dict:
         print(f"❌ Error en get_whatsapp_credentials: {e}")
         raise
 
+def get_channel_by_wa_phone_id(wa_phone_id: str):
+    """
+    Devuelve el canal WhatsApp completo usando phone_number_id (Meta).
+    NO rompe nada existente.
+    """
+    try:
+        print(f"🔍 Buscando canal WhatsApp por wa_phone_id={wa_phone_id}")
+
+        res = supabase.table("channels") \
+            .select("*") \
+            .eq("type", "whatsapp") \
+            .eq("wa_phone_id", wa_phone_id) \
+            .maybe_single() \
+            .execute()
+
+        if not res or not res.data:
+            print("⚠️ No channel found for wa_phone_id")
+            return None
+
+        print("✅ Canal WhatsApp encontrado")
+        return res.data
+
+    except Exception as e:
+        print(f"❌ Error en get_channel_by_wa_phone_id: {e}")
+        return None
+
 
 async def get_client_whatsapp_config(client_id: str):
     try:
