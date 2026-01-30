@@ -352,6 +352,52 @@ def get_channel_by_wa_phone_id(wa_phone_id: str):
         print(f"❌ Error en get_channel_by_wa_phone_id: {e}")
         return None
 
+# -------------------------------------------------------------------
+# WhatsApp inbound deduplication
+# -------------------------------------------------------------------
+
+def is_duplicate_wa_message(wa_message_id: str) -> bool:
+    """
+    Returns True if this WhatsApp message ID was already processed.
+    """
+    try:
+        res = (
+            supabase
+            .table("whatsapp_inbound_dedupe")
+            .select("id")
+            .eq("wa_message_id", wa_message_id)
+            .limit(1)
+            .execute()
+        )
+
+        return bool(res.data)
+
+    except Exception as e:
+        # ⚠️ Fail-safe: if DB fails, assume duplicate
+        # This prevents accidental spam
+        print("❌ Dedup check failed:", str(e))
+        return True
+
+
+def register_wa_message(
+    wa_message_id: str,
+    client_id: str,
+    from_number: str
+):
+    """
+    Registers a WhatsApp message ID to prevent duplicate processing.
+    """
+    try:
+        supabase.table("whatsapp_inbound_dedupe").insert({
+            "wa_message_id": wa_message_id,
+            "client_id": client_id,
+            "from_number": from_number,
+        }).execute()
+
+    except Exception as e:
+        # ⚠️ No raise → avoid retries / crashes
+        print("❌ Failed to register WA message:", str(e))
+
 
 async def get_client_whatsapp_config(client_id: str):
     try:
