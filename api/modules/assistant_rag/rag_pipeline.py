@@ -9,6 +9,8 @@ import requests
 from tempfile import NamedTemporaryFile
 from typing import List, Dict, Optional, Union
 import uuid
+from api.config.config import DEFAULT_CHAT_MODEL
+
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -33,8 +35,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 FALLBACK_BY_LANG = {
-    "es": "No tengo información para responder esta pregunta.",
-    "en": "I do not have information for this question.",
+    "es": "No tengo información para responder esta pregunta.Si tienes una duda relacionada con este negocio y necesitas más detalle, puedes contactarnos directamente. Mientras tanto, con gusto puedo ayudarte con cualquier otra pregunta.",
+    "en": "I don’t have information to answer this question. If you have a question related to this business and need more details, you can contact us directly. In the meantime, I’m happy to help with any other question.",
 }
 
 
@@ -79,28 +81,61 @@ def fetch_signed_documents(client_id: str) -> List[str]:
 
 def _guess_lang_es_en(text: str) -> str:
     """
-    Heurística rápida para ES/EN (mejor que langdetect en inputs cortos).
+    Heurística rápida y robusta para detectar ES / EN en mensajes cortos.
+    Optimizada para chat real (sin acentos, sin signos).
     """
     t = (text or "").strip().lower()
     if not t:
         return "en"
 
-    # señales fuertes ES
+    # 1️⃣ Señales fuertes de español
     if any(c in t for c in "¿¡ñáéíóú"):
         return "es"
 
-    # stopwords/indicadores ES típicos (incluye variantes)
+    # 2️⃣ Palabras funcionales MUY comunes en español (chat real)
     es_words = {
-        "hola", "buenas", "donde", "dónde", "como", "cómo", "cuanto", "cuánto",
-        "precio", "planes", "informacion", "información", "inscribo", "inscribir",
-        "registro", "registrar", "ayuda", "soporte", "quiero", "necesito", "horario",
-        "cita", "citas", "disponibilidad"
+        "que", "es", "como", "para", "por", "porque", "cuando", "donde",
+        "cual", "cuanto", "cuantos",
+        "hola", "buenas", "dame", "quiero", "necesito",
+        "informacion", "información", "info",
+        "plan", "planes", "precio", "coste", "costo",
+        "ayuda", "soporte", "incluye", "incluyen",
+        "funciona", "servicio"
     }
-    tokens = set(t.replace("?", "").replace("¿", "").replace("!", "").replace("¡", "").split())
+
+    # limpieza básica
+    tokens = set(
+        t.replace("?", "")
+         .replace("¿", "")
+         .replace("!", "")
+         .replace("¡", "")
+         .split()
+    )
+
     if tokens.intersection(es_words):
         return "es"
 
+    # 3️⃣ Default conservador
     return "en"
+
+
+def _filter_conversation_by_lang(conversation: str, lang: str) -> str:
+    """
+    Filtra el historial para conservar solo las líneas
+    que coinciden con el idioma del turno actual.
+    """
+    if not conversation:
+        return ""
+
+    lines = conversation.split("\n")
+    filtered = []
+
+    for line in lines:
+        if _guess_lang_es_en(line) == lang:
+            filtered.append(line)
+
+    return "\n".join(filtered)
+
 
 
 def _safe_langdetect(text: str) -> Optional[str]:
@@ -113,27 +148,36 @@ def _safe_langdetect(text: str) -> Optional[str]:
 
 def _resolve_user_language(client_id: str, user_text: str) -> str:
     """
+    Decide el idioma del turno según el MENSAJE del usuario.
+    El idioma del cliente actúa solo como fallback.
+
     Prioridad:
-    1) client_settings.language (si viene 'es' o 'en' lo respetamos)
-    2) heurística ES/EN
-    3) langdetect (opcional)
+    1) Heurística ES/EN sobre el mensaje
+    2) langdetect (opcional)
+    3) client_settings.language
     4) fallback 'en'
     """
+
+    # 1️⃣ Heurística rápida (inputs cortos, chats)
+    heuristic = _guess_lang_es_en(user_text)
+    if heuristic in ("es", "en"):
+        return heuristic
+
+    # 2️⃣ Detección probabilística (backup)
+    detected = _safe_langdetect(user_text)
+    if detected in ("es", "en"):
+        return detected
+
+    # 3️⃣ Idioma configurado del cliente (fallback)
     client_lang = (get_language_for_client(client_id) or "").strip().lower()
     if client_lang.startswith("es"):
         return "es"
     if client_lang.startswith("en"):
         return "en"
 
-    heuristic = _guess_lang_es_en(user_text)
-    if heuristic in ("es", "en"):
-        return heuristic
-
-    detected = _safe_langdetect(user_text)
-    if detected in ("es", "en"):
-        return detected
-
+    # 4️⃣ Último fallback
     return "en"
+
 
 
 def _detect_corpus_language(chunks: List) -> Optional[str]:
@@ -149,54 +193,86 @@ def _detect_corpus_language(chunks: List) -> Optional[str]:
 
 def _translate_text(text: str, target_lang: str) -> str:
     """
-    Traduce SOLO para retrieval. No tocar idioma de salida final.
-    target_lang: 'es' | 'en' | etc.
+    Traduce SOLO para retrieval.
+    ❌ No afecta idioma de salida final
+    ❌ No retraduce si ya está en el idioma correcto
+    ✅ Determinista y controlado
     """
     if not text.strip():
         return text
 
-    llm_tr = ChatOpenAI(temperature=0)
-    target_name = "Spanish" if target_lang == "es" else "English" if target_lang == "en" else target_lang
+    # Detectar idioma del texto (heurístico, rápido y suficiente)
+    detected_lang = _guess_lang_es_en(text)
+    if detected_lang == target_lang:
+        return text  # 🚫 No retraducir
 
-    sys = SystemMessage(content="You are a translation engine. Follow instructions exactly.")
-    hum = HumanMessage(content=f"Translate the text to {target_name}. Return ONLY the translated text.\n\nText:\n{text}")
-    resp = llm_tr.invoke([sys, hum])
-    out = (resp.content or "").strip()
-    return out or text
+    if target_lang not in ("es", "en"):
+        return text  # 🚫 No traducir a idiomas no soportados
+
+    llm_tr = ChatOpenAI(
+        model="gpt-4o-mini",  # modelo estable y barato
+        temperature=0
+    )
+
+    target_name = "Spanish" if target_lang == "es" else "English"
+
+    resp = llm_tr.invoke([
+        SystemMessage(
+            content="You are a translation engine. Return ONLY the translated text."
+        ),
+        HumanMessage(
+            content=f"Translate the following text to {target_name}:\n\n{text}"
+        )
+    ])
+
+    translated = (resp.content or "").strip()
+    return translated or text
 
 
-def _rewrite_for_retrieval(conversation_memory: str, retrieval_question: str, target_lang: str) -> str:
+
+def _rewrite_for_retrieval(conversation_memory: str, retrieval_question: str) -> str:
     """
-    Reescritura SOLO para retrieval. Puede ser en el idioma del corpus si así lo pasas.
+    Reescribe la pregunta SOLO para mejorar retrieval.
+    ❌ No detecta idioma
+    ❌ No traduce
+    ❌ No decide lenguaje
+    ✅ Usa exactamente el idioma del texto recibido
     """
-    llm_rw = ChatOpenAI(temperature=0)
+    if not retrieval_question or not retrieval_question.strip():
+        return retrieval_question
 
-    # Prompt en el mismo idioma del retrieval_question (mejor para embedding / búsqueda)
-    if target_lang == "es":
-        prompt = f"""Reescribe la pregunta del usuario como una pregunta clara y autocontenida, usando solo el contexto de la conversación.
-Si no estás seguro, devuélvela sin cambios.
+    # Si no hay conversación previa, no reescribimos
+    if not conversation_memory or not conversation_memory.strip():
+        return retrieval_question
 
-Conversación:
-{conversation_memory}
+    llm_rw = ChatOpenAI(
+        model="gpt-4o-mini",  # modelo estable y determinista
+        temperature=0
+    )
 
-Pregunta:
-{retrieval_question}
-"""
-    else:
-        prompt = f"""Rewrite the user's question into a clear, standalone version using only the context of this conversation.
-If unsure, return the question unchanged.
+    prompt = f"""
+Rewrite the user's question into a clear, standalone question.
+Use ONLY the information explicitly present in the conversation.
+Do NOT add assumptions or new facts.
+If the question is already clear, return it unchanged.
 
 Conversation:
 {conversation_memory}
 
-User question:
+Question:
 {retrieval_question}
-"""
-    sys = SystemMessage(content="You rewrite questions for retrieval. Do not add new facts.")
-    hum = HumanMessage(content=prompt)
-    resp = llm_rw.invoke([sys, hum])
-    out = (resp.content or "").strip()
-    return out or retrieval_question
+""".strip()
+
+    resp = llm_rw.invoke([
+        SystemMessage(
+            content="You rewrite questions for retrieval. Do not add new facts."
+        ),
+        HumanMessage(content=prompt)
+    ])
+
+    rewritten = (resp.content or "").strip()
+    return rewritten or retrieval_question
+
 
 
 def ask_question(
@@ -215,39 +291,56 @@ def ask_question(
         # 🔧 Normalizar mensajes
         if isinstance(messages, list):
             norm_messages = [
-                {"role": (m.get("role", "user") or "user").strip(),
-                 "content": (m.get("content") or "").strip()}
+                {
+                    "role": (m.get("role", "user") or "user").strip(),
+                    "content": (m.get("content") or "").strip()
+                }
                 for m in messages if m.get("content")
             ]
         else:
             norm_messages = [{"role": "user", "content": str(messages).strip()}]
 
-        last_user_msg = next((m for m in reversed(norm_messages) if m["role"] == "user"), None)
+        last_user_msg = next(
+            (m for m in reversed(norm_messages) if m["role"] == "user"),
+            None
+        )
         question = (last_user_msg["content"] if last_user_msg else "").strip()
         if not question:
-            return "No se recibió ningún mensaje válido."
+            return ("No logré entender tu mensaje ¿Podrías intentarlo de nuevo?"
+            if turn_lang == "es"
+            else "I couldn’t understand your message. Could you please try again?"
+        )
 
         # ✅ Guardar original SIEMPRE
         original_question = question
 
-        convo_tail = norm_messages[-10:]
-        conversation_memory = "\n".join(
-            f"{'User' if m['role']=='user' else 'Assistant'}: {m.get('content','').strip()}"
-            for m in convo_tail
-        )
-
-        user_lang = _resolve_user_language(client_id, original_question)
-        fallback = FALLBACK_BY_LANG.get(user_lang, FALLBACK_BY_LANG["en"])
+        # 🔒 Idioma del turno (DECISIÓN ÚNICA)
+        turn_lang = _resolve_user_language(client_id, original_question)
+        fallback = FALLBACK_BY_LANG.get(turn_lang, FALLBACK_BY_LANG["en"])
 
         logging.info(f"🧩 Pregunta procesada: {original_question}")
-        logging.info(f"🈶 Idioma usuario (final): {user_lang}")
+        logging.info(f"🈶 Idioma del turno: {turn_lang}")
 
-        # 👋 Saludo rápido
-        greetings_es = {"hola", "buenas", "hey"}
-        greetings_en = {"hello", "hi", "hey"}
-        if original_question.lower() in greetings_es or original_question.lower() in greetings_en:
+        # 🧹 Construir y filtrar historial por idioma
+        convo_tail = norm_messages[-10:]
+        raw_conversation_memory = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in convo_tail
+        )
+        conversation_memory = _filter_conversation_by_lang(
+            raw_conversation_memory,
+            turn_lang
+        )
+
+        # 👋 Saludo rápido (controlado por idioma del turno)
+        greetings = {"hola", "buenas", "hello", "hi", "hey"}
+        if original_question.lower() in greetings:
+            answer = (
+                "¡Hola! ¿En qué puedo ayudarte hoy?"
+                if turn_lang == "es"
+                else "Hi! How can I help you today?"
+            )
             save_history(client_id, session_id, "user", original_question, channel="chat")
-            answer = "Hi! How can I help you today?" if original_question.lower() in greetings_en else "¡Hola! ¿En qué puedo ayudarte hoy?"
             save_history(client_id, session_id, "assistant", answer, channel="chat")
             return answer
 
@@ -256,27 +349,27 @@ def ask_question(
         # =====================================================
         if disable_rag:
             logging.info("🧠 RAG disabled — using direct mode.")
-            try:
-                llm_direct = ChatOpenAI(temperature=temperature)
+            llm_direct = ChatOpenAI(temperature=temperature)
 
-                system_direct = SystemMessage(content=f"""
+            system_direct = SystemMessage(
+                content=f"""
 {prompt.strip() if prompt else ''}
 
 Rules:
-- Respond in {"Spanish" if user_lang=="es" else "English"}.
+- Respond in {"Spanish" if turn_lang == "es" else "English"}.
 - Be concise, professional, and helpful.
-""".strip())
+""".strip()
+            )
 
-                human_direct = HumanMessage(content=original_question)
-                resp = llm_direct.invoke([system_direct, human_direct])
-                answer = (resp.content or "").strip() or fallback
+            resp = llm_direct.invoke([
+                system_direct,
+                HumanMessage(content=original_question)
+            ])
+            answer = (resp.content or "").strip() or fallback
 
-                save_history(client_id, session_id, "user", original_question, channel="chat")
-                save_history(client_id, session_id, "assistant", answer, channel="chat")
-                return answer
-            except Exception as e:
-                logging.error(f"⚠️ Error executing direct chat mode: {e}")
-                # fallback a RAG normal si falla
+            save_history(client_id, session_id, "user", original_question, channel="chat")
+            save_history(client_id, session_id, "assistant", answer, channel="chat")
+            return answer
 
         # =====================================================
         # 📂 Documentos
@@ -284,11 +377,14 @@ Rules:
         logging.info(f"📂 Buscando documentos para cliente {client_id}...")
         signed_urls = fetch_signed_documents(client_id)
         if not signed_urls:
-            msg = "No se encontraron documentos asociados a este asistente." if user_lang == "es" else "No documents are associated with this assistant."
-            return msg
+            return (
+                "En este momento no puedo responder preguntas. Por favor, intenta más tarde."
+                if turn_lang == "es"
+                else "I can’t answer questions at the moment. Please try again later."
+            )
 
         # 📑 Descargar y trocear
-        all_chunks, used_docs = [], []
+        all_chunks = []
         for url in signed_urls:
             try:
                 filename = url.split("/")[-1].split("?")[0]
@@ -309,29 +405,33 @@ Rules:
                         ch.metadata["tenant_id"] = client_id
 
                     all_chunks.extend(chunks)
-                    used_docs.append(filename)
 
                 logging.info(f"✂️ {filename} → {len(chunks)} chunks")
             except Exception as e:
                 logging.warning(f"❌ Error procesando {url}: {e}")
 
         if not all_chunks:
-            return "No hay contenido disponible para generar una respuesta." if user_lang == "es" else "No content is available to generate an answer."
+            return (
+                "En este momento no puedo responder preguntas. Por favor, intenta más tarde."
+                if turn_lang == "es"
+                else "I can’t answer questions at the moment. Please try again later."
+            )
 
         # =====================================================
-        # 🈶 Idioma del corpus (solo para retrieval)
+        # 🈶 Idioma del corpus (SOLO para retrieval)
         # =====================================================
         corpus_lang = _detect_corpus_language(all_chunks)
-        logging.info(f"🈶 Idioma corpus detectado: {corpus_lang}")
+        logging.info(f"🈶 Idioma del corpus: {corpus_lang}")
 
-        # ✅ SOLO para retrieval: traducir si difiere
         retrieval_question = original_question
-        if corpus_lang and corpus_lang in ("es", "en") and corpus_lang != user_lang:
+        if corpus_lang in ("es", "en") and corpus_lang != turn_lang:
             retrieval_question = _translate_text(original_question, corpus_lang)
-            logging.info(f"🌍 Retrieval question traducida a {corpus_lang}: {retrieval_question}")
 
-        # ✏️ Reescritura SOLO para retrieval
-        rewritten_question = _rewrite_for_retrieval(conversation_memory, retrieval_question, corpus_lang or user_lang)
+        # ✏️ Rewrite SIEMPRE en idioma del usuario
+        rewritten_question = _rewrite_for_retrieval(
+            conversation_memory,
+            retrieval_question
+        )
 
         # =====================================================
         # 🔍 Recuperación
@@ -348,7 +448,10 @@ Rules:
             collection_name=client_id
         )
 
-        retriever = vectordb.as_retriever(search_type="mmr", search_kwargs={"k": 20, "lambda_mult": 0.5})
+        retriever = vectordb.as_retriever(
+            search_type="mmr",
+            search_kwargs={"k": 20, "lambda_mult": 0.5}
+        )
         retrieved_docs = retriever.invoke(rewritten_question)
 
         if not retrieved_docs:
@@ -362,70 +465,76 @@ Rules:
         MAX_CHARS = 9000
         context_text, total = "", 0
         for d in retrieved_docs:
-            t = (d.page_content or "").strip()
-            if not t:
+            text = (d.page_content or "").strip()
+            if not text:
                 continue
-            length = min(len(t), MAX_CHARS - total)
-            context_text += t[:length] + "\n\n"
-            total += length
+            remaining = MAX_CHARS - total
+            context_text += text[:remaining] + "\n\n"
+            total += len(text)
             if total >= MAX_CHARS:
                 break
 
         sources = list({d.metadata.get("source", "unknown") for d in retrieved_docs})
 
         # =====================================================
-        # 🧱 System Prompt REAL (SystemMessage)
+        # 🧱 System Prompt FINAL
         # =====================================================
-        language_rule = "Responde SIEMPRE en español." if user_lang == "es" else "Always respond in English."
+        language_rule = (
+            "Responde SIEMPRE en español."
+            if turn_lang == "es"
+            else "Always respond in English."
+        )
 
         system_prompt = f"""
-You are Evolvian, a professional AI assistant trained ONLY on your client's uploaded documents.
+You are a helpful AI assistant representative of this business that answers questions ONLY with the information provided by the business.
 
 {prompt.strip() if prompt else ''}
 
 Core Rules:
-- You MUST use ONLY the information provided in the context.
-- If the answer is not clearly found there, reply exactly: "{fallback}"
-- Never use external knowledge or general facts.
+- You MUST use ONLY the information provided.
+- If the answer is not clearly found, reply exactly: "{fallback}"
+- Never use external knowledge.
 - {language_rule}
-- Never mention the words "context" or "document" in your reply.
+- Never mention the words "context" or "document".
 """.strip()
 
-        # Mensaje humano con conversación+contexto+pregunta ORIGINAL
         human_prompt = f"""
 <conversation>
 {conversation_memory}
 </conversation>
 
-<context>
+<information>
 {context_text}
-</context>
+</information>
 
 <question>
 {original_question}
 </question>
 """.strip()
 
-        llm = ChatOpenAI(temperature=temperature)
-        raw = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)])
+        
+        llm = ChatOpenAI(
+            model=DEFAULT_CHAT_MODEL,
+            temperature=temperature
+        )
+        raw = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_prompt)
+        ])
         answer = (raw.content or "").strip() or fallback
 
         # =====================================================
-        # 🛡️ Anti-hallucination (con fallback por idioma)
+        # 🛡️ Anti-hallucination (solo si idioma coincide)
         # =====================================================
-        # Heurística simple: si no hay overlap mínimo con el contexto, cae a fallback.
-        # (Puedes mejorar luego con verificación por citas o similarity scoring)
-        context_keywords = [w.lower() for w in context_text.split()[:80]]
-        if (
-            answer != fallback
-            and not any(k in answer.lower() for k in context_keywords)
-        ):
-            answer = fallback
+        if corpus_lang == turn_lang:
+            keywords = [w.lower() for w in context_text.split()[:80]]
+            if answer != fallback and not any(k in answer.lower() for k in keywords):
+                answer = fallback
 
         if show_sources and answer != fallback and sources:
             answer += "\n\nSources: " + ", ".join(sources)
 
-        # 💾 Guardar historial (SIEMPRE con original_question)
+        # 💾 Guardar historial
         save_history(client_id, session_id, "user", original_question, channel="chat")
         save_history(client_id, session_id, "assistant", answer, channel="chat")
 
@@ -434,7 +543,11 @@ Core Rules:
 
     except Exception as e:
         logging.exception(f"❌ Error inesperado procesando pregunta para {client_id}: {e}")
-        return "Error: ocurrió un problema inesperado al procesar tu pregunta."
+        return (
+            "Ups, ocurrió un problema inesperado. Por favor intenta de nuevo."
+            if turn_lang == "es"
+            else "Oops, something went wrong. Please try again."
+        )
 
 
 # ------------------------------------------------------------------
