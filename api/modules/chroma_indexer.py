@@ -6,6 +6,8 @@ from typing import List, Optional
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain.schema import Document
+from api.utils.paths import get_base_data_path
+
 
 # ✅ Factoría centralizada para crear un Chroma con OpenAI Embeddings
 def get_chroma_vectorstore(
@@ -29,10 +31,14 @@ def get_chroma_vectorstore(
     persist_dir = None
     collection_name = "default"
 
+
+
     if client_id:
-        persist_dir = f"./chroma_{client_id}"
+        base_path = get_base_data_path()
+        persist_dir = os.path.join(base_path, f"chroma_{client_id}")
         os.makedirs(persist_dir, exist_ok=True)
         collection_name = client_id
+
 
     vectordb = Chroma.from_documents(
         documents=chunks,
