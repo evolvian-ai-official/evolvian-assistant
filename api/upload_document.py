@@ -1,105 +1,147 @@
 # api/upload_document.py
 
-import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-import requests
 import logging
 import re
 import unicodedata
+import requests
+
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+
 from api.config.config import supabase
 from api.modules.document_processor import process_file
-from api.utils.usage_limiter import check_and_increment_usage  # ✅ corregido
+from api.utils.usage_limiter import check_and_increment_usage
 
 router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
 
-# 🧼 Limpia nombres de archivo
-def sanitize_filename(filename: str) -> str:
-    name = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode()
-    name = re.sub(r'[^\w.\-]', '_', name)
-    return name
+logging.basicConfig(level=logging.INFO)
 
+
+# --------------------------------------------------
+# 🧼 Sanitizar nombre de archivo
+# --------------------------------------------------
+def sanitize_filename(filename: str) -> str:
+    name = unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode()
+    name = re.sub(r"[^\w.\-]", "_", name)
+    return name.lower()
+
+
+# --------------------------------------------------
+# 📤 Upload + metadata + index
+# --------------------------------------------------
 @router.post("/upload_document")
 async def upload_document(
     file: UploadFile = File(...),
     client_id: str = Form(...)
 ):
     try:
-        # 🔍 Obtener configuración del cliente + max_documents desde plans
-        settings_response = supabase.table("client_settings") \
-            .select("client_id, plan_id, plans(max_documents)") \
-            .eq("client_id", client_id) \
-            .single() \
+        # --------------------------------------------------
+        # 1️⃣ Validar cliente + plan
+        # --------------------------------------------------
+        settings_res = (
+            supabase
+            .table("client_settings")
+            .select("client_id, plan_id, plans(max_documents)")
+            .eq("client_id", client_id)
+            .single()
             .execute()
+        )
 
-        settings = settings_response.data
-
+        settings = settings_res.data
         if not settings:
             raise HTTPException(status_code=404, detail="client_settings_not_found")
 
-        max_documents = settings.get("plans", {}).get("max_documents", 1)
+        max_documents = settings.get("plans", {}).get("max_documents") or 0
 
-        # 📦 Contar archivos actuales en Supabase Storage para este cliente
-        existing_files = supabase.storage.from_(BUCKET_NAME).list(path=client_id) or []
-        file_count = len(existing_files)
+        # --------------------------------------------------
+        # 2️⃣ Contar documentos activos (metadata)
+        # --------------------------------------------------
+        meta_res = (
+            supabase
+            .table("document_metadata")
+            .select("id", count="exact")
+            .eq("client_id", client_id)
+            .eq("is_active", True)
+            .execute()
+        )
 
-        if file_count >= max_documents:
-            raise HTTPException(
-                status_code=403,
-                detail="limit_reached"
-            )
+        current_docs = meta_res.count or 0
 
-        # 📤 Subir archivo
-        file_content = await file.read()
+        if max_documents and current_docs >= max_documents:
+            raise HTTPException(status_code=403, detail="document_limit_reached")
+
+        # --------------------------------------------------
+        # 3️⃣ Subir archivo a Supabase Storage
+        # --------------------------------------------------
+        raw_content = await file.read()
         filename = sanitize_filename(file.filename)
         storage_path = f"{client_id}/{filename}"
 
         supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-        upload_url = f"{supabase_url}/storage/v1/object/{BUCKET_NAME}/{storage_path}?upsert=true"
+        upload_url = (
+            f"{supabase_url}/storage/v1/object/"
+            f"{BUCKET_NAME}/{storage_path}?upsert=true"
+        )
+
         headers = {
-            "Authorization": f"Bearer {supabase_key}",
+            "Authorization": f"Bearer {service_key}",
             "Content-Type": file.content_type or "application/octet-stream"
         }
 
-        logging.info("📤 Subiendo archivo a Supabase Storage...")
-        logging.info(f"📦 Nombre de archivo: {filename}")
-        logging.info(f"📁 Ruta en bucket: {storage_path}")
-        logging.info(f"🔗 URL de carga: {upload_url}")
+        logging.info(f"📤 Uploading file → {storage_path}")
 
-        upload_response = requests.put(
-            upload_url,
-            headers=headers,
-            data=file_content
-        )
+        res = requests.put(upload_url, headers=headers, data=raw_content)
+        if res.status_code >= 400:
+            logging.error(res.text)
+            raise HTTPException(status_code=500, detail="storage_upload_failed")
 
-        logging.info(f"📨 Respuesta del upload: {upload_response.status_code} - {upload_response.text}")
+        # --------------------------------------------------
+        # 4️⃣ Guardar metadata (FUENTE DE VERDAD)
+        # --------------------------------------------------
+        supabase.table("document_metadata").insert({
+            "client_id": client_id,
+            "storage_path": storage_path,
+            "file_name": filename,
+            "mime_type": file.content_type,
+            "is_active": True
+        }).execute()
 
-        if upload_response.status_code >= 400:
-            raise HTTPException(
-                status_code=upload_response.status_code,
-                detail="upload_failed"
-            )
-
-        # 🔐 Generar URL firmada
-        signed_url_response = supabase.storage.from_(BUCKET_NAME).create_signed_url(
-            path=storage_path,
+        # --------------------------------------------------
+        # 5️⃣ Generar signed URL
+        # --------------------------------------------------
+        signed = supabase.storage.from_(BUCKET_NAME).create_signed_url(
+            storage_path,
             expires_in=3600
         )
-        signed_url = signed_url_response.get("signedURL")
+
+        signed_url = signed.get("signedURL")
         if not signed_url:
-            raise HTTPException(status_code=500, detail="signed_url_error")
+            raise HTTPException(status_code=500, detail="signed_url_failed")
 
-        # 🧠 Procesar documento
-        logging.info("🧠 Procesando documento...")
-        chunks = process_file(file_url=signed_url, client_id=client_id)
-        logging.info(f"✅ Documento procesado correctamente para {client_id}: {filename}")
+        # --------------------------------------------------
+        # 6️⃣ Procesar documento (indexar)
+        # --------------------------------------------------
+        logging.info(f"🧠 Indexing document → {storage_path}")
 
-        # ✅ Registrar en client_usage (+1 documento)
+        chunks = process_file(
+            file_url=signed_url,
+            client_id=client_id
+        )
+
+        # --------------------------------------------------
+        # 7️⃣ Marcar como indexado
+        # --------------------------------------------------
+        supabase.table("document_metadata") \
+            .update({"indexed_at": "now()"}) \
+            .eq("storage_path", storage_path) \
+            .execute()
+
+        # --------------------------------------------------
+        # 8️⃣ Actualizar uso
+        # --------------------------------------------------
         check_and_increment_usage(
             client_id=client_id,
             usage_type="documents_uploaded",
@@ -108,13 +150,15 @@ async def upload_document(
 
         return {
             "success": True,
-            "message": "Documento subido y procesado correctamente",
-            "chunks": len(chunks),
-            "storage_path": storage_path
+            "message": "Document uploaded and indexed successfully",
+            "file_name": filename,
+            "storage_path": storage_path,
+            "chunks": len(chunks)
         }
 
     except HTTPException:
         raise
+
     except Exception as e:
-        logging.exception("❌ Error inesperado en /upload_document")
+        logging.exception("❌ Unexpected error in /upload_document")
         raise HTTPException(status_code=500, detail=str(e))
