@@ -106,6 +106,6 @@ def reindex_client(client_id: str):
 # --------------------------------------------------
 if __name__ == "__main__":
     # ⚠️ Ejecuta SOLO un cliente primero
-    TEST_CLIENT_ID = "ce09c2dc-fa5f-48d7-82b7-95a09213c2d9"
+    TEST_CLIENT_ID = "2"
 
     reindex_client(TEST_CLIENT_ID)
