@@ -268,11 +268,12 @@ def ask_question(
             (m for m in reversed(norm_messages) if m["role"] == "user"),
             None
         )
+
         question = (last_user_msg["content"] if last_user_msg else "").strip()
         if not question:
-            return ("No logré entender tu mensaje ¿Podrías intentarlo de nuevo?"
+            return "No logré entender tu mensaje ¿Podrías intentarlo de nuevo?"
             
-        )
+        
 
 
         # ✅ Guardar original SIEMPRE
@@ -340,7 +341,9 @@ Rules:
         # =====================================================
         logging.info(f"📂 Cargando vectorstore para cliente {client_id}...")
 
-        client_data_path = os.path.abspath(f"./chroma_{client_id}")
+        base_path = get_base_data_path()
+        client_data_path = os.path.join(base_path, f"chroma_{client_id}")
+
         logging.info(f"📂 Vectorstore path (aligned with indexer): {client_data_path}")
 
         # 🛡️ Si no existe vectorstore, NO hacemos RAG
