@@ -60,15 +60,22 @@ def _guess_lang_es_en(text: str) -> str:
     if any(c in t for c in "¿¡ñáéíóú"):
         return "es"
 
+    # 0️⃣ Señales claras de inglés
+    if any(t.startswith(w + " ") or f" {w} " in t for w in [
+        "which", "what", "how", "why", "where", "when",
+        "is ", "are ", "does ", "do ", "can "
+    ]):
+        return "en"
+
     # 2️⃣ Palabras funcionales MUY comunes en español (chat real)
     es_words = {
         "que", "es", "como", "para", "por", "porque", "cuando", "donde",
         "cual", "cuanto", "cuantos",
         "hola", "buenas", "dame", "quiero", "necesito",
-        "informacion", "información", "info",
-        "plan", "planes", "precio", "coste", "costo",
-        "ayuda", "soporte", "incluye", "incluyen",
-        "funciona", "servicio"
+        "informacion", "información",
+        "precio", "coste", "costo",
+        "ayuda", "incluye", "incluyen",
+        "funciona"
     }
 
     # limpieza básica
@@ -264,7 +271,7 @@ def ask_question(
         question = (last_user_msg["content"] if last_user_msg else "").strip()
         if not question:
             return ("No logré entender tu mensaje ¿Podrías intentarlo de nuevo?"
-            if turn_lang == "es"
+            if fallback_lang == "es"
             else "I couldn’t understand your message. Could you please try again?"
         )
 
