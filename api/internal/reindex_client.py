@@ -4,7 +4,8 @@ import logging
 
 from api.config.config import supabase
 from api.modules.document_processor import process_file
-from api.modules.assistant_rag.supabase_client import get_signed_url
+from api.modules.storage_utils import get_signed_url
+
 
 # --------------------------------------------------
 # Configuración logging
@@ -106,6 +107,6 @@ def reindex_client(client_id: str):
 # --------------------------------------------------
 if __name__ == "__main__":
     # ⚠️ Ejecuta SOLO un cliente primero
-    TEST_CLIENT_ID = "2"
+    TEST_CLIENT_ID = "ce09c2dc-fa5f-48d7-82b7-95a09213c2d9"
 
     reindex_client(TEST_CLIENT_ID)
