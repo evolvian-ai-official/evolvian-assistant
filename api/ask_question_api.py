@@ -26,20 +26,30 @@ def is_availability_request(text: str) -> bool:
 
 
 @router.post("/ask")
-async def ask(question: str = Form(...), client_id: str = Form(...), session_id: str = Form(None)):
+async def ask(
+    question: str = Form(...),
+    client_id: str = Form(...),
+    session_id: str = Form(None),
+):
     """
-    Endpoint principal de conversación.
-    Incluye:
-      - Límite de mensajes interno (para Evolvian Support)
-      - Detección de disponibilidad y agendamiento
-      - Ejecución del pipeline RAG con memoria conversacional
-    """
-    try:
-        print(f"❓ Pregunta recibida: '{question}' para cliente: {client_id}")
+    Endpoint principal de conversación (PRODUCCIÓN).
 
-        # 🔐 Lógica especial para el asistente interno de Evolvian
+    Responsabilidades:
+    - Validar límites (solo evolvian-internal)
+    - Detectar flujos especiales (calendar / appointment)
+    - Recuperar contexto conversacional
+    - Delegar TODA la lógica de RAG + historial a ask_question()
+    """
+
+    try:
+        logging.info(f"❓ Pregunta recibida | client={client_id} | text='{question}'")
+
+        # =====================================================
+        # 🔐 Límite diario SOLO para asistente interno Evolvian
+        # =====================================================
         if client_id == "evolvian-internal":
             today = datetime.utcnow().date().isoformat()
+
             usage_res = (
                 supabase.table("chat_usage")
                 .select("count")
@@ -50,10 +60,10 @@ async def ask(question: str = Form(...), client_id: str = Form(...), session_id:
             )
 
             if usage_res.error:
-                print(f"⚠️ Error al consultar uso interno: {usage_res.error}")
+                logging.error(f"❌ Error validando uso interno: {usage_res.error}")
                 return JSONResponse(
                     status_code=500,
-                    content={"error": "Error al validar el uso del asistente."}
+                    content={"error": "Error al validar el uso del asistente."},
                 )
 
             messages_today = usage_res.data.get("count", 0) if usage_res.data else 0
@@ -61,69 +71,88 @@ async def ask(question: str = Form(...), client_id: str = Form(...), session_id:
             if messages_today >= MAX_DAILY_MESSAGES_INTERNAL:
                 return JSONResponse(
                     status_code=429,
-                    content={"error": "Límite diario de mensajes alcanzado para el asistente de soporte interno."}
+                    content={
+                        "error": "Límite diario de mensajes alcanzado para el asistente interno."
+                    },
                 )
 
+            # Incrementar contador diario
             if usage_res.data:
-                supabase.table("chat_usage").update({
-                    "count": messages_today + 1
-                }).eq("client_id", client_id).eq("date", today).execute()
+                supabase.table("chat_usage").update(
+                    {"count": messages_today + 1}
+                ).eq("client_id", client_id).eq("date", today).execute()
             else:
-                supabase.table("chat_usage").insert({
-                    "client_id": client_id,
-                    "date": today,
-                    "count": 1
-                }).execute()
+                supabase.table("chat_usage").insert(
+                    {"client_id": client_id, "date": today, "count": 1}
+                ).execute()
 
-        # 🧠 Detección de solicitudes de disponibilidad
+        # =====================================================
+        # 🧠 Flujo especial: disponibilidad de calendario
+        # (NO pasa por RAG)
+        # =====================================================
         if is_availability_request(question):
+            session_id = session_id or str(uuid.uuid4())
+
             calendar_res = get_availability_from_google_calendar(client_id)
             slots = calendar_res.get("available_slots", [])
+
             if slots:
                 formatted_slots = "\n".join(
-                    [f"- {datetime.fromisoformat(slot).strftime('%A %d de %B a las %H:%M')}" for slot in slots]
+                    f"- {datetime.fromisoformat(slot).strftime('%A %d de %B a las %H:%M')}"
+                    for slot in slots
                 )
                 answer = f"📅 Aquí tienes algunos horarios disponibles:\n\n{formatted_slots}"
             else:
-                answer = calendar_res.get("message", "No se encontraron horarios disponibles.")
-            
-            # Guardamos en historial
-            session_id = session_id or str(uuid.uuid4())
+                answer = calendar_res.get(
+                    "message", "No se encontraron horarios disponibles."
+                )
+
+            # 🔒 Historial SOLO aquí (flujo alterno)
             save_history(client_id, session_id, "user", question, channel="chat")
             save_history(client_id, session_id, "assistant", answer, channel="chat")
 
             return JSONResponse(content={"answer": answer, "session_id": session_id})
 
-        # 📌 Detección de formato de fecha para agendamiento
+        # =====================================================
+        # 📌 Flujo especial: agendamiento directo por ISO datetime
+        # =====================================================
         iso_match = re.search(
-            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:-\d{2}:\d{2})?", question
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:-\d{2}:\d{2})?",
+            question,
         )
-        if iso_match:
-            try:
-                raw_datetime = iso_match.group()
-                scheduled_time = datetime.fromisoformat(raw_datetime)
 
-                success = save_appointment_if_valid(
+        if iso_match:
+            session_id = session_id or str(uuid.uuid4())
+
+            try:
+                scheduled_time = datetime.fromisoformat(iso_match.group())
+
+                result = save_appointment_if_valid(
                     client_id=client_id,
                     scheduled_time_str=scheduled_time.isoformat(),
                 )
 
-                session_id = session_id or str(uuid.uuid4())
                 save_history(client_id, session_id, "user", question, channel="chat")
-                save_history(client_id, session_id, "assistant", success, channel="chat")
+                save_history(client_id, session_id, "assistant", result, channel="chat")
 
-                return JSONResponse(content={"answer": success, "session_id": session_id})
-
-            except Exception as e:
-                print(f"❌ Error al intentar agendar: {e}")
                 return JSONResponse(
-                    content={"answer": f"❌ Error al intentar agendar la cita: {e}"}
+                    content={"answer": result, "session_id": session_id}
                 )
 
-        # 🧩 Crear o recuperar sesión
+            except Exception as e:
+                logging.exception("❌ Error al intentar agendar cita")
+                return JSONResponse(
+                    content={
+                        "answer": "❌ No fue posible agendar la cita. Intenta nuevamente."
+                    }
+                )
+
+        # =====================================================
+        # 🧩 Flujo normal → RAG
+        # =====================================================
         session_id = session_id or str(uuid.uuid4())
 
-        # 🧠 Recuperar últimos mensajes del historial para memoria conversacional
+        # Recuperar contexto conversacional (solo lectura)
         context_res = (
             supabase.table("history")
             .select("role, content")
@@ -135,22 +164,28 @@ async def ask(question: str = Form(...), client_id: str = Form(...), session_id:
         )
 
         context_messages = context_res.data or []
-        print(f"🧩 Contexto recuperado: {len(context_messages)} mensajes previos")
+        logging.info(
+            f"🧩 Contexto cargado | mensajes_previos={len(context_messages)}"
+        )
 
-        # Combinar contexto con nueva pregunta
-        message_payload = context_messages + [{"role": "user", "content": question}]
+        message_payload = context_messages + [
+            {"role": "user", "content": question}
+        ]
 
-        # Guardar mensaje del usuario
-        save_history(client_id, session_id, "user", question, channel="chat")
+        # ⚠️ HISTORIAL SE GUARDA EXCLUSIVAMENTE EN ask_question()
+        response = ask_question(
+            messages=message_payload,
+            client_id=client_id,
+            session_id=session_id,
+        )
 
-        # 🤖 RAG principal con rol + contenido (memoria de conversación)
-        response = ask_question(message_payload, client_id, session_id=session_id)
-
-        # Guardar respuesta del asistente
-        save_history(client_id, session_id, "assistant", response, channel="chat")
-
-        return JSONResponse(content={"answer": response, "session_id": session_id})
+        return JSONResponse(
+            content={"answer": response, "session_id": session_id}
+        )
 
     except Exception as e:
-        logging.exception(f"❌ Error procesando pregunta: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logging.exception("❌ Error inesperado en /ask")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Error interno procesando la solicitud."},
+        )

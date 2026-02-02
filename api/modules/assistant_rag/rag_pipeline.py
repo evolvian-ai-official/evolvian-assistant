@@ -5,15 +5,11 @@ BASE5 - Evolvian RAG Final (seguro, flexible y anti-hallucination)
 
 import os
 import logging
-import requests
-from tempfile import NamedTemporaryFile
+
 from typing import List, Dict, Optional, Union
 import uuid
 from api.config.config import DEFAULT_CHAT_MODEL
 
-
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import Chroma
 
@@ -21,7 +17,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from api.modules.assistant_rag.supabase_client import (
     save_history,
-    list_documents_with_signed_urls,
+   
 )
 from api.modules.assistant_rag.prompt_utils import (
     get_prompt_for_client,
@@ -48,35 +44,7 @@ def get_base_data_path() -> str:
     return base_dir
 
 
-def load_document(file_path: str) -> List:
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".pdf":
-        loader = PyPDFLoader(file_path)
-    elif ext == ".txt":
-        loader = TextLoader(file_path)
-    else:
-        raise ValueError(f"Formato de archivo no soportado: {ext}")
-    return loader.load()
 
-
-def chunk_documents(documents: List) -> List:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=300)
-    return splitter.split_documents(documents)
-
-
-def fetch_signed_documents(client_id: str) -> List[str]:
-    try:
-        res = list_documents_with_signed_urls(client_id)
-        if not res:
-            logging.info("📂 No hay documentos firmados disponibles.")
-            return []
-        urls = [doc["signed_url"] for doc in res if doc.get("signed_url")]
-        filenames = [url.split("/")[-1].split("?")[0] for url in urls]
-        logging.info(f"📂 Documentos firmados encontrados: {len(filenames)} → {filenames}")
-        return urls
-    except Exception as e:
-        logging.error(f"❌ Error al obtener documentos firmados: {e}")
-        return []
 
 
 def _guess_lang_es_en(text: str) -> str:
@@ -178,17 +146,6 @@ def _resolve_user_language(client_id: str, user_text: str) -> str:
     # 4️⃣ Último fallback
     return "en"
 
-
-
-def _detect_corpus_language(chunks: List) -> Optional[str]:
-    try:
-        sample_text = "\n".join(c.page_content for c in chunks[:3] if getattr(c, "page_content", None))
-        if not sample_text.strip():
-            return None
-        detected = _safe_langdetect(sample_text)
-        return detected
-    except Exception:
-        return None
 
 
 def _translate_text(text: str, target_lang: str) -> str:
@@ -311,6 +268,7 @@ def ask_question(
             else "I couldn’t understand your message. Could you please try again?"
         )
 
+
         # ✅ Guardar original SIEMPRE
         original_question = question
 
@@ -372,79 +330,53 @@ Rules:
             return answer
 
         # =====================================================
-        # 📂 Documentos
+        # 📂 Vectorstore (YA INGESTADO)
         # =====================================================
-        logging.info(f"📂 Buscando documentos para cliente {client_id}...")
-        signed_urls = fetch_signed_documents(client_id)
-        if not signed_urls:
-            return (
-                "En este momento no puedo responder preguntas. Por favor, intenta más tarde."
-                if turn_lang == "es"
-                else "I can’t answer questions at the moment. Please try again later."
-            )
+        logging.info(f"📂 Cargando vectorstore para cliente {client_id}...")
 
-        # 📑 Descargar y trocear
-        all_chunks = []
-        for url in signed_urls:
-            try:
-                filename = url.split("/")[-1].split("?")[0]
-                resp = requests.get(url, timeout=15)
-                if resp.status_code != 200:
-                    continue
+        client_data_path = os.path.abspath(f"./chroma_{client_id}")
+        logging.info(f"📂 Vectorstore path (aligned with indexer): {client_data_path}")
 
-                suffix = ".pdf" if filename.lower().endswith(".pdf") else ".txt"
-                with NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                    tmp_file.write(resp.content)
-                    tmp_file.flush()
 
-                    docs = load_document(tmp_file.name)
-                    chunks = chunk_documents(docs)
+        # 🛡️ Si no existe vectorstore, no podemos hacer RAG
+        if not os.path.exists(client_data_path):
+            logging.warning("⚠️ Vectorstore no encontrado para el cliente.")
+            save_history(client_id, session_id, "user", original_question, channel="chat")
+            save_history(client_id, session_id, "assistant", fallback, channel="chat")
+            return fallback
 
-                    for ch in chunks:
-                        ch.metadata["source"] = filename
-                        ch.metadata["tenant_id"] = client_id
-
-                    all_chunks.extend(chunks)
-
-                logging.info(f"✂️ {filename} → {len(chunks)} chunks")
-            except Exception as e:
-                logging.warning(f"❌ Error procesando {url}: {e}")
-
-        if not all_chunks:
-            return (
-                "En este momento no puedo responder preguntas. Por favor, intenta más tarde."
-                if turn_lang == "es"
-                else "I can’t answer questions at the moment. Please try again later."
-            )
 
         # =====================================================
-        # 🈶 Idioma del corpus (SOLO para retrieval)
+        # 🈶 Idioma del corpus (YA CALCULADO EN INGESTIÓN)
         # =====================================================
-        corpus_lang = _detect_corpus_language(all_chunks)
-        logging.info(f"🈶 Idioma del corpus: {corpus_lang}")
+        # 👉 Idealmente viene de client_settings.corpus_language
+        corpus_lang = get_language_for_client(client_id)  # fallback seguro
+        logging.info(f"🈶 Idioma del corpus (persistido): {corpus_lang}")
 
+
+        # =====================================================
+        # 🌍 Traducción SOLO para retrieval (si aplica)
+        # =====================================================
         retrieval_question = original_question
         if corpus_lang in ("es", "en") and corpus_lang != turn_lang:
             retrieval_question = _translate_text(original_question, corpus_lang)
 
-        # ✏️ Rewrite SIEMPRE en idioma del usuario
+
+        # =====================================================
+        # ✏️ Rewrite para retrieval
+        # =====================================================
         rewritten_question = _rewrite_for_retrieval(
             conversation_memory,
             retrieval_question
         )
 
-        # =====================================================
-        # 🔍 Recuperación
-        # =====================================================
-        BASE_DATA_DIR = get_base_data_path()
-        client_data_path = os.path.join(BASE_DATA_DIR, client_id)
-        os.makedirs(client_data_path, exist_ok=True)
 
-        embeddings = OpenAIEmbeddings()
-        vectordb = Chroma.from_documents(
-            all_chunks,
-            embeddings,
+        # =====================================================
+        # 🔍 Recuperación (SIN re-embeddings)
+        # =====================================================
+        vectordb = Chroma(
             persist_directory=client_data_path,
+            embedding_function=OpenAIEmbeddings(),
             collection_name=client_id
         )
 
@@ -452,6 +384,7 @@ Rules:
             search_type="mmr",
             search_kwargs={"k": 20, "lambda_mult": 0.5}
         )
+
         retrieved_docs = retriever.invoke(rewritten_question)
 
         if not retrieved_docs:
@@ -459,22 +392,27 @@ Rules:
             save_history(client_id, session_id, "assistant", fallback, channel="chat")
             return fallback
 
+
         # =====================================================
         # 🧩 Construir contexto
         # =====================================================
         MAX_CHARS = 9000
         context_text, total = "", 0
+
         for d in retrieved_docs:
             text = (d.page_content or "").strip()
             if not text:
                 continue
+
             remaining = MAX_CHARS - total
             context_text += text[:remaining] + "\n\n"
             total += len(text)
+
             if total >= MAX_CHARS:
                 break
 
         sources = list({d.metadata.get("source", "unknown") for d in retrieved_docs})
+
 
         # =====================================================
         # 🧱 System Prompt FINAL
@@ -486,55 +424,69 @@ Rules:
         )
 
         system_prompt = f"""
-You are a helpful AI assistant representative of this business that answers questions ONLY with the information provided by the business.
+        You are a helpful AI assistant representative of this business that answers questions ONLY with the information provided by the business.
 
-{prompt.strip() if prompt else ''}
+        {prompt.strip() if prompt else ''}
 
-Core Rules:
-- You MUST use ONLY the information provided.
-- If the answer is not clearly found, reply exactly: "{fallback}"
-- Never use external knowledge.
-- {language_rule}
-- Never mention the words "context" or "document".
-""".strip()
+        Core Rules:
+        - You MUST use ONLY the information provided.
+        - If the answer is not clearly found, reply exactly: "{fallback}"
+        - Never use external knowledge.
+        - {language_rule}
+        - Never mention the words "context" or "document".
+        """.strip()
 
         human_prompt = f"""
-<conversation>
-{conversation_memory}
-</conversation>
+        <conversation>
+        {conversation_memory}
+        </conversation>
 
-<information>
-{context_text}
-</information>
+        <information>
+        {context_text}
+        </information>
 
-<question>
-{original_question}
-</question>
-""".strip()
+        <question>
+        {original_question}
+        </question>
+        """.strip()
 
-        
+
         llm = ChatOpenAI(
             model=DEFAULT_CHAT_MODEL,
             temperature=temperature
         )
+
         raw = llm.invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt)
         ])
+
         answer = (raw.content or "").strip() or fallback
+
 
         # =====================================================
         # 🛡️ Anti-hallucination (solo si idioma coincide)
         # =====================================================
+
+        logging.info("🧪 CONTEXT PREVIEW:")
+        logging.info(context_text[:500])
+
+        logging.info("🧪 RAW ANSWER PREVIEW:")
+        logging.info(answer)
+
         if corpus_lang == turn_lang:
             keywords = [w.lower() for w in context_text.split()[:80]]
             if answer != fallback and not any(k in answer.lower() for k in keywords):
                 answer = fallback
 
+
         if show_sources and answer != fallback and sources:
             answer += "\n\nSources: " + ", ".join(sources)
 
+        # =====================================================
+        # =====================================================
         # 💾 Guardar historial
+        # =====================================================
         save_history(client_id, session_id, "user", original_question, channel="chat")
         save_history(client_id, session_id, "assistant", answer, channel="chat")
 
@@ -542,13 +494,15 @@ Core Rules:
         return answer
 
     except Exception as e:
-        logging.exception(f"❌ Error inesperado procesando pregunta para {client_id}: {e}")
-        return (
-            "Ups, ocurrió un problema inesperado. Por favor intenta de nuevo."
-            if turn_lang == "es"
-            else "Oops, something went wrong. Please try again."
+        logging.exception(
+            f"❌ Error inesperado procesando pregunta para client_id={client_id}: {e}"
         )
 
+        return (
+            "Ups, ocurrió un problema inesperado. Por favor intenta de nuevo."
+            if FALLBACK_BY_LANG.get("es")
+            else "Oops, something went wrong. Please try again."
+        )
 
 # ------------------------------------------------------------------
 # 🔁 Alias de compatibilidad para canales externos (WhatsApp, Email)

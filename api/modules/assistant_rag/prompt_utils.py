@@ -1,3 +1,4 @@
+
 from api.modules.assistant_rag.supabase_client import supabase
 
 DEFAULT_PROMPT_EN = """You are a professional and helpful AI assistant. Your sole purpose is to answer user questions based strictly on the content of the documents provided by the client.
@@ -100,4 +101,3 @@ def get_language_for_client(client_id: str) -> str:
     except Exception as e:
         print(f"⚠️ Error obteniendo language del cliente: {e}")
         return "auto"
-

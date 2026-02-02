@@ -157,7 +157,6 @@ async def chat_widget(request: Request):
             }
 
             limit_message = limit_messages.get(user_lang, limit_messages["en"])
-            save_history(client_id, session_id, "assistant", limit_message, channel)
             return {"answer": limit_message, "session_id": session_id, "limit_reached": True}
 
         # Retrieve recent history
@@ -184,9 +183,6 @@ async def chat_widget(request: Request):
 
         print("✅ Generated answer:", answer)
 
-        # 💾 Save both sides of the conversation
-        save_history(client_id, session_id, "user", message, channel)
-        save_history(client_id, session_id, "assistant", answer, channel)
 
         return {"answer": answer, "session_id": session_id}
 

@@ -3,11 +3,37 @@
 from fastapi import APIRouter, Query, HTTPException
 import logging
 from urllib.parse import unquote
+import os
+import shutil
+
 from api.config.config import supabase
 from api.utils.usage_limiter import check_and_increment_usage  # ✅
 
 router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
+
+
+# ------------------------------------------------------------------
+# 🧠 Utils
+# ------------------------------------------------------------------
+
+def delete_client_vectorstore(client_id: str):
+    """
+    Elimina completamente el vectorstore de Chroma del cliente.
+    Evita que el RAG siga usando información de documentos borrados.
+    """
+    chroma_path = f"./chroma_{client_id}"
+
+    if os.path.exists(chroma_path):
+        shutil.rmtree(chroma_path)
+        logging.info(f"🧹 Vectorstore eliminado para cliente {client_id}")
+    else:
+        logging.info(f"ℹ️ No existe vectorstore para {client_id}, nada que borrar")
+
+
+# ------------------------------------------------------------------
+# 🗑️ Endpoint
+# ------------------------------------------------------------------
 
 @router.delete("/delete_file")
 async def delete_file(
@@ -33,7 +59,7 @@ async def delete_file(
                 detail=f"storage_error: {res['error']['message']}"
             )
 
-        # 🔹 Eliminar referencia en tabla documents
+        # 🔹 Eliminar referencia en tabla documents (best effort)
         try:
             supabase.table("documents").delete().match({
                 "storage_path": clean_path
@@ -42,8 +68,13 @@ async def delete_file(
         except Exception as e:
             logging.warning(f"⚠️ No se pudo eliminar de documents: {e}")
 
+        # 🔑 Obtener client_id desde la ruta
+        client_id = clean_path.split("/")[0]
+
+        # 🧠 Eliminar embeddings del cliente (FIX CRÍTICO)
+        delete_client_vectorstore(client_id)
+
         # ✅ Actualizar contador de documentos en client_usage
-        client_id = clean_path.split("/")[0]  # El client_id es el primer segmento
         try:
             check_and_increment_usage(
                 client_id=client_id,
