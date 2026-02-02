@@ -271,7 +271,7 @@ def ask_question(
         question = (last_user_msg["content"] if last_user_msg else "").strip()
         if not question:
             return ("No logré entender tu mensaje ¿Podrías intentarlo de nuevo?"
-            if fallback_lang == "es"
+            if turn_lang == "es"
             else "I couldn’t understand your message. Could you please try again?"
         )
 
@@ -344,20 +344,22 @@ Rules:
         client_data_path = os.path.abspath(f"./chroma_{client_id}")
         logging.info(f"📂 Vectorstore path (aligned with indexer): {client_data_path}")
 
-
-        # 🛡️ Si no existe vectorstore, no podemos hacer RAG
+        # 🛡️ Si no existe vectorstore, NO hacemos RAG
+        # 👉 Agendamos reindex en background y devolvemos fallback
         if not os.path.exists(client_data_path):
-        logging.warning(
-            f"⚠️ Vectorstore missing for {client_id}. Triggering auto-reindex."
-        )
+            logging.warning(
+                f"⚠️ Vectorstore missing for {client_id}. Scheduling background reindex."
+            )
 
-        from api.internal.reindex_client import reindex_client
-        reindex_client(client_id)
+            try:
+                from api.internal.reindex_client import enqueue_reindex
+                enqueue_reindex(client_id)
+            except Exception as e:
+                logging.error(f"❌ Failed to enqueue reindex for {client_id}: {e}")
 
-        if not os.path.exists(client_data_path):
-            logging.error("❌ Reindex failed — vectorstore still missing.")
             save_history(client_id, session_id, "assistant", fallback, channel="chat")
             return fallback
+
 
 
         # =====================================================
