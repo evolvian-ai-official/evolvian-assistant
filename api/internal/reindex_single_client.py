@@ -7,7 +7,8 @@ import logging
 from api.config.config import supabase
 from api.modules.document_processor import process_file
 from api.modules.storage_utils import get_signed_url
-from api.modules.assistant_rag.rag import get_base_data_path  # ✅ MISMO PATH GLOBAL
+from api.utils.paths import get_base_data_path
+
 
 logging.basicConfig(level=logging.INFO)
 

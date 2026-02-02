@@ -9,6 +9,8 @@ import logging
 from typing import List, Dict, Optional, Union
 import uuid
 from api.config.config import DEFAULT_CHAT_MODEL
+from api.utils.paths import get_base_data_path
+
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import Chroma
@@ -17,12 +19,15 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from api.modules.assistant_rag.supabase_client import (
     save_history,
+
+
    
 )
 from api.modules.assistant_rag.prompt_utils import (
     get_prompt_for_client,
     get_temperature_for_client,
     get_language_for_client,  # ✅ NUEVO (abajo te dejo el cambio)
+    
 )
 
 # 🚫 Desactivar telemetría de Chroma
@@ -34,14 +39,6 @@ FALLBACK_BY_LANG = {
     "es": "No tengo información para responder esta pregunta.Si tienes una duda relacionada con este negocio y necesitas más detalle, puedes contactarnos directamente. Mientras tanto, con gusto puedo ayudarte con cualquier otra pregunta.",
     "en": "I don’t have information to answer this question. If you have a question related to this business and need more details, you can contact us directly. In the meantime, I’m happy to help with any other question.",
 }
-
-
-def get_base_data_path() -> str:
-    render_root = "/opt/render/project/src"
-    base_dir = os.path.join(render_root, "data") if os.path.exists(render_root) else os.path.join(os.getcwd(), "data")
-    os.makedirs(base_dir, exist_ok=True)
-    logging.info(f"📂 Base data path usada: {base_dir}")
-    return base_dir
 
 
 
@@ -353,8 +350,10 @@ Rules:
             logging.warning(
                 f"⚠️ Vectorstore missing for {client_id}. Returning fallback."
             )
+            save_history(client_id, session_id, "user", original_question, channel="chat")
             save_history(client_id, session_id, "assistant", fallback, channel="chat")
             return fallback
+
 
 
 
