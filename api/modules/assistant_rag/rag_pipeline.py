@@ -347,8 +347,15 @@ Rules:
 
         # 🛡️ Si no existe vectorstore, no podemos hacer RAG
         if not os.path.exists(client_data_path):
-            logging.warning("⚠️ Vectorstore no encontrado para el cliente.")
-            save_history(client_id, session_id, "user", original_question, channel="chat")
+        logging.warning(
+            f"⚠️ Vectorstore missing for {client_id}. Triggering auto-reindex."
+        )
+
+        from api.internal.reindex_client import reindex_client
+        reindex_client(client_id)
+
+        if not os.path.exists(client_data_path):
+            logging.error("❌ Reindex failed — vectorstore still missing.")
             save_history(client_id, session_id, "assistant", fallback, channel="chat")
             return fallback
 
