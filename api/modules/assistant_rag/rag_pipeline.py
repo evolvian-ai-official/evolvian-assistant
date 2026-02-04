@@ -34,6 +34,22 @@ from api.modules.assistant_rag.prompt_utils import (
 os.environ["ANONYMIZED_TELEMETRY"] = "false"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+LIMIT_OR_NO_DOCS_FALLBACK = {
+    "es": (
+        "Ahora mismo no puedo responder nuevas preguntas.\n\n"
+        "Intenta más tarde o ponte en contacto con nuestro equipo directamente "
+        "para obtener más información. Estaré aquí para ayudarte cuando el servicio "
+        "esté disponible nuevamente."
+    ),
+    "en": (
+        "I can’t answer new questions right now.\n\n"
+        "Please try again later or contact our team directly "
+        "for more information. I’ll be here to help you when the service "
+        "is available again."
+    ),
+}
+
+
 
 FALLBACK_BY_LANG = {
     "es": "No tengo información para responder esta pregunta.Si tienes una duda relacionada con este negocio y necesitas más detalle, puedes contactarnos directamente. Mientras tanto, con gusto puedo ayudarte con cualquier otra pregunta.",
@@ -234,6 +250,24 @@ Question:
     rewritten = (resp.content or "").strip()
     return rewritten or retrieval_question
 
+def _has_active_documents(client_id: str) -> bool:
+    """
+    Fuente de verdad:
+    Retorna True SOLO si el cliente tiene documentos activos.
+    """
+    from api.config.config import supabase
+
+    res = (
+        supabase
+        .table("document_metadata")
+        .select("id")
+        .eq("client_id", client_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+
+    return bool(res.data)
 
 
 def ask_question(
@@ -333,26 +367,57 @@ Rules:
             save_history(client_id, session_id, "assistant", answer, channel="chat")
             return answer
 
-        # =====================================================
-        # 📂 Vectorstore (YA INGESTADO)
-        # =====================================================
-        logging.info(f"📂 Cargando vectorstore para cliente {client_id}...")
 
+
+
+
+        # =====================================================
+        # 📂 Vectorstore loading (RAG SAFE)
+        # =====================================================
+
+        logging.info(f"📂 Preparing RAG vectorstore for client {client_id}...")
+
+        # -----------------------------------------------------
+        # 🛡️ 1) Fuente de verdad → documentos activos
+        # -----------------------------------------------------
+        if not _has_active_documents(client_id):
+            fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
+
+            save_history(client_id, session_id, "user", original_question, channel="chat")
+            save_history(client_id, session_id, "assistant", fallback_limit, channel="chat")
+            return fallback_limit
+
+
+
+        # -----------------------------------------------------
+        # 🗂️ 2) Resolver path de vectorstore
+        # -----------------------------------------------------
         base_path = get_base_data_path()
         client_data_path = os.path.join(base_path, f"chroma_{client_id}")
 
-        logging.info(f"📂 Vectorstore path (aligned with indexer): {client_data_path}")
+        logging.info(
+            f"📂 Vectorstore path resolved (aligned with indexer): {client_data_path}"
+        )
 
-        # 🛡️ Si no existe vectorstore, NO hacemos RAG
-        # 👉 Agendamos reindex en background y devolvemos fallback
-        # 🛡️ Si no existe vectorstore, NO hacemos RAG
+
+        # -----------------------------------------------------
+        # 🛡️ 3) Cache check → si no existe, NO RAG
+        # -----------------------------------------------------
         if not os.path.exists(client_data_path):
-            logging.warning(
-                f"⚠️ Vectorstore missing for {client_id}. Returning fallback."
-            )
+            fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
+
             save_history(client_id, session_id, "user", original_question, channel="chat")
-            save_history(client_id, session_id, "assistant", fallback, channel="chat")
-            return fallback
+            save_history(client_id, session_id, "assistant", fallback_limit, channel="chat")
+            return fallback_limit
+
+
+
+        # -----------------------------------------------------
+        # ✅ 4) Vectorstore listo para usarse
+        # -----------------------------------------------------
+        logging.info(
+            f"✅ Vectorstore ready for client {client_id}. Proceeding with retrieval."
+        )
 
 
 

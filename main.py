@@ -62,7 +62,6 @@ from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
 from api.routes import reset  # Cron
 from api.routes import embed
-from api.delete_file import router as delete_file_router
 from api.channels import router as channels_router
 from api.modules.email_integration import disconnect_gmail
 # ✅ Widget Consents
@@ -279,7 +278,7 @@ routers = [
     user_flags_router, terms_router,
     clear_new_user_flag_router, client_profile_router, accept_terms_router,
     list_files_router, list_chunks_router, delete_chunks_router,
-    embed_router, delete_file_router, stripe_router, checkout_router,
+    embed_router, stripe_router, checkout_router,
     stripe_cancel_router, stripe_change_plan_router,
     reactivate_subscription_router, channels_router, register_consent_router, check_consent_router,
     blog_router,

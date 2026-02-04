@@ -9,6 +9,7 @@ import re
 from api.modules.assistant_rag.supabase_client import supabase, save_history
 from api.modules.assistant_rag.rag_pipeline import ask_question
 from api.utils.usage_limiter import check_and_increment_usage
+from datetime import datetime, timedelta
 
 # 🧠 Nuevo: importamos el intent router
 from api.modules.assistant_rag.intent_router import process_user_message
@@ -136,11 +137,13 @@ async def chat_widget(request: Request):
         MAX_MESSAGES_PER_SESSION = get_max_messages_per_session(client_id)
 
         # Count messages for this session
+        ten_minutes_ago = (datetime.utcnow() - timedelta(minutes=10)).isoformat()
         history_count_res = (
             supabase.table("history")
             .select("id")
             .eq("client_id", client_id)
             .eq("session_id", session_id)
+            .gte("created_at", ten_minutes_ago)
             .execute()
         )
         total_messages = len(history_count_res.data or [])
@@ -152,9 +155,10 @@ async def chat_widget(request: Request):
             print(f"🌍 Detected language: {user_lang}")
 
             limit_messages = {
-                "en": f"If you need more help, please contact us by email or WhatsApp. 💬 (Limit: {MAX_MESSAGES_PER_SESSION})",
-                "es": f"Si necesitas más ayuda, contáctanos por correo o WhatsApp. 💬 (Límite: {MAX_MESSAGES_PER_SESSION})"
+                "en":("Ahora mismo no puedo responder nuevas preguntas. Intenta nuevamente en unos minutos para continuar la conversación."),
+                "es":("I can’t answer new questions right now. Please try again in a few minutes to continue the conversation."),
             }
+
 
             limit_message = limit_messages.get(user_lang, limit_messages["en"])
             return {"answer": limit_message, "session_id": session_id, "limit_reached": True}
