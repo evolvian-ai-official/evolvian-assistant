@@ -95,19 +95,18 @@ async def send_whatsapp_message(
 # =====================================================
 # WRAPPER POR CLIENTE (REMINDERS / OUTBOUND)
 # =====================================================
+
 from api.modules.assistant_rag.supabase_client import supabase
 
 
-def send_whatsapp_message_for_client(
+async def send_whatsapp_message_for_client(
     client_id: str,
     to_number: str,
     message: str,
-    image_url=None,
-    buttons=None
 ) -> bool:
     """
-    Wrapper seguro para enviar WhatsApp resolviendo
-    phone_id y token desde DB por client_id.
+    Wrapper seguro para reminders / outbound WhatsApp.
+    Debe ser async para no romper el event loop (FastAPI / workers).
     """
 
     resp = (
@@ -122,26 +121,18 @@ def send_whatsapp_message_for_client(
     )
 
     if not resp.data:
-        print(f"❌ WhatsApp no configurado para client_id={client_id}")
-        return False
-
-    wa_phone_id = resp.data.get("wa_phone_id")
-    wa_token = resp.data.get("wa_token")
-
-    if not wa_phone_id or not wa_token:
-        print(
-            f"❌ Credenciales WhatsApp incompletas "
-            f"(phone_id={wa_phone_id}, token={'OK' if wa_token else 'MISSING'})"
+        logging.error(
+            "❌ WhatsApp no configurado para client_id=%s",
+            client_id
         )
         return False
 
-    # Reutiliza función EXISTENTE (no rompe nada)
-    return send_whatsapp_message(
-        to_number=to_number,
-        message=message,
-        token=wa_token,
-        phone_id=wa_phone_id,
-        image_url=image_url,
-        buttons=buttons
-    )
+    # Normalización mínima del teléfono (Meta picky)
+    to_number = to_number.replace(" ", "")
 
+    # 🔥 Reutiliza la función base correctamente
+    return await send_whatsapp_message(
+        to_number=to_number,
+        text=message,
+        channel=resp.data
+    )

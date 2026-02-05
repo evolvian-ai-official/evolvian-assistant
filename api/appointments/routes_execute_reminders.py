@@ -108,7 +108,7 @@ async def execute_pending_reminders():
                 if not appointment.get("user_phone"):
                     raise Exception("Missing phone")
 
-                send_ok = send_whatsapp_message_for_client(
+                send_ok = await send_whatsapp_message_for_client(
                     client_id=client_id,
                     to_number=appointment["user_phone"],
                     message=message_body
