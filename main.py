@@ -87,6 +87,12 @@ from api.appointments import router as appointments_router
 
 from api.modules.whatsapp.webhook import router as whatsapp_webhook_router
 
+#Reminders
+
+from api.appointments.routes_update_status import router as update_status_router
+from api.appointments.routes_execute_reminders import router as execute_reminders_router
+
+
 
 
 # ======================================
@@ -330,6 +336,10 @@ if calendar_router:
 # Core routers
 for r in routers:
     app.include_router(r)
+
+# ✅ Appointment status updates (IMPORTANT)
+app.include_router(update_status_router, prefix="/api")
+app.include_router(execute_reminders_router, prefix="/api")
 
 # Cron & embed
 app.include_router(reset.router, tags=["subscriptions"])
