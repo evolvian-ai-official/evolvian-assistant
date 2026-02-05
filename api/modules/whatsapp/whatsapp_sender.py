@@ -112,7 +112,7 @@ def send_whatsapp_message_for_client(
 
     resp = (
         supabase
-        .table("channel_settings")
+        .table("channels")
         .select("wa_phone_id, wa_token")
         .eq("client_id", client_id)
         .eq("type", "whatsapp")
