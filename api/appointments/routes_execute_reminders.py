@@ -2,15 +2,17 @@ from fastapi import APIRouter
 from datetime import datetime, timezone
 
 from api.modules.assistant_rag.supabase_client import supabase
-from api.modules.whatsapp.whatsapp_sender import send_whatsapp_message
+from api.modules.whatsapp.whatsapp_sender import (
+    send_whatsapp_message_for_client
+)
 
 router = APIRouter()
 
 
 def render_template(body: str, appointment: dict) -> str:
     """
-    Render simple de placeholders permitidos.
-    Sin magia, sin validaciones silenciosas.
+    Render simple y explícito de placeholders permitidos.
+    Sin lógica oculta, sin magia.
     """
     return (
         body
@@ -27,14 +29,17 @@ async def execute_pending_reminders():
 
     Reglas:
     - Usa message_templates (type = appointment_reminder)
-    - SOLO marca 'sent' si el envío fdue exitoso
+    - Template es OBLIGATORIO
+    - SOLO marca 'sent' si el envío fue exitoso
     - Marca 'failed' si falta template o falla el envío
     - Registra appointment_usage SOLO si se envió
     """
 
     now = datetime.now(timezone.utc)
 
+    # -------------------------------------------------
     # 1️⃣ Buscar reminders pendientes y vencidos
+    # -------------------------------------------------
     response = (
         supabase
         .table("appointment_reminders")
@@ -59,7 +64,9 @@ async def execute_pending_reminders():
         channel = reminder["channel"]
 
         try:
+            # -------------------------------------------------
             # 2️⃣ Cargar appointment
+            # -------------------------------------------------
             appointment = (
                 supabase
                 .table("appointments")
@@ -72,7 +79,9 @@ async def execute_pending_reminders():
             if not appointment:
                 raise Exception("Appointment not found")
 
+            # -------------------------------------------------
             # 3️⃣ Cargar template OBLIGATORIO
+            # -------------------------------------------------
             template = (
                 supabase
                 .table("message_templates")
@@ -90,16 +99,19 @@ async def execute_pending_reminders():
 
             message_body = render_template(template["body"], appointment)
 
+            # -------------------------------------------------
             # 4️⃣ Envío por canal
+            # -------------------------------------------------
             send_ok = False
 
             if channel == "whatsapp":
                 if not appointment.get("user_phone"):
                     raise Exception("Missing phone")
 
-                send_ok = await send_whatsapp_message(
+                send_ok = send_whatsapp_message_for_client(
+                    client_id=client_id,
                     to_number=appointment["user_phone"],
-                    text=message_body,
+                    message=message_body
                 )
 
             elif channel == "email":
@@ -123,13 +135,17 @@ async def execute_pending_reminders():
             if not send_ok:
                 raise Exception(f"{channel} send failed")
 
+            # -------------------------------------------------
             # 5️⃣ Marcar reminder como enviado
+            # -------------------------------------------------
             supabase.table("appointment_reminders").update({
                 "status": "sent",
                 "updated_at": now.isoformat()
             }).eq("id", reminder_id).execute()
 
+            # -------------------------------------------------
             # 6️⃣ Registrar uso SOLO si se envió
+            # -------------------------------------------------
             supabase.table("appointment_usage").insert({
                 "client_id": client_id,
                 "appointment_id": appointment_id,
