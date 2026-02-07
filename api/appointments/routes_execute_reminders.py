@@ -79,25 +79,32 @@ async def execute_pending_reminders():
             if not appointment:
                 raise Exception("Appointment not found")
 
+            
             # -------------------------------------------------
-            # 3️⃣ Cargar template OBLIGATORIO
             # -------------------------------------------------
+            # 3️⃣ Cargar template OBLIGATORIO (por template_id)
+            # -------------------------------------------------
+            template_id = reminder.get("template_id")
+
+            if not template_id:
+                raise Exception("Reminder missing template_id")
+
             template = (
                 supabase
                 .table("message_templates")
                 .select("*")
+                .eq("id", template_id)
                 .eq("client_id", client_id)
-                .eq("channel", channel)
-                .eq("type", "appointment_reminder")
                 .eq("is_active", True)
                 .single()
                 .execute()
             ).data
 
             if not template:
-                raise Exception("Missing active message template")
+                raise Exception("Message template not found or inactive")
 
             message_body = render_template(template["body"], appointment)
+
 
             # -------------------------------------------------
             # 4️⃣ Envío por canal

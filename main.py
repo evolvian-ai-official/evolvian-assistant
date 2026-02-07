@@ -78,9 +78,12 @@ from api.stripe_cancel_subscription import router as stripe_cancel_router
 from api.stripe_change_plan import router as stripe_change_plan_router
 from api.reactivate_subscription import router as reactivate_subscription_router
 
-# ✅ Google Calendar core tables
+# ✅ Appointments with AI
 from api.delete_appointment import router as delete_appointment_router
 from api.appointments import router as appointments_router
+
+#Appointments manually
+from api.appointments.create_appointment import router as create_appointment_router
 
 
 #Whatsapp
@@ -91,6 +94,11 @@ from api.modules.whatsapp.webhook import router as whatsapp_webhook_router
 
 from api.appointments.routes_update_status import router as update_status_router
 from api.appointments.routes_execute_reminders import router as execute_reminders_router
+from api.appointments.get_templates import router as appointment_templates_router
+
+
+
+
 
 
 
@@ -340,6 +348,8 @@ for r in routers:
 # ✅ Appointment status updates (IMPORTANT)
 app.include_router(update_status_router, prefix="/api")
 app.include_router(execute_reminders_router, prefix="/api")
+app.include_router(create_appointment_router)
+app.include_router(appointment_templates_router)
 
 # Cron & embed
 app.include_router(reset.router, tags=["subscriptions"])
