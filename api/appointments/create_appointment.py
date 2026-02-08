@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from typing import Optional
 import uuid
 import logging
+import json
 
 from api.config.config import supabase
 
@@ -32,7 +33,12 @@ class CreateAppointmentPayload(BaseModel):
 def create_appointment(payload: CreateAppointmentPayload):
     """
     Creates an appointment and generates appointment_reminders
-    based on active message_templates.frequency (ARRAY).
+    based on active message_templates.frequency.
+
+    Frequency format (DB):
+    [
+      { "offset_minutes": -60, "label": "1 hour before" }
+    ]
 
     🔒 Timezone-safe:
     - Frontend sends local datetime
@@ -105,47 +111,53 @@ def create_appointment(payload: CreateAppointmentPayload):
     templates = templates_res.data or []
 
     # =========================
-    # 4️⃣ Create appointment reminders (UTC-safe)
+    # 4️⃣ Create appointment reminders (FIX REAL)
     # =========================
-    for template in templates:
-        offsets = template.get("frequency") or []
+    reminders_created = 0
 
-        # 🛡️ Defensive guard (legacy / corrupted data)
-        if not isinstance(offsets, list):
-            logger.warning(
-                f"⚠️ Invalid frequency format for template {template.get('id')}: {offsets}"
-            )
+    for template in templates:
+        raw_frequency = template.get("frequency")
+
+        if not raw_frequency:
             continue
 
-        for offset in offsets:
-            unit = offset.get("unit")
-            value = offset.get("value")
-
-            if not unit or value is None:
-                continue
-
-            if unit == "days":
-                scheduled_at = scheduled_utc - timedelta(days=value)
-            elif unit == "hours":
-                scheduled_at = scheduled_utc - timedelta(hours=value)
-            elif unit == "minutes":
-                scheduled_at = scheduled_utc - timedelta(minutes=value)
-            else:
+        # 🛡️ Parse frequency safely (JSONB or string)
+        if isinstance(raw_frequency, str):
+            try:
+                frequency = json.loads(raw_frequency)
+            except Exception:
                 logger.warning(
-                    f"⚠️ Unsupported frequency unit '{unit}' in template {template.get('id')}"
+                    f"⚠️ Invalid JSON frequency for template {template.get('id')}"
                 )
                 continue
+        elif isinstance(raw_frequency, list):
+            frequency = raw_frequency
+        else:
+            continue
+
+        for rule in frequency:
+            offset_minutes = rule.get("offset_minutes")
+
+            if offset_minutes is None:
+                continue
+
+            # ✅ offset_minutes ya viene negativo
+            scheduled_at = scheduled_utc + timedelta(minutes=offset_minutes)
 
             supabase.table("appointment_reminders").insert({
                 "client_id": str(payload.client_id),
                 "appointment_id": appointment_id,
-                "channel": template["channel"],
                 "template_id": template["id"],
+                "channel": template["channel"],
                 "scheduled_at": scheduled_at.isoformat(),
                 "status": "pending",
                 "created_at": datetime.utcnow().isoformat(),
                 "updated_at": datetime.utcnow().isoformat(),
             }).execute()
+
+            reminders_created += 1
+
+    logger.info(f"⏰ Reminders created: {reminders_created}")
 
     # =========================
     # 5️⃣ Response
@@ -155,5 +167,5 @@ def create_appointment(payload: CreateAppointmentPayload):
         "appointment_id": appointment_id,
         "scheduled_time": appointment["scheduled_time"],
         "status": appointment["status"],
-        "reminders_created": True,
+        "reminders_created": reminders_created,
     }

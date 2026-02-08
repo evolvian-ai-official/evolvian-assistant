@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
 import uuid
@@ -14,20 +14,11 @@ router = APIRouter(
 )
 
 # =========================
-# Payload (Query Params)
+# Frequency Model (DB aligned)
 # =========================
-class GetMessageTemplatesPayload(BaseModel):
-    client_id: uuid.UUID
-    type: str  # e.g. "appointment_reminder"
-
-
-# =========================
-# Frequency Model (JSON ARRAY)
-# =========================
-class FrequencyOffset(BaseModel):
-    unit: str   # "minutes", "hours", "days"
-    value: int  # e.g. 1
-
+class FrequencyRule(BaseModel):
+    offset_minutes: int
+    label: Optional[str] = None
 
 # =========================
 # Response Model
@@ -35,64 +26,44 @@ class FrequencyOffset(BaseModel):
 class MessageTemplateResponse(BaseModel):
     id: uuid.UUID
     channel: str
-    frequency: Optional[List[FrequencyOffset]]
     template_name: str
-    label: str
-
+    label: Optional[str]
+    frequency: Optional[List[FrequencyRule]] = None
 
 # =========================
 # Endpoint
 # =========================
-@router.get(
-    "",
-    response_model=List[MessageTemplateResponse]
-)
+@router.get("", response_model=List[MessageTemplateResponse])
 def get_message_templates(
-    payload: GetMessageTemplatesPayload = Depends(),
+    client_id: uuid.UUID = Query(..., description="Client ID"),
+    type: Optional[str] = Query(
+        None,
+        description="appointment_reminder | appointment_confirmation | appointment_cancellation"
+    ),
 ):
     """
     Returns active message templates for a client.
 
-    Used by Create Appointment modal (UI).
+    Used by:
+    - Templates UI (ALL templates)
+    - Create Appointment modal (filtered by type)
     """
 
-    # =========================
-    # 🧠 Minimal validation
-    # =========================
-    if not payload.client_id:
-        raise HTTPException(
-            status_code=400,
-            detail="client_id is required"
-        )
+    if not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required")
 
-    # =========================
-    # 🔎 Query Supabase
-    # =========================
-    res = (
+    query = (
         supabase
         .table("message_templates")
         .select("id, channel, frequency, template_name, label")
-        .eq("client_id", str(payload.client_id))
-        .eq("type", payload.type)
+        .eq("client_id", str(client_id))
         .eq("is_active", True)
-        .order("template_name")
-        .execute()
     )
 
-    if not res.data:
-        return []
+    # ✅ Filtrar solo si viene type
+    if type:
+        query = query.eq("type", type)
 
-    # =========================
-    # ✅ Return aligned with DB
-    # frequency is already a JSON array
-    # =========================
-    return [
-        MessageTemplateResponse(
-            id=row["id"],
-            channel=row["channel"],
-            frequency=row.get("frequency") or [],
-            template_name=row["template_name"],
-            label=row["label"],
-        )
-        for row in res.data
-    ]
+    res = query.order("template_name").execute()
+
+    return res.data or []
