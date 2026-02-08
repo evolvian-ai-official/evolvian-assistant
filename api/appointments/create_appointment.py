@@ -11,7 +11,6 @@ from api.config.config import supabase
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-
 # =========================
 # Payload
 # =========================
@@ -33,7 +32,7 @@ class CreateAppointmentPayload(BaseModel):
 def create_appointment(payload: CreateAppointmentPayload):
     """
     Creates an appointment and generates appointment_reminders
-    based on active message_templates.frequency offsets.
+    based on active message_templates.frequency (ARRAY).
 
     🔒 Timezone-safe:
     - Frontend sends local datetime
@@ -43,7 +42,11 @@ def create_appointment(payload: CreateAppointmentPayload):
     # =========================
     # 🕒 Normalize scheduled_time to UTC
     # =========================
-    LOCAL_TZ = ZoneInfo("America/Mexico_City")  # 🔥 fijo por ahora
+    try:
+        LOCAL_TZ = ZoneInfo("America/Mexico_City")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid timezone configuration")
+
     scheduled_local = payload.scheduled_time.replace(tzinfo=LOCAL_TZ)
     scheduled_utc = scheduled_local.astimezone(timezone.utc)
 
@@ -55,7 +58,7 @@ def create_appointment(payload: CreateAppointmentPayload):
         "user_name": payload.user_name,
         "user_email": payload.user_email,
         "user_phone": payload.user_phone,
-        "scheduled_time": scheduled_utc.isoformat(),  # ✅ UTC
+        "scheduled_time": scheduled_utc.isoformat(),
         "appointment_type": payload.appointment_type,
         "channel": payload.channel,
         "status": "confirmed",
@@ -92,7 +95,7 @@ def create_appointment(payload: CreateAppointmentPayload):
     templates_res = (
         supabase
         .table("message_templates")
-        .select("id, channel, frequency, template_name, label")
+        .select("id, channel, frequency")
         .eq("client_id", str(payload.client_id))
         .eq("type", "appointment_reminder")
         .eq("is_active", True)
@@ -105,8 +108,14 @@ def create_appointment(payload: CreateAppointmentPayload):
     # 4️⃣ Create appointment reminders (UTC-safe)
     # =========================
     for template in templates:
-        frequency = template.get("frequency") or {}
-        offsets = frequency.get("offsets", [])
+        offsets = template.get("frequency") or []
+
+        # 🛡️ Defensive guard (legacy / corrupted data)
+        if not isinstance(offsets, list):
+            logger.warning(
+                f"⚠️ Invalid frequency format for template {template.get('id')}: {offsets}"
+            )
+            continue
 
         for offset in offsets:
             unit = offset.get("unit")
@@ -122,14 +131,17 @@ def create_appointment(payload: CreateAppointmentPayload):
             elif unit == "minutes":
                 scheduled_at = scheduled_utc - timedelta(minutes=value)
             else:
-                continue  # unidad no soportada
+                logger.warning(
+                    f"⚠️ Unsupported frequency unit '{unit}' in template {template.get('id')}"
+                )
+                continue
 
             supabase.table("appointment_reminders").insert({
                 "client_id": str(payload.client_id),
                 "appointment_id": appointment_id,
                 "channel": template["channel"],
                 "template_id": template["id"],
-                "scheduled_at": scheduled_at.isoformat(),  # ✅ UTC
+                "scheduled_at": scheduled_at.isoformat(),
                 "status": "pending",
                 "created_at": datetime.utcnow().isoformat(),
                 "updated_at": datetime.utcnow().isoformat(),
