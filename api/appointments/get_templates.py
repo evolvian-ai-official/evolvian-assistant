@@ -56,14 +56,18 @@ def get_message_templates(
     Used by Create Appointment modal (UI).
     """
 
-    # 🧠 Validación mínima
+    # =========================
+    # 🧠 Minimal validation
+    # =========================
     if not payload.client_id:
         raise HTTPException(
             status_code=400,
             detail="client_id is required"
         )
 
+    # =========================
     # 🔎 Query Supabase
+    # =========================
     res = (
         supabase
         .table("message_templates")
@@ -78,12 +82,15 @@ def get_message_templates(
     if not res.data:
         return []
 
-    # ✅ Retorno alineado con DB (frequency = array)
+    # =========================
+    # ✅ Return aligned with DB
+    # frequency is already a JSON array
+    # =========================
     return [
         MessageTemplateResponse(
             id=row["id"],
             channel=row["channel"],
-            frequency=row.get("frequency"),
+            frequency=row.get("frequency") or [],
             template_name=row["template_name"],
             label=row["label"],
         )
