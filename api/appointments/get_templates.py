@@ -22,15 +22,11 @@ class GetMessageTemplatesPayload(BaseModel):
 
 
 # =========================
-# Frequency Models (JSON)
+# Frequency Model (JSON ARRAY)
 # =========================
 class FrequencyOffset(BaseModel):
     unit: str   # "minutes", "hours", "days"
     value: int  # e.g. 1
-
-
-class Frequency(BaseModel):
-    offsets: List[FrequencyOffset]
 
 
 # =========================
@@ -39,7 +35,7 @@ class Frequency(BaseModel):
 class MessageTemplateResponse(BaseModel):
     id: uuid.UUID
     channel: str
-    frequency: Optional[Frequency]
+    frequency: Optional[List[FrequencyOffset]]
     template_name: str
     label: str
 
@@ -82,7 +78,7 @@ def get_message_templates(
     if not res.data:
         return []
 
-    # ✅ Retorno tipado (frequency es JSON, no string)
+    # ✅ Retorno alineado con DB (frequency = array)
     return [
         MessageTemplateResponse(
             id=row["id"],
