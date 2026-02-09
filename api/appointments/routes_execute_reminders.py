@@ -14,33 +14,23 @@ router = APIRouter()
 # =====================================================
 MEXICO_TZ = ZoneInfo("America/Mexico_City")
 
+CRON_INTERVAL_MINUTES = 5  # 🔒 regla explícita
+
 
 # =====================================================
 # Helpers
 # =====================================================
 def format_scheduled_time(iso_utc: str) -> str:
-    """
-    Convierte un datetime UTC ISO a horario de México legible.
-    Ej:
-    2026-02-08T17:00:00+00:00
-    -> domingo 8 de febrero, 11:00 AM
-    """
     try:
         dt_utc = datetime.fromisoformat(iso_utc)
         dt_local = dt_utc.astimezone(MEXICO_TZ)
         return dt_local.strftime("%A %d de %B, %I:%M %p")
     except Exception:
-        # Fallback defensivo
         return iso_utc
 
 
 def render_template(body: str, appointment: dict) -> str:
-    """
-    Render explícito de placeholders permitidos.
-    El horario SIEMPRE se muestra en horario de México.
-    """
     scheduled_time = appointment.get("scheduled_time")
-
     if scheduled_time:
         scheduled_time = format_scheduled_time(scheduled_time)
 
@@ -52,6 +42,11 @@ def render_template(body: str, appointment: dict) -> str:
     )
 
 
+def is_aligned_with_cron(dt: datetime) -> bool:
+    """Valida que el scheduled_at caiga en múltiplos del cron"""
+    return dt.minute % CRON_INTERVAL_MINUTES == 0
+
+
 # =====================================================
 # Endpoint
 # =====================================================
@@ -60,15 +55,17 @@ async def execute_pending_reminders():
     """
     Ejecuta reminders pendientes cuyo scheduled_at <= now()
 
-    - DB y scheduler trabajan en UTC
-    - El mensaje al usuario se renderiza en horario de México
+    - Scheduler trabaja en UTC
+    - Mensaje se renderiza en horario México
+    - NO se envían reminders fuera de tick de cron
     """
 
     now = datetime.now(timezone.utc)
 
-    # -------------------------------------------------
-    # 1️⃣ Buscar reminders pendientes y vencidos
-    # -------------------------------------------------
+    print("\n==============================")
+    print(f"⏱️ REMINDER EXECUTION @ {now.isoformat()}")
+    print("==============================\n")
+
     response = (
         supabase
         .table("appointment_reminders")
@@ -80,9 +77,7 @@ async def execute_pending_reminders():
 
     reminders = response.data or []
 
-    processed = 0
-    sent = 0
-    failed = 0
+    processed = sent = failed = skipped = 0
 
     for reminder in reminders:
         processed += 1
@@ -91,10 +86,26 @@ async def execute_pending_reminders():
         appointment_id = reminder["appointment_id"]
         client_id = reminder["client_id"]
         channel = reminder["channel"]
+        scheduled_at = datetime.fromisoformat(reminder["scheduled_at"])
+
+        print("\n------------------------------")
+        print(f"🔔 Reminder {reminder_id}")
+        print(f"📅 scheduled_at (UTC): {scheduled_at}")
+
+        # -------------------------------------------------
+        # 0️⃣ Validar alineación con cron
+        # -------------------------------------------------
+        if not is_aligned_with_cron(scheduled_at):
+            print(
+                f"⏭️ SKIPPED — scheduled_at no alineado al cron "
+                f"({CRON_INTERVAL_MINUTES}m)"
+            )
+            skipped += 1
+            continue
 
         try:
             # -------------------------------------------------
-            # 2️⃣ Cargar appointment
+            # 1️⃣ Appointment
             # -------------------------------------------------
             appointment = (
                 supabase
@@ -108,13 +119,16 @@ async def execute_pending_reminders():
             if not appointment:
                 raise Exception("Appointment not found")
 
+            print(f"👤 Appointment {appointment_id}")
+            print(f"📞 Phone: {appointment.get('user_phone')}")
+            print(f"📧 Email: {appointment.get('user_email')}")
+
             # -------------------------------------------------
-            # 3️⃣ Cargar template OBLIGATORIO
+            # 2️⃣ Template
             # -------------------------------------------------
             template_id = reminder.get("template_id")
-
             if not template_id:
-                raise Exception("Reminder missing template_id")
+                raise Exception("Missing template_id")
 
             template = (
                 supabase
@@ -128,74 +142,75 @@ async def execute_pending_reminders():
             ).data
 
             if not template:
-                raise Exception("Message template not found or inactive")
+                raise Exception("Template not found or inactive")
 
-            # 👉 Render humano aquí
             message_body = render_template(template["body"], appointment)
 
+            print("📝 Message preview:")
+            print(message_body)
+
             # -------------------------------------------------
-            # 4️⃣ Envío por canal
+            # 3️⃣ Envío
             # -------------------------------------------------
             send_ok = False
 
             if channel == "whatsapp":
-                if not appointment.get("user_phone"):
+                phone = appointment.get("user_phone")
+                if not phone:
                     raise Exception("Missing phone")
 
+                print(f"📤 Sending WhatsApp to {phone}")
                 send_ok = await send_whatsapp_message_for_client(
                     client_id=client_id,
-                    to_number=appointment["user_phone"],
+                    to_number=phone,
                     message=message_body
                 )
 
             elif channel == "email":
-                if not appointment.get("user_email"):
+                email = appointment.get("user_email")
+                if not email:
                     raise Exception("Missing email")
 
-                print(
-                    f"📧 [EMAIL REMINDER]\n"
-                    f"To: {appointment['user_email']}\n"
-                    f"Body:\n{message_body}\n"
-                )
+                print(f"📧 EMAIL → {email}")
                 send_ok = True
 
             else:
                 raise Exception(f"Unsupported channel: {channel}")
 
             if not send_ok:
-                raise Exception(f"{channel} send failed")
+                raise Exception("Provider send failed")
 
             # -------------------------------------------------
-            # 5️⃣ Marcar reminder como enviado
+            # 4️⃣ Mark sent
             # -------------------------------------------------
             supabase.table("appointment_reminders").update({
                 "status": "sent",
                 "updated_at": now.isoformat()
             }).eq("id", reminder_id).execute()
 
-            # -------------------------------------------------
-            # 6️⃣ Registrar uso
-            # -------------------------------------------------
-            supabase.table("appointment_usage").insert({
-                "client_id": client_id,
-                "appointment_id": appointment_id,
-                "channel": channel,
-                "action": "reminder_sent"
-            }).execute()
-
             sent += 1
+            print("✅ SENT")
 
         except Exception as e:
             failed += 1
-            print(f"❌ Reminder failed {reminder_id}: {e}")
+            print(f"❌ FAILED — {e}")
 
             supabase.table("appointment_reminders").update({
                 "status": "failed",
                 "updated_at": now.isoformat()
             }).eq("id", reminder_id).execute()
 
+    print("\n==============================")
+    print("📊 EXECUTION SUMMARY")
+    print(f"Processed: {processed}")
+    print(f"Sent:      {sent}")
+    print(f"Skipped:   {skipped}")
+    print(f"Failed:    {failed}")
+    print("==============================\n")
+
     return {
         "processed": processed,
         "sent": sent,
+        "skipped": skipped,
         "failed": failed
     }
