@@ -85,6 +85,8 @@ from api.appointments import router as appointments_router
 #Appointments manually
 from api.appointments.create_appointment import router as create_appointment_router
 from api.appointments.show_appointments import router as show_appointments_router
+from api.appointments.cancel_appointment import router as cancel_appointment_router
+
 
 
 #Whatsapp
@@ -96,7 +98,7 @@ from api.modules.whatsapp.webhook import router as whatsapp_webhook_router
 from api.appointments.routes_update_status import router as update_status_router
 from api.appointments.routes_execute_reminders import router as execute_reminders_router
 from api.appointments.get_templates import router as appointment_templates_router
-from api.appointments.create_templates import router as templates_router
+from api.appointments.message_templates import router as templates_router
 
 
 
@@ -351,6 +353,7 @@ for r in routers:
 app.include_router(update_status_router, prefix="/api")
 app.include_router(execute_reminders_router, prefix="/api")
 app.include_router(create_appointment_router)
+app.include_router(cancel_appointment_router)
 app.include_router(appointment_templates_router)
 app.include_router(show_appointments_router)
 app.include_router(templates_router,tags=["Message Templates"])
