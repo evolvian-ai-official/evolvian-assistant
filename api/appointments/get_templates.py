@@ -26,6 +26,8 @@ class FrequencyRule(BaseModel):
 class MessageTemplateResponse(BaseModel):
     id: uuid.UUID
     channel: str
+    type: str
+    body: str
     template_name: str
     label: Optional[str]
     frequency: Optional[List[FrequencyRule]] = None
@@ -55,7 +57,7 @@ def get_message_templates(
     query = (
         supabase
         .table("message_templates")
-        .select("id, channel, frequency, template_name, label")
+        .select("id, channel, type, body, frequency, template_name, label")
         .eq("client_id", str(client_id))
         .eq("is_active", True)
     )
