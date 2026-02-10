@@ -20,6 +20,7 @@ async def send_meta_template(
     ✔ Diseñado para REMINDERS / OUTBOUND
     ❌ NO usar para chat libre / RAG
     ✔ Soporta multitenant (BYO WhatsApp Business)
+    ✔ Compatible con templates que tienen HEADER
     """
 
     # -------------------------------------------------
@@ -38,7 +39,7 @@ async def send_meta_template(
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
 
     # -------------------------------------------------
-    # 3️⃣ Payload TEMPLATE (orden importa)
+    # 3️⃣ Payload TEMPLATE (FIX DEFINITIVO)
     # -------------------------------------------------
     payload = {
         "messaging_product": "whatsapp",
@@ -47,10 +48,16 @@ async def send_meta_template(
         "template": {
             "name": template_name,
             "language": {
-                "code": language_code,
+                "code": language_code,  # ej: es_MX
             },
             "components": [
                 {
+                    # 🔥 OBLIGATORIO si el template tiene HEADER en Meta
+                    "type": "header",
+                    "parameters": []
+                },
+                {
+                    # BODY con variables {{1}}, {{2}}, ...
                     "type": "body",
                     "parameters": [
                         {"type": "text", "text": str(p)}
@@ -73,6 +80,7 @@ async def send_meta_template(
             "template": template_name,
             "language": language_code,
             "phone_number_id": phone_number_id,
+            "params_count": len(parameters),
         },
     )
 
@@ -93,6 +101,7 @@ async def send_meta_template(
                 "response": response.text,
                 "to": to_number,
                 "template": template_name,
+                "language": language_code,
                 "phone_number_id": phone_number_id,
             },
         )
