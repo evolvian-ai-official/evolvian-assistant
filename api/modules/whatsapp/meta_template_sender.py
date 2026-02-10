@@ -9,17 +9,17 @@ async def send_meta_template(
     *,
     to_number: str,
     template_name: str,
-    language_code: str,
+    language_code: str = "es_MX",
     parameters: list[str],
     phone_number_id: str | None = None,
     access_token: str | None = None,
 ):
     """
-    Envía un mensaje WhatsApp usando TEMPLATE de Meta.
+    Envía un mensaje WhatsApp usando TEMPLATE de Meta (POSICIONAL).
 
-    ✔ Reminders / outbound
-    ✔ Soporta HEADER + BODY
-    ✔ Producción estable
+    ✔ SOLO templates con {{1}}, {{2}}, {{3}}
+    ✔ SOLO BODY (sin header/footer)
+    ✔ Producción estable (Meta Cloud API)
     """
 
     # -------------------------------------------------
@@ -33,12 +33,26 @@ async def send_meta_template(
         raise RuntimeError("Meta WhatsApp credentials not configured")
 
     # -------------------------------------------------
-    # 2️⃣ Endpoint
+    # 2️⃣ Normalizar número (E.164 sin +)
+    # -------------------------------------------------
+    to_number = to_number.replace("+", "").strip()
+
+    # -------------------------------------------------
+    # 3️⃣ Validaciones duras (anti-bugs Meta)
+    # -------------------------------------------------
+    if not parameters or not isinstance(parameters, list):
+        raise ValueError("Template parameters must be a non-empty list")
+
+    if any(p is None or str(p).strip() == "" for p in parameters):
+        raise ValueError("Template parameters cannot be empty")
+
+    # -------------------------------------------------
+    # 4️⃣ Endpoint
     # -------------------------------------------------
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
 
     # -------------------------------------------------
-    # 3️⃣ Payload CORRECTO (HEADER TEXT + BODY)
+    # 5️⃣ Payload CANÓNICO (PROBADO EN PROD)
     # -------------------------------------------------
     payload = {
         "messaging_product": "whatsapp",
@@ -46,22 +60,9 @@ async def send_meta_template(
         "type": "template",
         "template": {
             "name": template_name,
-            "language": {
-                "code": language_code,  # es_MX
-            },
+            "language": {"code": language_code},
             "components": [
                 {
-                    # 🔥 HEADER TEXT OBLIGATORIO
-                    "type": "header",
-                    "parameters": [
-                        {
-                            "type": "text",
-                            "text": "Recordatorio de cita"
-                        }
-                    ]
-                },
-                {
-                    # BODY variables {{1}}, {{2}}
                     "type": "body",
                     "parameters": [
                         {"type": "text", "text": str(p)}
@@ -78,23 +79,23 @@ async def send_meta_template(
     }
 
     logger.info(
-        "📤 Sending Meta template",
+        "📤 Sending Meta WhatsApp template",
         extra={
             "to": to_number,
             "template": template_name,
             "language": language_code,
-            "params": parameters,
+            "parameters": parameters,
         },
     )
 
     # -------------------------------------------------
-    # 4️⃣ Send
+    # 6️⃣ Send
     # -------------------------------------------------
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.post(url, json=payload, headers=headers)
 
     # -------------------------------------------------
-    # 5️⃣ Errors
+    # 7️⃣ Errors explícitos
     # -------------------------------------------------
     if response.status_code >= 400:
         logger.error(
@@ -102,9 +103,10 @@ async def send_meta_template(
             extra={
                 "status": response.status_code,
                 "response": response.text,
+                "payload": payload,
             },
         )
-        raise RuntimeError("Meta template send failed")
+        raise RuntimeError(f"Meta template send failed: {response.text}")
 
     logger.info("✅ Meta template sent successfully")
-    return True
+    return response.json()

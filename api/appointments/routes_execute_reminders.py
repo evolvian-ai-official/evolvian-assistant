@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+import logging
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
@@ -9,13 +10,12 @@ from api.modules.whatsapp.whatsapp_sender import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # =====================================================
 # Timezone fijo (por ahora)
 # =====================================================
 MEXICO_TZ = ZoneInfo("America/Mexico_City")
-CRON_INTERVAL_MINUTES = 5
-
 
 # =====================================================
 # Helpers
@@ -23,9 +23,10 @@ CRON_INTERVAL_MINUTES = 5
 def format_scheduled_time(iso_utc: str) -> str:
     """
     Convierte ISO UTC a horario México.
-    ⚠️ SIEMPRE devuelve string (nunca None)
+    ⚠️ Devuelve string vacío solo si el input es inválido
     """
     try:
+        iso_utc = iso_utc.replace("Z", "+00:00")
         dt_utc = datetime.fromisoformat(iso_utc)
         dt_local = dt_utc.astimezone(MEXICO_TZ)
         return dt_local.strftime("%A %d de %B, %I:%M %p")
@@ -49,13 +50,6 @@ def render_template(body: str, appointment: dict) -> str:
     )
 
 
-def is_aligned_with_cron(dt: datetime) -> bool:
-    """
-    Valida que el scheduled_at esté alineado al tick del cron
-    """
-    return dt.minute % CRON_INTERVAL_MINUTES == 0
-
-
 # =====================================================
 # Endpoint
 # =====================================================
@@ -64,19 +58,17 @@ async def execute_pending_reminders():
     """
     Ejecuta reminders pendientes cuyo scheduled_at <= now()
 
+    Reglas clave:
     - Scheduler trabaja en UTC
     - Mensaje se renderiza en horario México
-    - Respeta tick de cron
     - WhatsApp:
-        - Usa Meta Templates si existen
+        - Usa Meta Templates POSICIONALES si existen
         - Fallback a texto si no
     """
 
     now = datetime.now(timezone.utc)
 
-    print("\n==============================")
-    print(f"⏱️ REMINDER EXECUTION @ {now.isoformat()}")
-    print("==============================\n")
+    logger.info("⏱️ REMINDER EXECUTION START | %s", now.isoformat())
 
     response = (
         supabase
@@ -98,21 +90,18 @@ async def execute_pending_reminders():
         appointment_id = reminder["appointment_id"]
         client_id = reminder["client_id"]
         channel = reminder["channel"]
-        scheduled_at = datetime.fromisoformat(reminder["scheduled_at"])
-
-        print("\n------------------------------")
-        print(f"🔔 Reminder {reminder_id}")
-        print(f"📅 scheduled_at (UTC): {scheduled_at}")
-
-        # -------------------------------------------------
-        # 0️⃣ Validar cron
-        # -------------------------------------------------
-        if not is_aligned_with_cron(scheduled_at):
-            print(f"⏭️ SKIPPED — not aligned with cron ({CRON_INTERVAL_MINUTES}m)")
-            skipped += 1
-            continue
 
         try:
+            scheduled_at = datetime.fromisoformat(
+                reminder["scheduled_at"].replace("Z", "+00:00")
+            )
+
+            logger.info(
+                "🔔 Processing reminder | id=%s | scheduled_at=%s",
+                reminder_id,
+                scheduled_at.isoformat(),
+            )
+
             # -------------------------------------------------
             # 1️⃣ Appointment
             # -------------------------------------------------
@@ -127,10 +116,6 @@ async def execute_pending_reminders():
 
             if not appointment:
                 raise Exception("Appointment not found")
-
-            print(f"👤 Appointment {appointment_id}")
-            print(f"📞 Phone: {appointment.get('user_phone')}")
-            print(f"📧 Email: {appointment.get('user_email')}")
 
             # -------------------------------------------------
             # 2️⃣ Template
@@ -156,11 +141,8 @@ async def execute_pending_reminders():
             # Texto renderizado (solo fallback)
             message_body = render_template(template["body"], appointment)
 
-            print("📝 Message preview:")
-            print(message_body)
-
             # -------------------------------------------------
-            # 3️⃣ Envío (FIX DEFINITIVO)
+            # 3️⃣ Envío
             # -------------------------------------------------
             send_ok = False
 
@@ -170,7 +152,7 @@ async def execute_pending_reminders():
                     raise Exception("Missing phone")
 
                 # =========================
-                # 🔐 PARAMS 100% SEGUROS META
+                # 🔐 PARAMS SEGUROS PARA META
                 # =========================
                 raw_user_name = appointment.get("user_name")
                 raw_type = appointment.get("appointment_type")
@@ -190,35 +172,32 @@ async def execute_pending_reminders():
 
                 appointment_details = " - ".join(details_parts)
 
-                # Última línea de defensa (Meta ODIA vacíos)
+                # Última línea de defensa (Meta NO acepta vacíos)
+                if not user_name.strip():
+                    user_name = "Cliente"
+
                 if not appointment_details.strip():
                     appointment_details = "Cita programada"
 
-                print("🧪 META PARAMS →", [user_name, appointment_details])
-
-                # 🟦 META TEMPLATE
+                # 🟦 META TEMPLATE (si existe)
                 if template.get("template_name"):
-                    print(f"🟦 USING META TEMPLATE → {template['template_name']}")
-
                     send_ok = await send_whatsapp_template_for_client(
                         client_id=client_id,
                         to_number=phone,
                         template_name=template["template_name"],
                         language_code="es_MX",
                         parameters=[
-                            user_name,              # {{user_name}}
-                            appointment_details,    # {{appointment_details}}
+                            user_name,           # {{1}}
+                            appointment_details, # {{2}}
                         ],
                     )
 
-                # 🟩 TEXTO (fallback / chat / legacy)
+                # 🟩 TEXTO (fallback)
                 else:
-                    print("🟩 USING TEXT MESSAGE")
-
                     send_ok = await send_whatsapp_message_for_client(
                         client_id=client_id,
                         to_number=phone,
-                        message=message_body
+                        message=message_body,
                     )
 
             elif channel == "email":
@@ -226,7 +205,8 @@ async def execute_pending_reminders():
                 if not email:
                     raise Exception("Missing email")
 
-                print(f"📧 EMAIL → {email}")
+                # Placeholder futuro
+                logger.info("📧 EMAIL reminder | to=%s", email)
                 send_ok = True
 
             else:
@@ -240,32 +220,32 @@ async def execute_pending_reminders():
             # -------------------------------------------------
             supabase.table("appointment_reminders").update({
                 "status": "sent",
-                "updated_at": now.isoformat()
+                "updated_at": now.isoformat(),
             }).eq("id", reminder_id).execute()
 
             sent += 1
-            print("✅ SENT")
+            logger.info("✅ REMINDER SENT | id=%s", reminder_id)
 
         except Exception as e:
             failed += 1
-            print(f"❌ FAILED — {e}")
+            logger.exception("❌ REMINDER FAILED | id=%s | error=%s", reminder_id, e)
 
             supabase.table("appointment_reminders").update({
                 "status": "failed",
-                "updated_at": now.isoformat()
+                "updated_at": now.isoformat(),
             }).eq("id", reminder_id).execute()
 
-    print("\n==============================")
-    print("📊 EXECUTION SUMMARY")
-    print(f"Processed: {processed}")
-    print(f"Sent:      {sent}")
-    print(f"Skipped:   {skipped}")
-    print(f"Failed:    {failed}")
-    print("==============================\n")
+    logger.info(
+        "📊 REMINDER SUMMARY | processed=%s | sent=%s | failed=%s | skipped=%s",
+        processed,
+        sent,
+        failed,
+        skipped,
+    )
 
     return {
         "processed": processed,
         "sent": sent,
+        "failed": failed,
         "skipped": skipped,
-        "failed": failed
     }
