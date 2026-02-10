@@ -2,9 +2,8 @@ from fastapi import APIRouter, HTTPException
 import logging
 from datetime import datetime, timezone
 
-from api.config.config import settings
 from api.modules.assistant_rag.supabase_client import supabase
-from api.modules.whatsapp.meta_sender import send_meta_template
+from api.modules.whatsapp.meta_template_sender import send_meta_template
 from api.appointments.template_renderer import render_appointment_reminder
 
 router = APIRouter(
@@ -26,9 +25,16 @@ def normalize_phone(phone: str) -> str:
     if not phone:
         return phone
 
-    phone = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    phone = (
+        phone.replace(" ", "")
+        .replace("-", "")
+        .replace("(", "")
+        .replace(")", "")
+    )
+
     if not phone.startswith("+"):
         phone = f"+52{phone}"
+
     return phone
 
 
@@ -39,7 +45,7 @@ def normalize_phone(phone: str) -> str:
 async def send_meta_reminder(reminder_id: str):
     """
     Sends a WhatsApp appointment reminder using a Meta-approved template.
-    Safe for production (idempotent + locked).
+    Safe for production (idempotent + optimistic lock).
     """
 
     # 1️⃣ Fetch reminder
@@ -60,13 +66,13 @@ async def send_meta_reminder(reminder_id: str):
     if reminder.get("status") != "pending":
         return {
             "status": "skipped",
-            "reason": f"reminder status is {reminder.get('status')}"
+            "reason": f"reminder status is {reminder.get('status')}",
         }
 
     if reminder.get("channel") != "whatsapp":
         return {
             "status": "skipped",
-            "reason": "reminder channel is not whatsapp"
+            "reason": "reminder channel is not whatsapp",
         }
 
     # 3️⃣ Optimistic lock (avoid double send)
@@ -85,7 +91,7 @@ async def send_meta_reminder(reminder_id: str):
     if not lock_res.data:
         return {
             "status": "skipped",
-            "reason": "reminder already processed by another worker"
+            "reason": "reminder already processed by another worker",
         }
 
     # 4️⃣ Fetch appointment
@@ -119,18 +125,16 @@ async def send_meta_reminder(reminder_id: str):
 
     details = render_appointment_reminder(appointment)
 
-    # 6️⃣ Send Meta template
+    # 6️⃣ Send Meta template (USING ENV CREDS)
     try:
         await send_meta_template(
             to_number=to_number,
             template_name="appointment_reminder_v1",
-            language_code="es_MX",
+            language_code="es_MX",  # si hiciera ruido, probamos es / es_419
             parameters=[
                 appointment.get("user_name", ""),
                 details,
             ],
-            access_token=settings.META_ACCESS_TOKEN,
-            phone_number_id=settings.META_PHONE_NUMBER_ID,
         )
     except Exception as e:
         logger.exception("❌ Meta reminder failed")
