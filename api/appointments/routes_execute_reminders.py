@@ -26,7 +26,7 @@ def format_scheduled_time(iso_utc: str) -> str:
         dt_local = dt_utc.astimezone(MEXICO_TZ)
         return dt_local.strftime("%A %d de %B, %I:%M %p")
     except Exception:
-        return iso_utc
+        return ""
 
 
 def render_template(body: str, appointment: dict) -> str:
@@ -148,7 +148,7 @@ async def execute_pending_reminders():
             print(message_body)
 
             # -------------------------------------------------
-            # 3️⃣ Envío (FIX REAL)
+            # 3️⃣ Envío (FIX DEFINITIVO)
             # -------------------------------------------------
             send_ok = False
 
@@ -157,22 +157,32 @@ async def execute_pending_reminders():
                 if not phone:
                     raise Exception("Missing phone")
 
-                # 🔐 PARAMS SEGUROS PARA META
-                user_name = appointment.get("user_name") or "Cliente"
+                # =========================
+                # 🔐 PARAMS 100% SEGUROS
+                # =========================
+                raw_user_name = appointment.get("user_name")
+                raw_type = appointment.get("appointment_type")
+                raw_time = appointment.get("scheduled_time")
+
+                user_name = raw_user_name.strip() if raw_user_name else "Cliente"
 
                 details_parts = []
-                if appointment.get("appointment_type"):
-                    details_parts.append(appointment["appointment_type"])
-                if appointment.get("scheduled_time"):
-                    details_parts.append(
-                        format_scheduled_time(appointment["scheduled_time"])
-                    )
 
-                appointment_details = (
-                    " - ".join(details_parts)
-                    if details_parts
-                    else "Cita programada"
-                )
+                if raw_type and raw_type.strip():
+                    details_parts.append(raw_type.strip())
+
+                if raw_time:
+                    formatted_time = format_scheduled_time(raw_time)
+                    if formatted_time.strip():
+                        details_parts.append(formatted_time)
+
+                appointment_details = " - ".join(details_parts)
+
+                # 🔥 ÚLTIMA LÍNEA DE DEFENSA
+                if not appointment_details.strip():
+                    appointment_details = "Cita programada"
+
+                print("🧪 META PARAMS →", [user_name, appointment_details])
 
                 # 🟦 META TEMPLATE
                 if template.get("template_name"):
