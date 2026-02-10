@@ -21,6 +21,10 @@ CRON_INTERVAL_MINUTES = 5
 # Helpers
 # =====================================================
 def format_scheduled_time(iso_utc: str) -> str:
+    """
+    Convierte ISO UTC a horario México.
+    ⚠️ SIEMPRE devuelve string (nunca None)
+    """
     try:
         dt_utc = datetime.fromisoformat(iso_utc)
         dt_local = dt_utc.astimezone(MEXICO_TZ)
@@ -30,6 +34,9 @@ def format_scheduled_time(iso_utc: str) -> str:
 
 
 def render_template(body: str, appointment: dict) -> str:
+    """
+    Render simple para fallback de texto (NO Meta templates)
+    """
     scheduled_time = appointment.get("scheduled_time")
     if scheduled_time:
         scheduled_time = format_scheduled_time(scheduled_time)
@@ -43,6 +50,9 @@ def render_template(body: str, appointment: dict) -> str:
 
 
 def is_aligned_with_cron(dt: datetime) -> bool:
+    """
+    Valida que el scheduled_at esté alineado al tick del cron
+    """
     return dt.minute % CRON_INTERVAL_MINUTES == 0
 
 
@@ -57,7 +67,9 @@ async def execute_pending_reminders():
     - Scheduler trabaja en UTC
     - Mensaje se renderiza en horario México
     - Respeta tick de cron
-    - Usa Meta Templates si existen
+    - WhatsApp:
+        - Usa Meta Templates si existen
+        - Fallback a texto si no
     """
 
     now = datetime.now(timezone.utc)
@@ -158,7 +170,7 @@ async def execute_pending_reminders():
                     raise Exception("Missing phone")
 
                 # =========================
-                # 🔐 PARAMS 100% SEGUROS
+                # 🔐 PARAMS 100% SEGUROS META
                 # =========================
                 raw_user_name = appointment.get("user_name")
                 raw_type = appointment.get("appointment_type")
@@ -178,7 +190,7 @@ async def execute_pending_reminders():
 
                 appointment_details = " - ".join(details_parts)
 
-                # 🔥 ÚLTIMA LÍNEA DE DEFENSA
+                # Última línea de defensa (Meta ODIA vacíos)
                 if not appointment_details.strip():
                     appointment_details = "Cita programada"
 
@@ -194,12 +206,12 @@ async def execute_pending_reminders():
                         template_name=template["template_name"],
                         language_code="es_MX",
                         parameters=[
-                            user_name,
-                            appointment_details,
+                            user_name,              # {{user_name}}
+                            appointment_details,    # {{appointment_details}}
                         ],
                     )
 
-                # 🟩 TEXTO (fallback / chat)
+                # 🟩 TEXTO (fallback / chat / legacy)
                 else:
                     print("🟩 USING TEXT MESSAGE")
 
