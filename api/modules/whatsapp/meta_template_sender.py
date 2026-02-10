@@ -17,14 +17,13 @@ async def send_meta_template(
     """
     Envía un mensaje WhatsApp usando TEMPLATE de Meta.
 
-    ✔ Diseñado para REMINDERS / OUTBOUND
-    ❌ NO usar para chat libre / RAG
-    ✔ Soporta multitenant (BYO WhatsApp Business)
-    ✔ Compatible con templates que tienen HEADER
+    ✔ Reminders / outbound
+    ✔ Soporta HEADER + BODY
+    ✔ Producción estable
     """
 
     # -------------------------------------------------
-    # 1️⃣ Resolver credenciales (PRIORIDAD: cliente)
+    # 1️⃣ Credenciales
     # -------------------------------------------------
     phone_number_id = phone_number_id or os.getenv("META_PHONE_NUMBER_ID")
     access_token = access_token or os.getenv("META_ACCESS_TOKEN")
@@ -34,12 +33,12 @@ async def send_meta_template(
         raise RuntimeError("Meta WhatsApp credentials not configured")
 
     # -------------------------------------------------
-    # 2️⃣ Endpoint Meta
+    # 2️⃣ Endpoint
     # -------------------------------------------------
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
 
     # -------------------------------------------------
-    # 3️⃣ Payload TEMPLATE (FIX DEFINITIVO)
+    # 3️⃣ Payload CORRECTO (HEADER TEXT + BODY)
     # -------------------------------------------------
     payload = {
         "messaging_product": "whatsapp",
@@ -48,16 +47,21 @@ async def send_meta_template(
         "template": {
             "name": template_name,
             "language": {
-                "code": language_code,  # ej: es_MX
+                "code": language_code,  # es_MX
             },
             "components": [
                 {
-                    # 🔥 OBLIGATORIO si el template tiene HEADER en Meta
+                    # 🔥 HEADER TEXT OBLIGATORIO
                     "type": "header",
-                    "parameters": []
+                    "parameters": [
+                        {
+                            "type": "text",
+                            "text": "Recordatorio de cita"
+                        }
+                    ]
                 },
                 {
-                    # BODY con variables {{1}}, {{2}}, ...
+                    # BODY variables {{1}}, {{2}}
                     "type": "body",
                     "parameters": [
                         {"type": "text", "text": str(p)}
@@ -79,19 +83,18 @@ async def send_meta_template(
             "to": to_number,
             "template": template_name,
             "language": language_code,
-            "phone_number_id": phone_number_id,
-            "params_count": len(parameters),
+            "params": parameters,
         },
     )
 
     # -------------------------------------------------
-    # 4️⃣ Send request
+    # 4️⃣ Send
     # -------------------------------------------------
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.post(url, json=payload, headers=headers)
 
     # -------------------------------------------------
-    # 5️⃣ Error handling (CLARO)
+    # 5️⃣ Errors
     # -------------------------------------------------
     if response.status_code >= 400:
         logger.error(
@@ -99,22 +102,9 @@ async def send_meta_template(
             extra={
                 "status": response.status_code,
                 "response": response.text,
-                "to": to_number,
-                "template": template_name,
-                "language": language_code,
-                "phone_number_id": phone_number_id,
             },
         )
-        raise RuntimeError(
-            f"Meta template send failed: {response.status_code}"
-        )
+        raise RuntimeError("Meta template send failed")
 
-    logger.info(
-        "✅ Meta template sent successfully",
-        extra={
-            "to": to_number,
-            "template": template_name,
-        },
-    )
-
+    logger.info("✅ Meta template sent successfully")
     return True
