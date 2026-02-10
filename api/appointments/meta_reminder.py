@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.meta_template_sender import send_meta_template
-from api.appointments.template_renderer import render_appointment_reminder
 
 router = APIRouter(
     prefix="/appointments/reminders",
@@ -18,10 +17,6 @@ logger = logging.getLogger(__name__)
 # Utils
 # -------------------------
 def normalize_phone(phone: str) -> str:
-    """
-    Normalize phone to E.164.
-    Assumes MX by default if no country code.
-    """
     if not phone:
         return phone
 
@@ -32,10 +27,23 @@ def normalize_phone(phone: str) -> str:
         .replace(")", "")
     )
 
-    if not phone.startswith("+"):
-        phone = f"+52{phone}"
+    return phone if phone.startswith("+") else f"+52{phone}"
 
-    return phone
+
+def render_appointment_reminder(appointment: dict) -> str:
+    """
+    Render simple del detalle de la cita.
+    SOLO texto, NO envía mensajes.
+    """
+    parts = []
+
+    if appointment.get("scheduled_at"):
+        parts.append(f"📅 {appointment['scheduled_at']}")
+
+    if appointment.get("appointment_type"):
+        parts.append(f"📌 {appointment['appointment_type']}")
+
+    return "\n".join(parts) or "Detalles de tu cita"
 
 
 # -------------------------
@@ -43,40 +51,27 @@ def normalize_phone(phone: str) -> str:
 # -------------------------
 @router.post("/{reminder_id}/send-meta")
 async def send_meta_reminder(reminder_id: str):
-    """
-    Sends a WhatsApp appointment reminder using a Meta-approved template.
-    Safe for production (idempotent + optimistic lock).
-    """
 
-    # 1️⃣ Fetch reminder
-    reminder_res = (
+    reminder = (
         supabase
         .table("appointment_reminders")
         .select("*")
         .eq("id", reminder_id)
         .single()
         .execute()
+        .data
     )
 
-    reminder = reminder_res.data
     if not reminder:
         raise HTTPException(status_code=404, detail="Reminder not found")
 
-    # 2️⃣ Guard rails
     if reminder.get("status") != "pending":
-        return {
-            "status": "skipped",
-            "reason": f"reminder status is {reminder.get('status')}",
-        }
+        return {"status": "skipped", "reason": "not pending"}
 
     if reminder.get("channel") != "whatsapp":
-        return {
-            "status": "skipped",
-            "reason": "reminder channel is not whatsapp",
-        }
+        return {"status": "skipped", "reason": "not whatsapp"}
 
-    # 3️⃣ Optimistic lock (avoid double send)
-    lock_res = (
+    lock = (
         supabase
         .table("appointment_reminders")
         .update({
@@ -88,23 +83,19 @@ async def send_meta_reminder(reminder_id: str):
         .execute()
     )
 
-    if not lock_res.data:
-        return {
-            "status": "skipped",
-            "reason": "reminder already processed by another worker",
-        }
+    if not lock.data:
+        return {"status": "skipped", "reason": "already processed"}
 
-    # 4️⃣ Fetch appointment
-    appointment_res = (
+    appointment = (
         supabase
         .table("appointments")
         .select("*")
         .eq("id", reminder["appointment_id"])
         .single()
         .execute()
+        .data
     )
 
-    appointment = appointment_res.data
     if not appointment:
         supabase.table("appointment_reminders").update({
             "status": "failed",
@@ -113,24 +104,17 @@ async def send_meta_reminder(reminder_id: str):
 
         raise HTTPException(status_code=404, detail="Appointment not found")
 
-    # 5️⃣ Prepare data
     to_number = normalize_phone(appointment.get("user_phone"))
     if not to_number:
-        supabase.table("appointment_reminders").update({
-            "status": "failed",
-            "error_reason": "invalid phone number",
-        }).eq("id", reminder_id).execute()
-
         raise HTTPException(status_code=400, detail="Invalid phone number")
 
     details = render_appointment_reminder(appointment)
 
-    # 6️⃣ Send Meta template (USING ENV CREDS)
     try:
         await send_meta_template(
             to_number=to_number,
             template_name="appointment_reminder_v1",
-            language_code="es_MX",  # si hiciera ruido, probamos es / es_419
+            language_code="es_MX",
             parameters=[
                 appointment.get("user_name", ""),
                 details,
@@ -138,26 +122,15 @@ async def send_meta_reminder(reminder_id: str):
         )
     except Exception as e:
         logger.exception("❌ Meta reminder failed")
-
         supabase.table("appointment_reminders").update({
             "status": "failed",
             "error_reason": str(e),
         }).eq("id", reminder_id).execute()
-
         raise HTTPException(status_code=500, detail="Meta reminder failed")
 
-    # 7️⃣ Mark as sent
     supabase.table("appointment_reminders").update({
         "status": "sent",
         "sent_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", reminder_id).execute()
 
-    logger.info("✅ Meta reminder sent", extra={
-        "reminder_id": reminder_id,
-        "phone": to_number,
-    })
-
-    return {
-        "status": "sent",
-        "reminder_id": reminder_id,
-    }
+    return {"status": "sent", "reminder_id": reminder_id}
