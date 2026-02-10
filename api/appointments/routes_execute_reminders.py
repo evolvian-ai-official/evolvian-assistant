@@ -4,7 +4,8 @@ from zoneinfo import ZoneInfo
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
-    send_whatsapp_message_for_client
+    send_whatsapp_message_for_client,
+    send_whatsapp_template_for_client,
 )
 
 router = APIRouter()
@@ -13,8 +14,7 @@ router = APIRouter()
 # Timezone fijo (por ahora)
 # =====================================================
 MEXICO_TZ = ZoneInfo("America/Mexico_City")
-
-CRON_INTERVAL_MINUTES = 5  # 🔒 regla explícita
+CRON_INTERVAL_MINUTES = 5
 
 
 # =====================================================
@@ -43,7 +43,6 @@ def render_template(body: str, appointment: dict) -> str:
 
 
 def is_aligned_with_cron(dt: datetime) -> bool:
-    """Valida que el scheduled_at caiga en múltiplos del cron"""
     return dt.minute % CRON_INTERVAL_MINUTES == 0
 
 
@@ -57,7 +56,8 @@ async def execute_pending_reminders():
 
     - Scheduler trabaja en UTC
     - Mensaje se renderiza en horario México
-    - NO se envían reminders fuera de tick de cron
+    - Respeta tick de cron
+    - Usa Meta Templates si existen
     """
 
     now = datetime.now(timezone.utc)
@@ -93,13 +93,10 @@ async def execute_pending_reminders():
         print(f"📅 scheduled_at (UTC): {scheduled_at}")
 
         # -------------------------------------------------
-        # 0️⃣ Validar alineación con cron
+        # 0️⃣ Validar cron
         # -------------------------------------------------
         if not is_aligned_with_cron(scheduled_at):
-            print(
-                f"⏭️ SKIPPED — scheduled_at no alineado al cron "
-                f"({CRON_INTERVAL_MINUTES}m)"
-            )
+            print(f"⏭️ SKIPPED — not aligned with cron ({CRON_INTERVAL_MINUTES}m)")
             skipped += 1
             continue
 
@@ -144,13 +141,14 @@ async def execute_pending_reminders():
             if not template:
                 raise Exception("Template not found or inactive")
 
+            # Texto renderizado (solo para fallback)
             message_body = render_template(template["body"], appointment)
 
             print("📝 Message preview:")
             print(message_body)
 
             # -------------------------------------------------
-            # 3️⃣ Envío
+            # 3️⃣ Envío (FIX CLAVE)
             # -------------------------------------------------
             send_ok = False
 
@@ -159,12 +157,32 @@ async def execute_pending_reminders():
                 if not phone:
                     raise Exception("Missing phone")
 
-                print(f"📤 Sending WhatsApp to {phone}")
-                send_ok = await send_whatsapp_message_for_client(
-                    client_id=client_id,
-                    to_number=phone,
-                    message=message_body
-                )
+                # 🟦 META TEMPLATE
+                if template.get("template_name"):
+                    print(f"🟦 USING META TEMPLATE → {template['template_name']}")
+
+                    send_ok = await send_whatsapp_template_for_client(
+                        client_id=client_id,
+                        to_number=phone,
+                        template_name=template["template_name"],
+                        language_code="es_MX",
+                        parameters=[
+                            appointment.get("user_name", ""),
+                            format_scheduled_time(
+                                appointment.get("scheduled_time", "")
+                            ),
+                        ],
+                    )
+
+                # 🟩 TEXTO (fallback / chat)
+                else:
+                    print("🟩 USING TEXT MESSAGE")
+
+                    send_ok = await send_whatsapp_message_for_client(
+                        client_id=client_id,
+                        to_number=phone,
+                        message=message_body
+                    )
 
             elif channel == "email":
                 email = appointment.get("user_email")
