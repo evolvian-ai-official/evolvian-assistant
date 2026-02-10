@@ -141,14 +141,14 @@ async def execute_pending_reminders():
             if not template:
                 raise Exception("Template not found or inactive")
 
-            # Texto renderizado (solo para fallback)
+            # Texto renderizado (solo fallback)
             message_body = render_template(template["body"], appointment)
 
             print("📝 Message preview:")
             print(message_body)
 
             # -------------------------------------------------
-            # 3️⃣ Envío (FIX CLAVE)
+            # 3️⃣ Envío (FIX REAL)
             # -------------------------------------------------
             send_ok = False
 
@@ -156,6 +156,23 @@ async def execute_pending_reminders():
                 phone = appointment.get("user_phone")
                 if not phone:
                     raise Exception("Missing phone")
+
+                # 🔐 PARAMS SEGUROS PARA META
+                user_name = appointment.get("user_name") or "Cliente"
+
+                details_parts = []
+                if appointment.get("appointment_type"):
+                    details_parts.append(appointment["appointment_type"])
+                if appointment.get("scheduled_time"):
+                    details_parts.append(
+                        format_scheduled_time(appointment["scheduled_time"])
+                    )
+
+                appointment_details = (
+                    " - ".join(details_parts)
+                    if details_parts
+                    else "Cita programada"
+                )
 
                 # 🟦 META TEMPLATE
                 if template.get("template_name"):
@@ -167,10 +184,8 @@ async def execute_pending_reminders():
                         template_name=template["template_name"],
                         language_code="es_MX",
                         parameters=[
-                            appointment.get("user_name", ""),
-                            format_scheduled_time(
-                                appointment.get("scheduled_time", "")
-                            ),
+                            user_name,
+                            appointment_details,
                         ],
                     )
 
