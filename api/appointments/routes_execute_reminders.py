@@ -30,7 +30,8 @@ def format_scheduled_time(iso_utc: str) -> str:
         dt_utc = datetime.fromisoformat(iso_utc)
         dt_local = dt_utc.astimezone(MEXICO_TZ)
         return dt_local.strftime("%A %d de %B, %I:%M %p")
-    except Exception:
+    except Exception as e:
+        logger.warning("⚠️ Failed to format scheduled_time | value=%s | error=%s", iso_utc, e)
         return ""
 
 
@@ -67,8 +68,7 @@ async def execute_pending_reminders():
     """
 
     now = datetime.now(timezone.utc)
-
-    logger.info("⏱️ REMINDER EXECUTION START | %s", now.isoformat())
+    logger.info("⏱️ REMINDER EXECUTION START | now=%s", now.isoformat())
 
     response = (
         supabase
@@ -80,6 +80,7 @@ async def execute_pending_reminders():
     )
 
     reminders = response.data or []
+    logger.info("📥 Pending reminders fetched | count=%s", len(reminders))
 
     processed = sent = failed = skipped = 0
 
@@ -91,13 +92,20 @@ async def execute_pending_reminders():
         client_id = reminder["client_id"]
         channel = reminder["channel"]
 
+        logger.info(
+            "🔔 Processing reminder | id=%s | client_id=%s | channel=%s",
+            reminder_id,
+            client_id,
+            channel,
+        )
+
         try:
             scheduled_at = datetime.fromisoformat(
                 reminder["scheduled_at"].replace("Z", "+00:00")
             )
 
             logger.info(
-                "🔔 Processing reminder | id=%s | scheduled_at=%s",
+                "📅 Reminder schedule | id=%s | scheduled_at_utc=%s",
                 reminder_id,
                 scheduled_at.isoformat(),
             )
@@ -116,6 +124,13 @@ async def execute_pending_reminders():
 
             if not appointment:
                 raise Exception("Appointment not found")
+
+            logger.info(
+                "👤 Appointment loaded | id=%s | phone=%s | email=%s",
+                appointment_id,
+                appointment.get("user_phone"),
+                appointment.get("user_email"),
+            )
 
             # -------------------------------------------------
             # 2️⃣ Template
@@ -138,6 +153,12 @@ async def execute_pending_reminders():
             if not template:
                 raise Exception("Template not found or inactive")
 
+            logger.info(
+                "🧩 Template resolved | id=%s | name=%s",
+                template_id,
+                template.get("template_name"),
+            )
+
             # Texto renderizado (solo fallback)
             message_body = render_template(template["body"], appointment)
 
@@ -151,9 +172,6 @@ async def execute_pending_reminders():
                 if not phone:
                     raise Exception("Missing phone")
 
-                # =========================
-                # 🔐 PARAMS SEGUROS PARA META
-                # =========================
                 raw_user_name = appointment.get("user_name")
                 raw_type = appointment.get("appointment_type")
                 raw_time = appointment.get("scheduled_time")
@@ -172,15 +190,28 @@ async def execute_pending_reminders():
 
                 appointment_details = " - ".join(details_parts)
 
-                # Última línea de defensa (Meta NO acepta vacíos)
+                # Blindaje final Meta
                 if not user_name.strip():
                     user_name = "Cliente"
 
                 if not appointment_details.strip():
                     appointment_details = "Cita programada"
 
-                # 🟦 META TEMPLATE (si existe)
+                logger.info(
+                    "🧪 META PARAMS READY | reminder_id=%s | params=[%s, %s]",
+                    reminder_id,
+                    user_name,
+                    appointment_details,
+                )
+
+                # 🟦 META TEMPLATE
                 if template.get("template_name"):
+                    logger.info(
+                        "📤 Sending META TEMPLATE | reminder_id=%s | template=%s",
+                        reminder_id,
+                        template["template_name"],
+                    )
+
                     send_ok = await send_whatsapp_template_for_client(
                         client_id=client_id,
                         to_number=phone,
@@ -192,8 +223,13 @@ async def execute_pending_reminders():
                         ],
                     )
 
-                # 🟩 TEXTO (fallback)
+                # 🟩 TEXTO fallback
                 else:
+                    logger.info(
+                        "📤 Sending TEXT fallback | reminder_id=%s",
+                        reminder_id,
+                    )
+
                     send_ok = await send_whatsapp_message_for_client(
                         client_id=client_id,
                         to_number=phone,
@@ -205,8 +241,7 @@ async def execute_pending_reminders():
                 if not email:
                     raise Exception("Missing email")
 
-                # Placeholder futuro
-                logger.info("📧 EMAIL reminder | to=%s", email)
+                logger.info("📧 EMAIL reminder (stub) | to=%s", email)
                 send_ok = True
 
             else:
@@ -228,7 +263,12 @@ async def execute_pending_reminders():
 
         except Exception as e:
             failed += 1
-            logger.exception("❌ REMINDER FAILED | id=%s | error=%s", reminder_id, e)
+            logger.exception(
+                "❌ REMINDER FAILED | id=%s | appointment_id=%s | client_id=%s",
+                reminder_id,
+                appointment_id,
+                client_id,
+            )
 
             supabase.table("appointment_reminders").update({
                 "status": "failed",
