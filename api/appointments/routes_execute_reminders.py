@@ -13,32 +13,30 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # =====================================================
-# Timezone fijo (por ahora)
+# Timezone fijo (México)
 # =====================================================
 MEXICO_TZ = ZoneInfo("America/Mexico_City")
+
 
 # =====================================================
 # Helpers
 # =====================================================
 def format_scheduled_time(iso_utc: str) -> str:
-    """
-    Convierte ISO UTC a horario México.
-    ⚠️ Devuelve string vacío solo si el input es inválido
-    """
     try:
         iso_utc = iso_utc.replace("Z", "+00:00")
         dt_utc = datetime.fromisoformat(iso_utc)
         dt_local = dt_utc.astimezone(MEXICO_TZ)
         return dt_local.strftime("%A %d de %B, %I:%M %p")
     except Exception as e:
-        logger.warning("⚠️ Failed to format scheduled_time | value=%s | error=%s", iso_utc, e)
+        logger.warning(
+            "⚠️ Failed to format scheduled_time | value=%s | error=%s",
+            iso_utc,
+            e,
+        )
         return ""
 
 
 def render_template(body: str, appointment: dict) -> str:
-    """
-    Render simple para fallback de texto (NO Meta templates)
-    """
     scheduled_time = appointment.get("scheduled_time")
     if scheduled_time:
         scheduled_time = format_scheduled_time(scheduled_time)
@@ -56,16 +54,6 @@ def render_template(body: str, appointment: dict) -> str:
 # =====================================================
 @router.post("/reminders/execute")
 async def execute_pending_reminders():
-    """
-    Ejecuta reminders pendientes cuyo scheduled_at <= now()
-
-    Reglas clave:
-    - Scheduler trabaja en UTC
-    - Mensaje se renderiza en horario México
-    - WhatsApp:
-        - Usa Meta Templates POSICIONALES si existen
-        - Fallback a texto si no
-    """
 
     now = datetime.now(timezone.utc)
     logger.info("⏱️ REMINDER EXECUTION START | now=%s", now.isoformat())
@@ -100,131 +88,123 @@ async def execute_pending_reminders():
         )
 
         try:
-            scheduled_at = datetime.fromisoformat(
-                reminder["scheduled_at"].replace("Z", "+00:00")
-            )
-
-            logger.info(
-                "📅 Reminder schedule | id=%s | scheduled_at_utc=%s",
-                reminder_id,
-                scheduled_at.isoformat(),
-            )
-
             # -------------------------------------------------
-            # 1️⃣ Appointment
+            # 1️⃣ Load Appointment
             # -------------------------------------------------
-            appointment = (
+            appointment_res = (
                 supabase
                 .table("appointments")
                 .select("*")
                 .eq("id", appointment_id)
                 .single()
                 .execute()
-            ).data
+            )
 
+            appointment = appointment_res.data
             if not appointment:
                 raise Exception("Appointment not found")
 
-            logger.info(
-                "👤 Appointment loaded | id=%s | phone=%s | email=%s",
-                appointment_id,
-                appointment.get("user_phone"),
-                appointment.get("user_email"),
-            )
-
             # -------------------------------------------------
-            # 2️⃣ Template
+            # 2️⃣ Load Template
             # -------------------------------------------------
-            template_id = reminder.get("template_id")
-            if not template_id:
-                raise Exception("Missing template_id")
-
-            template = (
+            template_res = (
                 supabase
                 .table("message_templates")
                 .select("*")
-                .eq("id", template_id)
+                .eq("id", reminder["template_id"])
                 .eq("client_id", client_id)
                 .eq("is_active", True)
                 .single()
                 .execute()
-            ).data
+            )
 
+            template = template_res.data
             if not template:
                 raise Exception("Template not found or inactive")
 
             logger.info(
                 "🧩 Template resolved | id=%s | name=%s",
-                template_id,
+                template["id"],
                 template.get("template_name"),
             )
 
-            # Texto renderizado (solo fallback)
-            message_body = render_template(template["body"], appointment)
-
             # -------------------------------------------------
-            # 3️⃣ Envío
+            # 3️⃣ Channel Handling
             # -------------------------------------------------
             send_ok = False
 
             if channel == "whatsapp":
+
                 phone = appointment.get("user_phone")
                 if not phone:
                     raise Exception("Missing phone")
 
-                raw_user_name = appointment.get("user_name")
-                raw_type = appointment.get("appointment_type")
-                raw_time = appointment.get("scheduled_time")
-
-                user_name = raw_user_name.strip() if raw_user_name else "Cliente"
-
-                details_parts = []
-
-                if raw_type and raw_type.strip():
-                    details_parts.append(raw_type.strip())
-
-                if raw_time:
-                    formatted_time = format_scheduled_time(raw_time)
-                    if formatted_time.strip():
-                        details_parts.append(formatted_time)
-
-                appointment_details = " - ".join(details_parts)
-
-                # Blindaje final Meta
-                if not user_name.strip():
-                    user_name = "Cliente"
-
-                if not appointment_details.strip():
-                    appointment_details = "Cita programada"
-
-                logger.info(
-                    "🧪 META PARAMS READY | reminder_id=%s | params=[%s, %s]",
-                    reminder_id,
-                    user_name,
-                    appointment_details,
-                )
-
-                # 🟦 META TEMPLATE
+                # =====================================================
+                # META TEMPLATE FLOW (OFICIAL EVOLVIAN)
+                # =====================================================
                 if template.get("template_name"):
+
+                    template_name = template["template_name"]
+                    language_code = template.get("language", "es_MX")
+                    expected_params = template.get("parameter_count", 0)
+
+                    raw_user_name = appointment.get("user_name") or "Cliente"
+                    raw_type = appointment.get("appointment_type") or ""
+                    raw_time = appointment.get("scheduled_time")
+
+                    user_name = raw_user_name.strip() or "Cliente"
+
+                    details_parts = []
+
+                    if raw_type.strip():
+                        details_parts.append(raw_type.strip())
+
+                    if raw_time:
+                        formatted_time = format_scheduled_time(raw_time)
+                        if formatted_time.strip():
+                            details_parts.append(formatted_time)
+
+                    appointment_details = " - ".join(details_parts).strip()
+
+                    if not appointment_details:
+                        appointment_details = "Cita programada"
+
+                    parameters = [
+                        user_name,
+                        appointment_details,
+                    ]
+
+                    if expected_params != len(parameters):
+                        raise Exception(
+                            f"Parameter count mismatch | expected={expected_params} | got={len(parameters)}"
+                        )
+
                     logger.info(
-                        "📤 Sending META TEMPLATE | reminder_id=%s | template=%s",
+                        "📤 Sending META TEMPLATE | reminder_id=%s | template=%s | params=%s",
                         reminder_id,
-                        template["template_name"],
+                        template_name,
+                        parameters,
                     )
 
                     send_ok = await send_whatsapp_template_for_client(
                         client_id=client_id,
                         to_number=phone,
-                        template_name=template["template_name"],
-                        language_code="es_MX",
-                        parameters=[
-                            user_name,           # {{1}}
-                            appointment_details, # {{2}}
-                        ],
+                        template_name=template_name,
+                        language_code=language_code,
+                        parameters=parameters,
                     )
 
-                # 🟩 TEXTO fallback
+                # =====================================================
+                # TEXT FALLBACK (solo si realmente existe body)
+                # =====================================================
                 else:
+
+                    body = template.get("body")
+                    if not body:
+                        raise Exception("Text template missing body")
+
+                    message_body = render_template(body, appointment)
+
                     logger.info(
                         "📤 Sending TEXT fallback | reminder_id=%s",
                         reminder_id,
@@ -237,6 +217,7 @@ async def execute_pending_reminders():
                     )
 
             elif channel == "email":
+
                 email = appointment.get("user_email")
                 if not email:
                     raise Exception("Missing email")
@@ -251,7 +232,7 @@ async def execute_pending_reminders():
                 raise Exception("Provider send failed")
 
             # -------------------------------------------------
-            # 4️⃣ Mark sent
+            # 4️⃣ Mark Sent
             # -------------------------------------------------
             supabase.table("appointment_reminders").update({
                 "status": "sent",
@@ -262,7 +243,9 @@ async def execute_pending_reminders():
             logger.info("✅ REMINDER SENT | id=%s", reminder_id)
 
         except Exception as e:
+
             failed += 1
+
             logger.exception(
                 "❌ REMINDER FAILED | id=%s | appointment_id=%s | client_id=%s",
                 reminder_id,
