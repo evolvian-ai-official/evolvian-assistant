@@ -105,7 +105,7 @@ async def execute_pending_reminders():
                 raise Exception("Appointment not found")
 
             # -------------------------------------------------
-            # 2️⃣ Load Template
+            # 2️⃣ Load Client Template
             # -------------------------------------------------
             template_res = (
                 supabase
@@ -128,11 +128,11 @@ async def execute_pending_reminders():
                 template.get("template_name"),
             )
 
-            # -------------------------------------------------
-            # 3️⃣ Channel Handling
-            # -------------------------------------------------
             send_ok = False
 
+            # =====================================================
+            # WHATSAPP
+            # =====================================================
             if channel == "whatsapp":
 
                 phone = appointment.get("user_phone")
@@ -140,14 +140,33 @@ async def execute_pending_reminders():
                     raise Exception("Missing phone")
 
                 # =====================================================
-                # META TEMPLATE FLOW (OFICIAL EVOLVIAN)
+                # META TEMPLATE FLOW (OFICIAL)
                 # =====================================================
                 if template.get("template_name"):
 
                     template_name = template["template_name"]
-                    language_code = template.get("language", "es_MX")
-                    expected_params = template.get("parameter_count", 0)
 
+                    # 🔹 Validar contra meta_approved_templates
+                    meta_res = (
+                        supabase
+                        .table("meta_approved_templates")
+                        .select("parameter_count, language, is_active")
+                        .eq("template_name", template_name)
+                        .eq("is_active", True)
+                        .single()
+                        .execute()
+                    )
+
+                    meta_template = meta_res.data
+                    if not meta_template:
+                        raise Exception(
+                            f"Meta approved template not found: {template_name}"
+                        )
+
+                    expected_params = meta_template["parameter_count"]
+                    language_code = meta_template["language"]
+
+                    # 🔹 Construir parámetros POSICIONALES
                     raw_user_name = appointment.get("user_name") or "Cliente"
                     raw_type = appointment.get("appointment_type") or ""
                     raw_time = appointment.get("scheduled_time")
@@ -165,7 +184,6 @@ async def execute_pending_reminders():
                             details_parts.append(formatted_time)
 
                     appointment_details = " - ".join(details_parts).strip()
-
                     if not appointment_details:
                         appointment_details = "Cita programada"
 
@@ -195,7 +213,7 @@ async def execute_pending_reminders():
                     )
 
                 # =====================================================
-                # TEXT FALLBACK (solo si realmente existe body)
+                # TEXT FALLBACK (legacy controlado)
                 # =====================================================
                 else:
 
@@ -216,6 +234,9 @@ async def execute_pending_reminders():
                         message=message_body,
                     )
 
+            # =====================================================
+            # EMAIL (stub)
+            # =====================================================
             elif channel == "email":
 
                 email = appointment.get("user_email")
@@ -242,8 +263,7 @@ async def execute_pending_reminders():
             sent += 1
             logger.info("✅ REMINDER SENT | id=%s", reminder_id)
 
-        except Exception as e:
-
+        except Exception:
             failed += 1
 
             logger.exception(
