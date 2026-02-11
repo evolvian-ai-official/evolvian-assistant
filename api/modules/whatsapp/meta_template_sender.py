@@ -17,8 +17,9 @@ async def send_meta_template(
     """
     Envía un mensaje WhatsApp usando TEMPLATE de Meta (POSICIONAL).
 
-    ✔ SOLO templates con {{1}}, {{2}}, {{3}}
+    ✔ Template POSICIONAL ({{1}}, {{2}})
     ✔ SOLO BODY (sin header/footer)
+    ✔ Parámetros nunca vacíos (blindaje Meta 400)
     ✔ Producción estable (Meta Cloud API)
     """
 
@@ -33,18 +34,38 @@ async def send_meta_template(
         raise RuntimeError("Meta WhatsApp credentials not configured")
 
     # -------------------------------------------------
-    # 2️⃣ Normalizar número (E.164 sin +)
+    # 2️⃣ Normalizar número (Meta Templates NO acepta '+')
     # -------------------------------------------------
-    to_number = to_number.replace("+", "").strip()
+    to_number = to_number.replace("+", "").replace(" ", "").strip()
 
     # -------------------------------------------------
-    # 3️⃣ Validaciones duras (anti-bugs Meta)
+    # 3️⃣ Normalizar y blindar parámetros (CLAVE)
     # -------------------------------------------------
     if not parameters or not isinstance(parameters, list):
         raise ValueError("Template parameters must be a non-empty list")
 
-    if any(p is None or str(p).strip() == "" for p in parameters):
-        raise ValueError("Template parameters cannot be empty")
+    # Limpieza + fallback duro
+    safe_parameters: list[str] = []
+    for idx, p in enumerate(parameters):
+        if p is None:
+            safe_parameters.append("Cita programada")
+        else:
+            p_str = str(p).strip()
+            safe_parameters.append(
+                p_str if p_str else "Cita programada"
+            )
+
+    # ⚠️ Para appointment_reminder_v2 deben ser EXACTAMENTE 2
+    if len(safe_parameters) != 2:
+        raise ValueError(
+            f"Invalid Meta parameter count: expected 2, got {len(safe_parameters)}"
+        )
+
+    logger.info(
+        "🧪 META FINAL PARAMS | template=%s | params=%s",
+        template_name,
+        safe_parameters,
+    )
 
     # -------------------------------------------------
     # 4️⃣ Endpoint
@@ -65,8 +86,8 @@ async def send_meta_template(
                 {
                     "type": "body",
                     "parameters": [
-                        {"type": "text", "text": str(p)}
-                        for p in parameters
+                        {"type": "text", "text": p}
+                        for p in safe_parameters
                     ],
                 }
             ],
@@ -84,7 +105,6 @@ async def send_meta_template(
             "to": to_number,
             "template": template_name,
             "language": language_code,
-            "parameters": parameters,
         },
     )
 
@@ -95,7 +115,7 @@ async def send_meta_template(
         response = await client.post(url, json=payload, headers=headers)
 
     # -------------------------------------------------
-    # 7️⃣ Errors explícitos
+    # 7️⃣ Errors explícitos (NO silenciosos)
     # -------------------------------------------------
     if response.status_code >= 400:
         logger.error(
@@ -103,7 +123,8 @@ async def send_meta_template(
             extra={
                 "status": response.status_code,
                 "response": response.text,
-                "payload": payload,
+                "template": template_name,
+                "params": safe_parameters,
             },
         )
         raise RuntimeError(f"Meta template send failed: {response.text}")

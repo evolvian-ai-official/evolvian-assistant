@@ -10,27 +10,33 @@ from api.config.config import supabase
 # =========================
 router = APIRouter(
     prefix="/message_templates",
-    tags=["Appointments"]
+    tags=["Message Templates"]
 )
 
 # =========================
-# Frequency Model (DB aligned)
+# Frequency Model
 # =========================
 class FrequencyRule(BaseModel):
     offset_minutes: int
     label: Optional[str] = None
 
 # =========================
-# Response Model
+# Response Model (FIX REAL)
 # =========================
 class MessageTemplateResponse(BaseModel):
     id: uuid.UUID
     channel: str
     type: str
-    body: str
-    template_name: str
-    label: Optional[str]
+
+    # ✅ WhatsApp = None, Email = string
+    body: Optional[str] = None
+
+    template_name: Optional[str] = None
+    label: Optional[str] = None
     frequency: Optional[List[FrequencyRule]] = None
+
+    # UI helper
+    is_meta_template: bool
 
 # =========================
 # Endpoint
@@ -47,25 +53,28 @@ def get_message_templates(
     Returns active message templates for a client.
 
     Used by:
-    - Templates UI (ALL templates)
-    - Create Appointment modal (filtered by type)
+    - Templates UI
+    - Appointment creation
     """
-
-    if not client_id:
-        raise HTTPException(status_code=400, detail="client_id is required")
 
     query = (
         supabase
         .table("message_templates")
-        .select("id, channel, type, body, frequency, template_name, label")
+        .select(
+            "id, channel, type, body, frequency, template_name, label"
+        )
         .eq("client_id", str(client_id))
         .eq("is_active", True)
     )
 
-    # ✅ Filtrar solo si viene type
     if type:
         query = query.eq("type", type)
 
     res = query.order("template_name").execute()
+    templates = res.data or []
 
-    return res.data or []
+    # UI helper flag
+    for t in templates:
+        t["is_meta_template"] = bool(t.get("template_name"))
+
+    return templates

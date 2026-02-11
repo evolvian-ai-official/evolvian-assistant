@@ -93,6 +93,7 @@ from api.appointments.cancel_appointment import router as cancel_appointment_rou
 
 from api.modules.whatsapp.webhook import router as whatsapp_webhook_router
 from api.appointments.meta_reminder import router as meta_reminder_router
+from api.templates.meta_approved_templates import router as meta_templates_router
 
 
 #Reminders
@@ -364,6 +365,7 @@ app.include_router(templates_router,tags=["Message Templates"])
 #whats
 
 app.include_router(meta_reminder_router)
+app.include_router(meta_templates_router)
 
 
 # Cron & embed

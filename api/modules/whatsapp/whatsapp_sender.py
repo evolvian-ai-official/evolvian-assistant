@@ -109,7 +109,7 @@ async def send_whatsapp_message_for_client(
         .eq("client_id", client_id)
         .eq("type", "whatsapp")
         .eq("is_active", True)
-        .single()
+        .limit(1)
         .execute()
     )
 
@@ -117,13 +117,16 @@ async def send_whatsapp_message_for_client(
         logger.error("❌ WhatsApp no configurado | client_id=%s", client_id)
         return False
 
-    to_number = to_number.replace(" ", "")
+    channel = resp.data[0]  # ✅ FIX CLAVE
+
+    to_number = to_number.replace(" ", "").strip()
 
     return await send_whatsapp_message(
         to_number=to_number,
         text=message,
-        channel=resp.data
+        channel=channel,  # ✅ dict, no lista
     )
+
 
 # =====================================================
 # 3️⃣ META TEMPLATE — SENDER REAL (REMINDERS / OUTBOUND)
