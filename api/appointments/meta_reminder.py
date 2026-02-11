@@ -3,7 +3,9 @@ import logging
 from datetime import datetime, timezone
 
 from api.modules.assistant_rag.supabase_client import supabase
-from api.modules.whatsapp.meta_template_sender import send_meta_template
+from api.modules.whatsapp.whatsapp_sender import (
+    send_whatsapp_template_for_client,
+)
 
 router = APIRouter(
     prefix="/appointments/reminders",
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 # -------------------------
 def normalize_phone(phone: str) -> str:
     if not phone:
-        return phone
+        return None
 
     phone = (
         phone.replace(" ", "")
@@ -30,20 +32,17 @@ def normalize_phone(phone: str) -> str:
     return phone if phone.startswith("+") else f"+52{phone}"
 
 
-def render_appointment_reminder(appointment: dict) -> str:
-    """
-    Render simple del detalle de la cita.
-    SOLO texto, NO envía mensajes.
-    """
+def build_appointment_details(appointment: dict) -> str:
     parts = []
 
-    if appointment.get("scheduled_at"):
-        parts.append(f"📅 {appointment['scheduled_at']}")
-
     if appointment.get("appointment_type"):
-        parts.append(f"📌 {appointment['appointment_type']}")
+        parts.append(appointment["appointment_type"])
 
-    return "\n".join(parts) or "Detalles de tu cita"
+    if appointment.get("scheduled_time"):
+        parts.append(appointment["scheduled_time"])
+
+    details = " - ".join(parts).strip()
+    return details if details else "Cita programada"
 
 
 # -------------------------
@@ -52,15 +51,19 @@ def render_appointment_reminder(appointment: dict) -> str:
 @router.post("/{reminder_id}/send-meta")
 async def send_meta_reminder(reminder_id: str):
 
-    reminder = (
+    # -------------------------------------------------
+    # 1️⃣ Load Reminder
+    # -------------------------------------------------
+    reminder_res = (
         supabase
         .table("appointment_reminders")
         .select("*")
         .eq("id", reminder_id)
         .single()
         .execute()
-        .data
     )
+
+    reminder = reminder_res.data
 
     if not reminder:
         raise HTTPException(status_code=404, detail="Reminder not found")
@@ -71,6 +74,9 @@ async def send_meta_reminder(reminder_id: str):
     if reminder.get("channel") != "whatsapp":
         return {"status": "skipped", "reason": "not whatsapp"}
 
+    # -------------------------------------------------
+    # 2️⃣ Lock (avoid double send)
+    # -------------------------------------------------
     lock = (
         supabase
         .table("appointment_reminders")
@@ -86,15 +92,19 @@ async def send_meta_reminder(reminder_id: str):
     if not lock.data:
         return {"status": "skipped", "reason": "already processed"}
 
-    appointment = (
+    # -------------------------------------------------
+    # 3️⃣ Load Appointment
+    # -------------------------------------------------
+    appointment_res = (
         supabase
         .table("appointments")
         .select("*")
         .eq("id", reminder["appointment_id"])
         .single()
         .execute()
-        .data
     )
+
+    appointment = appointment_res.data
 
     if not appointment:
         supabase.table("appointment_reminders").update({
@@ -104,33 +114,59 @@ async def send_meta_reminder(reminder_id: str):
 
         raise HTTPException(status_code=404, detail="Appointment not found")
 
+    # -------------------------------------------------
+    # 4️⃣ Prepare Data
+    # -------------------------------------------------
     to_number = normalize_phone(appointment.get("user_phone"))
     if not to_number:
         raise HTTPException(status_code=400, detail="Invalid phone number")
 
-    details = render_appointment_reminder(appointment)
+    user_name = (appointment.get("user_name") or "Cliente").strip()
+    appointment_details = build_appointment_details(appointment)
 
-    try:
-        await send_meta_template(
-            to_number=to_number,
-            template_name="appointment_reminder_v1",
-            language_code="es_MX",
-            parameters=[
-                appointment.get("user_name", ""),
-                details,
-            ],
+    template_name = reminder.get("template_name") or "appointment_reminder_v1"
+
+    # -------------------------------------------------
+    # 5️⃣ Send via Multi-Tenant Wrapper
+    # -------------------------------------------------
+    result = await send_whatsapp_template_for_client(
+        client_id=reminder["client_id"],
+        to_number=to_number,
+        template_name=template_name,
+        language_code="es_MX",
+        parameters=[
+            user_name,
+            appointment_details,
+        ],
+    )
+
+    if not result["success"]:
+        logger.error(
+            "❌ Meta reminder failed | reminder_id=%s | error=%s",
+            reminder_id,
+            result["error"],
         )
-    except Exception as e:
-        logger.exception("❌ Meta reminder failed")
+
         supabase.table("appointment_reminders").update({
             "status": "failed",
-            "error_reason": str(e),
+            "error_reason": result["error"],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", reminder_id).execute()
+
         raise HTTPException(status_code=500, detail="Meta reminder failed")
 
+    # -------------------------------------------------
+    # 6️⃣ Mark Sent
+    # -------------------------------------------------
     supabase.table("appointment_reminders").update({
         "status": "sent",
         "sent_at": datetime.now(timezone.utc).isoformat(),
+        "meta_message_id": result["meta_message_id"],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", reminder_id).execute()
 
-    return {"status": "sent", "reminder_id": reminder_id}
+    return {
+        "status": "sent",
+        "reminder_id": reminder_id,
+        "meta_message_id": result["meta_message_id"],
+    }

@@ -129,7 +129,7 @@ async def send_whatsapp_message_for_client(
 
 
 # =====================================================
-# 3️⃣ META TEMPLATE — SENDER REAL (REMINDERS / OUTBOUND)
+# 3️⃣ META TEMPLATE — SENDER REAL (PRODUCTION READY)
 # =====================================================
 async def send_meta_template(
     *,
@@ -139,35 +139,45 @@ async def send_meta_template(
     parameters: List[str],
     phone_number_id: str,
     access_token: str,
-) -> bool:
+) -> dict:
     """
-    ✅ USAR SOLO PARA:
-    - Reminders
-    - Cron jobs
-    - Outbound iniciado por la empresa
+    Production-ready Meta Template sender.
 
-    ⚠️ SOLO templates POSICIONALES {{1}}, {{2}}
+    Returns:
+        {
+            "success": bool,
+            "meta_message_id": str | None,
+            "status_code": int | None,
+            "error": str | None,
+            "raw": dict | None
+        }
     """
 
-    # -------------------------------------------------
-    # Normalizar número (Meta Templates NO acepta '+')
-    # -------------------------------------------------
+    # -------------------------------
+    # Normalize number
+    # -------------------------------
     to_number = to_number.replace("+", "").replace(" ", "").strip()
 
-    # -------------------------------------------------
-    # Validaciones duras (anti Meta #100)
-    # -------------------------------------------------
+    # -------------------------------
+    # Hard validations
+    # -------------------------------
     if not parameters or not isinstance(parameters, list):
-        logger.error("❌ Template parameters invalid | template=%s", template_name)
-        return False
+        return {
+            "success": False,
+            "meta_message_id": None,
+            "status_code": None,
+            "error": "Invalid parameters list",
+            "raw": None,
+        }
 
     if any(p is None or str(p).strip() == "" for p in parameters):
-        logger.error(
-            "❌ Template parameters empty | template=%s | params=%s",
-            template_name,
-            parameters,
-        )
-        return False
+        return {
+            "success": False,
+            "meta_message_id": None,
+            "status_code": None,
+            "error": "Empty template parameter detected",
+            "raw": None,
+        }
 
     meta_url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
 
@@ -195,35 +205,60 @@ async def send_meta_template(
         "Content-Type": "application/json",
     }
 
-    logger.info(
-        "📤 META TEMPLATE sending",
-        extra={
-            "to": to_number,
-            "template": template_name,
-            "language": language_code,
-            "params": parameters,
-        },
-    )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.post(meta_url, json=payload, headers=headers)
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        res = await client.post(meta_url, json=payload, headers=headers)
+        status_code = res.status_code
 
-    if res.status_code >= 400:
-        logger.error(
-            "❌ META TEMPLATE failed",
-            extra={
-                "status": res.status_code,
-                "response": res.text,
-                "template": template_name,
-            },
+        if status_code >= 400:
+            logger.error(
+                "❌ META TEMPLATE failed | template=%s | status=%s | response=%s",
+                template_name,
+                status_code,
+                res.text,
+            )
+            return {
+                "success": False,
+                "meta_message_id": None,
+                "status_code": status_code,
+                "error": res.text,
+                "raw": None,
+            }
+
+        meta_response = res.json()
+
+        meta_message_id = None
+        if "messages" in meta_response:
+            meta_message_id = meta_response["messages"][0].get("id")
+
+        logger.info(
+            "✅ META TEMPLATE sent | template=%s | message_id=%s",
+            template_name,
+            meta_message_id,
         )
-        return False
 
-    logger.info("✅ META TEMPLATE sent | template=%s", template_name)
-    return True
+        return {
+            "success": True,
+            "meta_message_id": meta_message_id,
+            "status_code": status_code,
+            "error": None,
+            "raw": meta_response,
+        }
+
+    except Exception as e:
+        logger.exception("❌ META TEMPLATE exception | template=%s", template_name)
+        return {
+            "success": False,
+            "meta_message_id": None,
+            "status_code": None,
+            "error": str(e),
+            "raw": None,
+        }
+
 
 # =====================================================
-# 4️⃣ WRAPPER CLIENTE — META TEMPLATE (REMINDERS)
+# 4️⃣ WRAPPER CLIENTE — META TEMPLATE (PRODUCTION READY)
 # =====================================================
 async def send_whatsapp_template_for_client(
     *,
@@ -232,36 +267,59 @@ async def send_whatsapp_template_for_client(
     template_name: str,
     parameters: List[str],
     language_code: str = "es_MX",
-) -> bool:
+) -> dict:
     """
-    ✅ USAR SOLO PARA:
-    - Reminders
-    - Outbound
-    ❌ NO usar para chat RAG
+    Multi-tenant Meta Template sender.
+
+    Returns structured response from send_meta_template.
     """
 
-    resp = (
-        supabase
-        .table("channels")
-        .select("wa_phone_id, wa_token")
-        .eq("client_id", client_id)
-        .eq("type", "whatsapp")
-        .eq("is_active", True)
-        .single()
-        .execute()
-    )
+    try:
+        resp = (
+            supabase
+            .table("channels")
+            .select("wa_phone_id, wa_token")
+            .eq("client_id", client_id)
+            .eq("type", "whatsapp")
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
 
-    if not resp.data:
-        logger.error("❌ WhatsApp no configurado | client_id=%s", client_id)
-        return False
+        if not resp.data:
+            logger.error(
+                "❌ WhatsApp not configured | client_id=%s",
+                client_id,
+            )
+            return {
+                "success": False,
+                "meta_message_id": None,
+                "status_code": None,
+                "error": "WhatsApp channel not configured",
+                "raw": None,
+            }
 
-    to_number = to_number.replace("+", "").replace(" ", "").strip()
+        channel = resp.data[0]
 
-    return await send_meta_template(
-        to_number=to_number,
-        template_name=template_name,
-        language_code=language_code,
-        parameters=parameters,
-        phone_number_id=resp.data["wa_phone_id"],
-        access_token=resp.data["wa_token"],
-    )
+        return await send_meta_template(
+            to_number=to_number,
+            template_name=template_name,
+            language_code=language_code,
+            parameters=parameters,
+            phone_number_id=channel["wa_phone_id"],
+            access_token=channel["wa_token"],
+        )
+
+    except Exception as e:
+        logger.exception(
+            "❌ Wrapper failure | client_id=%s | template=%s",
+            client_id,
+            template_name,
+        )
+        return {
+            "success": False,
+            "meta_message_id": None,
+            "status_code": None,
+            "error": str(e),
+            "raw": None,
+        }

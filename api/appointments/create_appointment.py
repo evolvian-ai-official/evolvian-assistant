@@ -8,10 +8,13 @@ import logging
 import json
 
 from api.config.config import supabase
-from api.modules.whatsapp.whatsapp_sender import send_whatsapp_message_for_client
+from api.modules.whatsapp.whatsapp_sender import (
+    send_whatsapp_template_for_client,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
 
 # =========================
 # Payload
@@ -26,15 +29,12 @@ class CreateAppointmentPayload(BaseModel):
     appointment_type: Optional[str] = "general"
     channel: Optional[str] = "chat"
 
-    # 🔑 CONTROL REAL DE INTENCIÓN
     send_reminders: bool = False
-
-    # opcional (futuro / granular)
     reminders: Optional[Dict[str, Optional[str]]] = None
 
 
 # =========================
-# Internal helper (ASYNC ✅)
+# Internal helper
 # =========================
 async def send_appointment_confirmation(appointment: dict) -> None:
     client_id = appointment.get("client_id")
@@ -46,10 +46,13 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         )
         return
 
+    # -----------------------------
+    # 1️⃣ Get active template
+    # -----------------------------
     res = (
         supabase
         .table("message_templates")
-        .select("channel, body, template_name")
+        .select("template_name")
         .eq("client_id", client_id)
         .eq("type", "appointment_confirmation")
         .eq("is_active", True)
@@ -60,26 +63,59 @@ async def send_appointment_confirmation(appointment: dict) -> None:
     templates = res.data or []
 
     if not templates:
-        logger.info("ℹ️ No appointment_confirmation template found")
+        logger.info("ℹ️ No active appointment_confirmation template found")
         return
 
-    message = (
-        "Hola {name} 👋\n"
-        "Gracias por agendar esta consulta.\n\n"
-        "Detalles: {time}\n\n"
-        "Si necesitas más información comunícate directamente con nosotros."
-    ).format(
-        name=appointment.get("user_name", ""),
-        time=appointment.get("scheduled_time", ""),
-    )
+    template_name = templates[0].get("template_name")
 
-    await send_whatsapp_message_for_client(
+    if not template_name:
+        logger.warning("⚠️ Template found but missing template_name")
+        return
+
+    # -----------------------------
+    # 2️⃣ Format date
+    # -----------------------------
+    try:
+        scheduled_utc = datetime.fromisoformat(
+            appointment.get("scheduled_time")
+        )
+
+        local_tz = ZoneInfo("America/Mexico_City")
+        scheduled_local = scheduled_utc.astimezone(local_tz)
+
+        formatted_date = scheduled_local.strftime(
+            "%d de %B %Y, %I:%M %p"
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Failed formatting date: {e}")
+        formatted_date = appointment.get("scheduled_time")
+
+    # -----------------------------
+    # 3️⃣ Send Template (Multi-tenant)
+    # -----------------------------
+    result = await send_whatsapp_template_for_client(
         client_id=client_id,
         to_number=phone,
-        message=message,
+        template_name=template_name,
+        language_code="es_MX",
+        parameters=[
+            appointment.get("user_name") or "Cliente",
+            formatted_date or "Cita programada",
+        ],
     )
 
-    logger.info("✅ Appointment confirmation sent (WhatsApp)")
+    if not result["success"]:
+        logger.error(
+            "❌ Appointment confirmation failed | client_id=%s | error=%s",
+            client_id,
+            result["error"],
+        )
+    else:
+        logger.info(
+            "✅ Appointment confirmation sent | message_id=%s",
+            result["meta_message_id"],
+        )
 
 
 # =========================
@@ -87,10 +123,6 @@ async def send_appointment_confirmation(appointment: dict) -> None:
 # =========================
 @router.post("/create_appointment", tags=["Appointments"])
 async def create_appointment(payload: CreateAppointmentPayload):
-    """
-    Creates an appointment.
-    Reminders are created ONLY if user explicitly requested them.
-    """
 
     # =========================
     # 🕒 Normalize scheduled_time to UTC
@@ -103,7 +135,11 @@ async def create_appointment(payload: CreateAppointmentPayload):
             detail="Invalid timezone configuration"
         )
 
-    scheduled_local = payload.scheduled_time.replace(tzinfo=LOCAL_TZ)
+    if payload.scheduled_time.tzinfo is None:
+        scheduled_local = payload.scheduled_time.replace(tzinfo=LOCAL_TZ)
+    else:
+        scheduled_local = payload.scheduled_time.astimezone(LOCAL_TZ)
+
     scheduled_utc = scheduled_local.astimezone(timezone.utc)
 
     # =========================
@@ -138,19 +174,17 @@ async def create_appointment(payload: CreateAppointmentPayload):
     logger.info(f"✅ Appointment created: {appointment_id}")
 
     # =========================
-    # 🔔 Appointment confirmation (INSTANT)
+    # 🔔 Instant confirmation
     # =========================
     try:
         await send_appointment_confirmation(appointment)
-    except Exception as e:
-        logger.error(
-            f"❌ Appointment confirmation failed | "
-            f"appointment_id={appointment_id} | error={e}",
-            exc_info=True,
+    except Exception:
+        logger.exception(
+            "❌ Appointment confirmation crashed unexpectedly"
         )
 
     # =========================
-    # 2️⃣ Track appointment usage
+    # 2️⃣ Track usage
     # =========================
     supabase.table("appointment_usage").insert({
         "client_id": str(payload.client_id),
@@ -161,13 +195,12 @@ async def create_appointment(payload: CreateAppointmentPayload):
     }).execute()
 
     # =========================
-    # 3️⃣ Create reminders ONLY if requested
+    # 3️⃣ Create reminders (optional)
     # =========================
     reminders_created = 0
 
-    if not payload.send_reminders:
-        logger.info("ℹ️ No reminders requested for this appointment")
-    else:
+    if payload.send_reminders:
+
         templates_res = (
             supabase
             .table("message_templates")
@@ -181,6 +214,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
         templates = templates_res.data or []
 
         for template in templates:
+
             raw_frequency = template.get("frequency")
             if not raw_frequency:
                 continue
@@ -220,6 +254,9 @@ async def create_appointment(payload: CreateAppointmentPayload):
                 reminders_created += 1
 
         logger.info(f"⏰ Reminders created: {reminders_created}")
+
+    else:
+        logger.info("ℹ️ No reminders requested for this appointment")
 
     # =========================
     # 4️⃣ Response
