@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, List
 import uuid
@@ -8,17 +8,14 @@ from api.config.config import supabase
 
 logger = logging.getLogger(__name__)
 
-# ======================================
-# Router
-# ======================================
 router = APIRouter(
     prefix="/message_templates",
     tags=["Message Templates"]
 )
 
-# ======================================
-# Models
-# ======================================
+# =====================================================
+# MODELS
+# =====================================================
 
 class ReminderRule(BaseModel):
     offset_minutes: int = Field(
@@ -30,22 +27,14 @@ class ReminderRule(BaseModel):
 
 class CreateTemplatePayload(BaseModel):
     client_id: uuid.UUID
-
     channel: Literal["whatsapp", "email"]
-
-    # 🔑 REQUIRED — DB constraint
     type: Literal[
         "appointment_reminder",
         "appointment_confirmation",
         "appointment_cancellation"
     ]
-
-    # WhatsApp (Meta only)
-    meta_template_name: Optional[str] = Field(None, min_length=3)
-
-    # Email / custom channels
+    meta_template_id: Optional[uuid.UUID] = None
     body: Optional[str] = Field(None, min_length=5)
-
     label: Optional[str] = None
     frequency: Optional[List[ReminderRule]] = None
     is_active: bool = True
@@ -58,230 +47,306 @@ class UpdateTemplatePayload(BaseModel):
     is_active: Optional[bool] = None
 
 
-# ======================================
+# =====================================================
 # CREATE TEMPLATE
-# ======================================
+# =====================================================
+
 @router.post("")
 def create_message_template(payload: CreateTemplatePayload):
-    """
-    Create message templates.
+    try:
 
-    Rules:
-    - WhatsApp templates must reference Meta-approved templates
-    - Email templates are fully editable
-    - `type` is REQUIRED (DB constraint)
-    - Frequency validated if provided
-    """
+        meta_template_name = None
+        body = None
 
-    # =========================
-    # Channel-specific validation
-    # =========================
-    if payload.channel == "whatsapp":
-        if not payload.meta_template_name:
-            raise HTTPException(
-                status_code=400,
-                detail="meta_template_name is required for WhatsApp templates"
+        # --------------------------
+        # WHATSAPP
+        # --------------------------
+        if payload.channel == "whatsapp":
+
+            if not payload.meta_template_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="meta_template_id is required for WhatsApp templates"
+                )
+
+            meta_template = (
+                supabase
+                .table("meta_approved_templates")
+                .select("id, template_name, type")
+                .eq("id", str(payload.meta_template_id))
+                .eq("is_active", True)
+                .single()
+                .execute()
             )
 
-        meta_template = (
+            if not meta_template.data:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Meta template not found or inactive"
+                )
+
+            if meta_template.data["type"] != payload.type:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Meta template type mismatch"
+                )
+
+            meta_template_name = meta_template.data["template_name"]
+
+        # --------------------------
+        # EMAIL
+        # --------------------------
+        elif payload.channel == "email":
+
+            if not payload.body:
+                raise HTTPException(
+                    status_code=400,
+                    detail="body is required for email templates"
+                )
+
+            body = payload.body
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid channel"
+            )
+
+        # --------------------------
+        # Frequency validation
+        # --------------------------
+        if payload.frequency:
+            for rule in payload.frequency:
+                if rule.offset_minutes >= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="offset_minutes must be negative"
+                    )
+
+        template_data = {
+            "client_id": str(payload.client_id),
+            "channel": payload.channel,
+            "type": payload.type,
+            "meta_template_id": (
+                str(payload.meta_template_id)
+                if payload.channel == "whatsapp"
+                else None
+            ),
+            "template_name": meta_template_name,  # snapshot
+            "label": payload.label,
+            "body": body,
+            "frequency": (
+                [rule.dict() for rule in payload.frequency]
+                if payload.frequency else None
+            ),
+            "is_active": payload.is_active,
+        }
+
+        res = (
             supabase
-            .table("meta_approved_templates")
-            .select("template_name")
-            .eq("template_name", payload.meta_template_name)
-            .eq("is_active", True)
-            .single()
+            .table("message_templates")
+            .insert(template_data)
             .execute()
         )
 
-        if not meta_template.data:
+        if not res.data:
             raise HTTPException(
-                status_code=400,
-                detail="Meta template not found or inactive"
+                status_code=500,
+                detail="Failed to create message template"
             )
 
-        # WhatsApp never stores body
-        body = None
+        return {
+            "success": True,
+            "template": res.data[0],
+        }
 
-    elif payload.channel == "email":
-        if not payload.body:
-            raise HTTPException(
-                status_code=400,
-                detail="body is required for email templates"
-            )
-
-        body = payload.body
-
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid channel"
-        )
-
-    # =========================
-    # Frequency validation
-    # =========================
-    if payload.frequency:
-        for rule in payload.frequency:
-            if rule.offset_minutes >= 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="offset_minutes must be negative"
-                )
-
-    # =========================
-    # Insert
-    # =========================
-    template_data = {
-        "client_id": str(payload.client_id),
-        "channel": payload.channel,
-        "type": payload.type,
-        "template_name": (
-            payload.meta_template_name
-            if payload.channel == "whatsapp"
-            else None
-        ),
-        "label": payload.label,
-        "body": body,
-        "frequency": (
-            [rule.dict() for rule in payload.frequency]
-            if payload.frequency else None
-        ),
-        "is_active": payload.is_active,
-    }
-
-    res = (
-        supabase
-        .table("message_templates")
-        .insert(template_data)
-        .execute()
-    )
-
-    if not res.data:
-        logger.error("❌ Failed to create message template")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to create message template"
-        )
-
-    return {
-        "success": True,
-        "template": res.data[0],
-    }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error creating template")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-# ======================================
+# =====================================================
 # UPDATE TEMPLATE
-# ======================================
+# =====================================================
+
 @router.put("/{template_id}")
 def update_message_template(
     template_id: uuid.UUID,
     payload: UpdateTemplatePayload,
 ):
-    """
-    Update message template.
+    try:
 
-    Rules:
-    - WhatsApp templates cannot change body or template_name
-    - Email templates can update body
-    - Frequency and label are always allowed
-    """
+        update_data = payload.dict(exclude_unset=True)
 
-    update_data = payload.dict(exclude_unset=True)
+        if not update_data:
+            raise HTTPException(
+                status_code=400,
+                detail="No fields provided to update"
+            )
 
-    if not update_data:
-        raise HTTPException(
-            status_code=400,
-            detail="No fields provided to update"
+        existing = (
+            supabase
+            .table("message_templates")
+            .select("channel")
+            .eq("id", str(template_id))
+            .single()
+            .execute()
         )
 
-    # Load existing template
-    existing = (
-        supabase
-        .table("message_templates")
-        .select("channel")
-        .eq("id", str(template_id))
-        .single()
-        .execute()
-    )
+        if not existing.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Template not found"
+            )
 
-    if not existing.data:
-        raise HTTPException(
-            status_code=404,
-            detail="Template not found"
+        channel = existing.data["channel"]
+
+        # 🔒 WhatsApp body locked
+        if channel == "whatsapp" and "body" in update_data:
+            raise HTTPException(
+                status_code=400,
+                detail="WhatsApp templates cannot update body"
+            )
+
+        # Frequency validation
+        if "frequency" in update_data:
+            if update_data["frequency"]:
+                for rule in update_data["frequency"]:
+                    offset = rule.get("offset_minutes")
+                    if offset is None or offset >= 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="offset_minutes must be negative"
+                        )
+            else:
+                update_data["frequency"] = None
+
+        res = (
+            supabase
+            .table("message_templates")
+            .update(update_data)
+            .eq("id", str(template_id))
+            .execute()
         )
 
-    channel = existing.data["channel"]
+        if not res.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Template not found"
+            )
 
-    # Guard rails
-    if channel == "whatsapp" and "body" in update_data:
-        raise HTTPException(
-            status_code=400,
-            detail="WhatsApp templates cannot update body"
-        )
+        return {
+            "success": True,
+            "template": res.data[0],
+        }
 
-    # Validate frequency
-    if "frequency" in update_data:
-        if update_data["frequency"]:
-            for rule in update_data["frequency"]:
-                offset = rule.get("offset_minutes")
-                if offset is None or offset >= 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="offset_minutes must be negative"
-                    )
-        else:
-            update_data["frequency"] = None
-
-    update_data["updated_at"] = "now()"
-
-    res = (
-        supabase
-        .table("message_templates")
-        .update(update_data)
-        .eq("id", str(template_id))
-        .execute()
-    )
-
-    if not res.data:
-        raise HTTPException(
-            status_code=404,
-            detail="Template not found"
-        )
-
-    return {
-        "success": True,
-        "template": res.data[0],
-    }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error updating template")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-# ======================================
-# DELETE TEMPLATE (SOFT DELETE)
-# ======================================
+# =====================================================
+# DELETE TEMPLATE (SOFT)
+# =====================================================
+
 @router.delete("/{template_id}")
 def delete_message_template(template_id: uuid.UUID):
-    """
-    Soft delete a message template.
-    Existing reminders are NOT affected.
-    """
+    try:
 
-    res = (
-        supabase
-        .table("message_templates")
-        .update({
-            "is_active": False,
-            "updated_at": "now()"
-        })
-        .eq("id", str(template_id))
-        .execute()
-    )
-
-    if not res.data:
-        raise HTTPException(
-            status_code=404,
-            detail="Template not found"
+        res = (
+            supabase
+            .table("message_templates")
+            .update({"is_active": False})
+            .eq("id", str(template_id))
+            .execute()
         )
 
-    return {
-        "success": True,
-        "message": "Template deactivated",
-    }
+        if not res.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Template not found"
+            )
+
+        return {
+            "success": True,
+            "message": "Template deactivated",
+        }
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error deleting template")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# =====================================================
+# GET TEMPLATES — JOIN WITH META (STABLE)
+# =====================================================
+
+@router.get("")
+def get_message_templates(
+    client_id: uuid.UUID = Query(...),
+    type: Optional[str] = Query(None),
+):
+    try:
+
+        query = (
+            supabase
+            .table("message_templates")
+            .select("""
+                id,
+                channel,
+                type,
+                label,
+                body,
+                template_name,
+                frequency,
+                meta_template_id,
+                meta_approved_templates (
+                    template_name,
+                    parameter_count,
+                    language,
+                    preview_body
+                )
+            """)
+            .eq("client_id", str(client_id))
+            .eq("is_active", True)
+        )
+
+        if type:
+            query = query.eq("type", type)
+
+        res = query.execute()
+
+        templates = res.data or []
+
+        formatted = []
+
+        for t in templates:
+            meta = t.get("meta_approved_templates")
+
+            formatted.append({
+                "id": t["id"],
+                "channel": t["channel"],
+                "type": t["type"],
+                "label": t.get("label"),
+                "body": None if t["channel"] == "whatsapp" else t.get("body"),
+                "template_name": t.get("template_name"),
+                "meta_template_name": meta.get("template_name") if meta else None,
+                "meta_parameter_count": meta.get("parameter_count") if meta else None,
+                "meta_language": meta.get("language") if meta else None,
+                "meta_preview_body": meta.get("preview_body") if meta else None,
+                "frequency": t.get("frequency"),
+                "meta_template_id": t.get("meta_template_id"),
+                "is_meta_template": bool(meta),
+            })
+
+        return formatted
+
+    except Exception:
+        logger.exception("Unexpected error fetching templates")
+        raise HTTPException(status_code=500, detail="Internal server error")

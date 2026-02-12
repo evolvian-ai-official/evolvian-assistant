@@ -46,13 +46,13 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         )
         return
 
-    # -----------------------------
-    # 1️⃣ Get active template
-    # -----------------------------
+    # -----------------------------------
+    # 1️⃣ Get active confirmation template
+    # -----------------------------------
     res = (
         supabase
         .table("message_templates")
-        .select("template_name")
+        .select("id, meta_template_id")
         .eq("client_id", client_id)
         .eq("type", "appointment_confirmation")
         .eq("is_active", True)
@@ -66,15 +66,46 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.info("ℹ️ No active appointment_confirmation template found")
         return
 
-    template_name = templates[0].get("template_name")
+    template = templates[0]
+    meta_template_id = template.get("meta_template_id")
 
-    if not template_name:
-        logger.warning("⚠️ Template found but missing template_name")
+    if not meta_template_id:
+        logger.warning("⚠️ Confirmation template has no meta_template_id")
         return
 
-    # -----------------------------
-    # 2️⃣ Format date
-    # -----------------------------
+    # -----------------------------------
+    # 2️⃣ Resolve meta template manually
+    # -----------------------------------
+    meta_res = (
+        supabase
+        .table("meta_approved_templates")
+        .select("template_name, language")
+        .eq("id", meta_template_id)
+        .eq("is_active", True)
+        .single()
+        .execute()
+    )
+
+    meta = meta_res.data
+
+    if not meta:
+        logger.warning(
+            f"⚠️ Meta template not found: {meta_template_id}"
+        )
+        return
+
+    template_name = meta.get("template_name")
+    language_code = meta.get("language") or "es_MX"
+
+    if not template_name:
+        logger.warning("⚠️ Meta template missing template_name")
+        return
+
+    logger.info(f"📨 Using template: {template_name}")
+
+    # -----------------------------------
+    # 3️⃣ Format date
+    # -----------------------------------
     try:
         scheduled_utc = datetime.fromisoformat(
             appointment.get("scheduled_time")
@@ -91,14 +122,14 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.error(f"❌ Failed formatting date: {e}")
         formatted_date = appointment.get("scheduled_time")
 
-    # -----------------------------
-    # 3️⃣ Send Template (Multi-tenant)
-    # -----------------------------
+    # -----------------------------------
+    # 4️⃣ Send template
+    # -----------------------------------
     result = await send_whatsapp_template_for_client(
         client_id=client_id,
         to_number=phone,
         template_name=template_name,
-        language_code="es_MX",
+        language_code=language_code,
         parameters=[
             appointment.get("user_name") or "Cliente",
             formatted_date or "Cita programada",
@@ -109,14 +140,13 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.error(
             "❌ Appointment confirmation failed | client_id=%s | error=%s",
             client_id,
-            result["error"],
+            result.get("error"),
         )
     else:
         logger.info(
             "✅ Appointment confirmation sent | message_id=%s",
-            result["meta_message_id"],
+            result.get("meta_message_id"),
         )
-
 
 # =========================
 # Endpoint
