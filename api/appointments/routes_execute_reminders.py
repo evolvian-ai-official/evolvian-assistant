@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import logging
+from babel.dates import format_datetime
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
@@ -17,16 +18,31 @@ logger = logging.getLogger(__name__)
 # =====================================================
 MEXICO_TZ = ZoneInfo("America/Mexico_City")
 
+# =====================================================
+# Language map (client_settings → Babel locale)
+# =====================================================
+LANGUAGE_MAP = {
+    "es": "es_MX",
+    "en": "en_US",
+    "pt": "pt_BR",
+}
+
 
 # =====================================================
 # Helpers
 # =====================================================
-def format_scheduled_time(iso_utc: str) -> str:
+def format_scheduled_time(iso_utc: str, locale_code: str = "es_MX") -> str:
     try:
         iso_utc = iso_utc.replace("Z", "+00:00")
         dt_utc = datetime.fromisoformat(iso_utc)
         dt_local = dt_utc.astimezone(MEXICO_TZ)
-        return dt_local.strftime("%A %d de %B, %I:%M %p")
+
+        return format_datetime(
+            dt_local,
+            "EEEE dd 'de' MMMM, hh:mm a",
+            locale=locale_code,
+        )
+
     except Exception as e:
         logger.warning(
             "⚠️ Failed to format scheduled_time | value=%s | error=%s",
@@ -36,10 +52,10 @@ def format_scheduled_time(iso_utc: str) -> str:
         return ""
 
 
-def render_template(body: str, appointment: dict) -> str:
+def render_template(body: str, appointment: dict, locale_code: str) -> str:
     scheduled_time = appointment.get("scheduled_time")
     if scheduled_time:
-        scheduled_time = format_scheduled_time(scheduled_time)
+        scheduled_time = format_scheduled_time(scheduled_time, locale_code)
 
     return (
         body
@@ -105,7 +121,7 @@ async def execute_pending_reminders():
                 raise Exception("Appointment not found")
 
             # -------------------------------------------------
-            # 2️⃣ Load Client Template
+            # 2️⃣ Load Template
             # -------------------------------------------------
             template_res = (
                 supabase
@@ -146,7 +162,6 @@ async def execute_pending_reminders():
 
                     template_name = template["template_name"]
 
-                    # 🔹 Validar contra meta_approved_templates
                     meta_res = (
                         supabase
                         .table("meta_approved_templates")
@@ -166,7 +181,9 @@ async def execute_pending_reminders():
                     expected_params = meta_template["parameter_count"]
                     language_code = meta_template["language"]
 
-                    # 🔹 Construir parámetros POSICIONALES
+                    # 🔥 USAMOS el mismo language_code para Babel
+                    locale_code = language_code
+
                     raw_user_name = appointment.get("user_name") or "Cliente"
                     raw_type = appointment.get("appointment_type") or ""
                     raw_time = appointment.get("scheduled_time")
@@ -179,7 +196,7 @@ async def execute_pending_reminders():
                         details_parts.append(raw_type.strip())
 
                     if raw_time:
-                        formatted_time = format_scheduled_time(raw_time)
+                        formatted_time = format_scheduled_time(raw_time, locale_code)
                         if formatted_time.strip():
                             details_parts.append(formatted_time)
 
@@ -213,7 +230,7 @@ async def execute_pending_reminders():
                     )
 
                 # =====================================================
-                # TEXT FALLBACK (legacy controlado)
+                # TEXT FALLBACK
                 # =====================================================
                 else:
 
@@ -221,7 +238,20 @@ async def execute_pending_reminders():
                     if not body:
                         raise Exception("Text template missing body")
 
-                    message_body = render_template(body, appointment)
+                    # 🔥 Leer idioma del cliente
+                    settings_res = (
+                        supabase
+                        .table("client_settings")
+                        .select("language")
+                        .eq("client_id", client_id)
+                        .single()
+                        .execute()
+                    )
+
+                    client_language = settings_res.data.get("language", "es")
+                    locale_code = LANGUAGE_MAP.get(client_language, "es_MX")
+
+                    message_body = render_template(body, appointment, locale_code)
 
                     logger.info(
                         "📤 Sending TEXT fallback | reminder_id=%s",
@@ -252,9 +282,6 @@ async def execute_pending_reminders():
             if not send_ok:
                 raise Exception("Provider send failed")
 
-            # -------------------------------------------------
-            # 4️⃣ Mark Sent
-            # -------------------------------------------------
             supabase.table("appointment_reminders").update({
                 "status": "sent",
                 "updated_at": now.isoformat(),

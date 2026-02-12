@@ -25,19 +25,32 @@ class ReminderRule(BaseModel):
     label: Optional[str] = None
 
 
+
+
 class CreateTemplatePayload(BaseModel):
     client_id: uuid.UUID
     channel: Literal["whatsapp", "email"]
-    type: Literal[
-        "appointment_reminder",
-        "appointment_confirmation",
-        "appointment_cancellation"
-    ]
+
+    # Ahora dinámico — validado contra DB
+    type: str = Field(
+        ...,
+        min_length=3,
+        max_length=100,
+        description="Must exist in template_types table"
+    )
+
     meta_template_id: Optional[uuid.UUID] = None
-    body: Optional[str] = Field(None, min_length=5)
-    label: Optional[str] = None
+    body: Optional[str] = Field(
+        None,
+        min_length=5
+    )
+    label: Optional[str] = Field(
+        None,
+        max_length=120
+    )
     frequency: Optional[List[ReminderRule]] = None
     is_active: bool = True
+
 
 
 class UpdateTemplatePayload(BaseModel):
@@ -54,6 +67,25 @@ class UpdateTemplatePayload(BaseModel):
 @router.post("")
 def create_message_template(payload: CreateTemplatePayload):
     try:
+
+
+        # =====================================================
+        # 1️⃣ VALIDATE TEMPLATE TYPE (NEW — AQUÍ VA)
+        # =====================================================
+        type_check = (
+            supabase
+            .table("template_types")
+            .select("id")
+            .eq("id", payload.type)
+            .single()
+            .execute()
+        )
+
+        if not type_check.data:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid template type"
+            )
 
         meta_template_name = None
         body = None
@@ -165,6 +197,25 @@ def create_message_template(payload: CreateTemplatePayload):
     except Exception:
         logger.exception("Unexpected error creating template")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/types")
+def get_template_types():
+    try:
+        res = (
+            supabase
+            .table("template_types")
+            .select("id, description")
+            .order("id")
+            .execute()
+        )
+
+        return res.data or []
+
+    except Exception:
+        logger.exception("Failed to fetch template types")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 
 # =====================================================

@@ -6,6 +6,7 @@ from typing import Optional, Dict
 import uuid
 import logging
 import json
+from babel.dates import format_datetime
 
 from api.config.config import supabase
 from api.modules.whatsapp.whatsapp_sender import (
@@ -14,6 +15,8 @@ from api.modules.whatsapp.whatsapp_sender import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+MEXICO_TZ = ZoneInfo("America/Mexico_City")
 
 
 # =========================
@@ -74,7 +77,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         return
 
     # -----------------------------------
-    # 2️⃣ Resolve meta template manually
+    # 2️⃣ Resolve meta template
     # -----------------------------------
     meta_res = (
         supabase
@@ -104,26 +107,29 @@ async def send_appointment_confirmation(appointment: dict) -> None:
     logger.info(f"📨 Using template: {template_name}")
 
     # -----------------------------------
-    # 3️⃣ Format date
+    # 3️⃣ Format date using Babel (SAFE)
     # -----------------------------------
     try:
-        scheduled_utc = datetime.fromisoformat(
-            appointment.get("scheduled_time")
-        )
+        raw_time = appointment.get("scheduled_time")
 
-        local_tz = ZoneInfo("America/Mexico_City")
-        scheduled_local = scheduled_utc.astimezone(local_tz)
+        if not raw_time:
+            raise Exception("Missing scheduled_time")
 
-        formatted_date = scheduled_local.strftime(
-            "%d de %B %Y, %I:%M %p"
+        scheduled_utc = datetime.fromisoformat(raw_time)
+        scheduled_local = scheduled_utc.astimezone(MEXICO_TZ)
+
+        formatted_date = format_datetime(
+            scheduled_local,
+            "EEEE dd 'de' MMMM yyyy, hh:mm a",
+            locale=language_code,
         )
 
     except Exception as e:
-        logger.error(f"❌ Failed formatting date: {e}")
+        logger.error(f"❌ Failed formatting date with Babel: {e}")
         formatted_date = appointment.get("scheduled_time")
 
     # -----------------------------------
-    # 4️⃣ Send template
+    # 4️⃣ Send template (UNCHANGED)
     # -----------------------------------
     result = await send_whatsapp_template_for_client(
         client_id=client_id,
@@ -148,17 +154,15 @@ async def send_appointment_confirmation(appointment: dict) -> None:
             result.get("meta_message_id"),
         )
 
+
 # =========================
 # Endpoint
 # =========================
 @router.post("/create_appointment", tags=["Appointments"])
 async def create_appointment(payload: CreateAppointmentPayload):
 
-    # =========================
-    # 🕒 Normalize scheduled_time to UTC
-    # =========================
     try:
-        LOCAL_TZ = ZoneInfo("America/Mexico_City")
+        LOCAL_TZ = MEXICO_TZ
     except Exception:
         raise HTTPException(
             status_code=500,
@@ -172,9 +176,6 @@ async def create_appointment(payload: CreateAppointmentPayload):
 
     scheduled_utc = scheduled_local.astimezone(timezone.utc)
 
-    # =========================
-    # 1️⃣ Create appointment
-    # =========================
     appointment_data = {
         "client_id": str(payload.client_id),
         "user_name": payload.user_name,
@@ -203,9 +204,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
 
     logger.info(f"✅ Appointment created: {appointment_id}")
 
-    # =========================
     # 🔔 Instant confirmation
-    # =========================
     try:
         await send_appointment_confirmation(appointment)
     except Exception:
@@ -213,9 +212,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
             "❌ Appointment confirmation crashed unexpectedly"
         )
 
-    # =========================
     # 2️⃣ Track usage
-    # =========================
     supabase.table("appointment_usage").insert({
         "client_id": str(payload.client_id),
         "appointment_id": appointment_id,
@@ -224,9 +221,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
         "created_at": datetime.utcnow().isoformat(),
     }).execute()
 
-    # =========================
-    # 3️⃣ Create reminders (optional)
-    # =========================
+    # 3️⃣ Create reminders
     reminders_created = 0
 
     if payload.send_reminders:
@@ -288,9 +283,6 @@ async def create_appointment(payload: CreateAppointmentPayload):
     else:
         logger.info("ℹ️ No reminders requested for this appointment")
 
-    # =========================
-    # 4️⃣ Response
-    # =========================
     return {
         "success": True,
         "appointment_id": appointment_id,

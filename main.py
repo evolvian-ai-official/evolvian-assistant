@@ -104,7 +104,9 @@ from api.appointments.get_templates import router as appointment_templates_route
 from api.appointments.message_templates import router as templates_router
 
 
+#Onboarding
 
+from api.routes.onboarding import router as onboarding_router
 
 
 
@@ -351,6 +353,10 @@ if calendar_router:
 # Core routers
 for r in routers:
     app.include_router(r)
+
+#Onboarding
+
+app.include_router(onboarding_router)    
 
 # ✅ Appointment status updates (IMPORTANT)
 app.include_router(update_status_router, prefix="/api")

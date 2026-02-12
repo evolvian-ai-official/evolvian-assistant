@@ -62,3 +62,6 @@ protobuf
 
 pytz
 email-validator
+
+Babel==2.15.0
+
