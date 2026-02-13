@@ -14,11 +14,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # =====================================================
-# Timezone fijo (México)
-# =====================================================
-MEXICO_TZ = ZoneInfo("America/Mexico_City")
-
-# =====================================================
 # Language map (client_settings → Babel locale)
 # =====================================================
 LANGUAGE_MAP = {
@@ -27,15 +22,45 @@ LANGUAGE_MAP = {
     "pt": "pt_BR",
 }
 
+# =====================================================
+# Timezone helper (multi-tenant safe)
+# =====================================================
+def get_client_timezone(client_id: str) -> ZoneInfo:
+    try:
+        res = (
+            supabase
+            .table("client_settings")
+            .select("timezone")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not res.data:
+            return ZoneInfo("UTC")
+
+        tz_str = res.data[0].get("timezone") or "UTC"
+        return ZoneInfo(tz_str)
+
+    except Exception as e:
+        logger.error("❌ Failed to get timezone | client_id=%s | error=%s", client_id, e)
+        return ZoneInfo("UTC")
+
 
 # =====================================================
 # Helpers
 # =====================================================
-def format_scheduled_time(iso_utc: str, locale_code: str = "es_MX") -> str:
+def format_scheduled_time(
+    iso_utc: str,
+    client_id: str,
+    locale_code: str = "es_MX",
+) -> str:
     try:
         iso_utc = iso_utc.replace("Z", "+00:00")
         dt_utc = datetime.fromisoformat(iso_utc)
-        dt_local = dt_utc.astimezone(MEXICO_TZ)
+
+        client_tz = get_client_timezone(client_id)
+        dt_local = dt_utc.astimezone(client_tz)
 
         return format_datetime(
             dt_local,
@@ -45,8 +70,9 @@ def format_scheduled_time(iso_utc: str, locale_code: str = "es_MX") -> str:
 
     except Exception as e:
         logger.warning(
-            "⚠️ Failed to format scheduled_time | value=%s | error=%s",
+            "⚠️ Failed to format scheduled_time | value=%s | client_id=%s | error=%s",
             iso_utc,
+            client_id,
             e,
         )
         return ""
@@ -55,7 +81,11 @@ def format_scheduled_time(iso_utc: str, locale_code: str = "es_MX") -> str:
 def render_template(body: str, appointment: dict, locale_code: str) -> str:
     scheduled_time = appointment.get("scheduled_time")
     if scheduled_time:
-        scheduled_time = format_scheduled_time(scheduled_time, locale_code)
+        scheduled_time = format_scheduled_time(
+            scheduled_time,
+            appointment.get("client_id"),
+            locale_code,
+        )
 
     return (
         body
@@ -156,7 +186,7 @@ async def execute_pending_reminders():
                     raise Exception("Missing phone")
 
                 # =====================================================
-                # META TEMPLATE FLOW (OFICIAL)
+                # META TEMPLATE FLOW
                 # =====================================================
                 if template.get("template_name"):
 
@@ -180,8 +210,6 @@ async def execute_pending_reminders():
 
                     expected_params = meta_template["parameter_count"]
                     language_code = meta_template["language"]
-
-                    # 🔥 USAMOS el mismo language_code para Babel
                     locale_code = language_code
 
                     raw_user_name = appointment.get("user_name") or "Cliente"
@@ -196,7 +224,11 @@ async def execute_pending_reminders():
                         details_parts.append(raw_type.strip())
 
                     if raw_time:
-                        formatted_time = format_scheduled_time(raw_time, locale_code)
+                        formatted_time = format_scheduled_time(
+                            raw_time,
+                            client_id,
+                            locale_code,
+                        )
                         if formatted_time.strip():
                             details_parts.append(formatted_time)
 
@@ -238,7 +270,6 @@ async def execute_pending_reminders():
                     if not body:
                         raise Exception("Text template missing body")
 
-                    # 🔥 Leer idioma del cliente
                     settings_res = (
                         supabase
                         .table("client_settings")

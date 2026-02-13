@@ -16,7 +16,30 @@ from api.modules.whatsapp.whatsapp_sender import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-MEXICO_TZ = ZoneInfo("America/Mexico_City")
+
+# =====================================================
+# Timezone helper (solo agregado, no cambia lógica)
+# =====================================================
+def get_client_timezone(client_id: str) -> ZoneInfo:
+    try:
+        res = (
+            supabase
+            .table("client_settings")
+            .select("timezone")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not res.data:
+            return ZoneInfo("UTC")
+
+        tz_str = res.data[0].get("timezone") or "UTC"
+        return ZoneInfo(tz_str)
+
+    except Exception as e:
+        logger.error(f"❌ Failed to get timezone: {e}")
+        return ZoneInfo("UTC")
 
 
 # =========================
@@ -31,7 +54,6 @@ class CreateAppointmentPayload(BaseModel):
     user_phone: Optional[str] = None
     appointment_type: Optional[str] = "general"
     channel: Optional[str] = "chat"
-
     send_reminders: bool = False
     reminders: Optional[Dict[str, Optional[str]]] = None
 
@@ -49,9 +71,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         )
         return
 
-    # -----------------------------------
     # 1️⃣ Get active confirmation template
-    # -----------------------------------
     res = (
         supabase
         .table("message_templates")
@@ -64,7 +84,6 @@ async def send_appointment_confirmation(appointment: dict) -> None:
     )
 
     templates = res.data or []
-
     if not templates:
         logger.info("ℹ️ No active appointment_confirmation template found")
         return
@@ -76,9 +95,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.warning("⚠️ Confirmation template has no meta_template_id")
         return
 
-    # -----------------------------------
     # 2️⃣ Resolve meta template
-    # -----------------------------------
     meta_res = (
         supabase
         .table("meta_approved_templates")
@@ -90,11 +107,8 @@ async def send_appointment_confirmation(appointment: dict) -> None:
     )
 
     meta = meta_res.data
-
     if not meta:
-        logger.warning(
-            f"⚠️ Meta template not found: {meta_template_id}"
-        )
+        logger.warning(f"⚠️ Meta template not found: {meta_template_id}")
         return
 
     template_name = meta.get("template_name")
@@ -106,17 +120,17 @@ async def send_appointment_confirmation(appointment: dict) -> None:
 
     logger.info(f"📨 Using template: {template_name}")
 
-    # -----------------------------------
-    # 3️⃣ Format date using Babel (SAFE)
-    # -----------------------------------
+    # 3️⃣ Format date using client timezone
     try:
         raw_time = appointment.get("scheduled_time")
-
         if not raw_time:
             raise Exception("Missing scheduled_time")
 
-        scheduled_utc = datetime.fromisoformat(raw_time)
-        scheduled_local = scheduled_utc.astimezone(MEXICO_TZ)
+        scheduled_utc = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+
+        # 🔥 SOLO agregado: usar timezone del cliente
+        client_tz = get_client_timezone(str(client_id))
+        scheduled_local = scheduled_utc.astimezone(client_tz)
 
         formatted_date = format_datetime(
             scheduled_local,
@@ -128,9 +142,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.error(f"❌ Failed formatting date with Babel: {e}")
         formatted_date = appointment.get("scheduled_time")
 
-    # -----------------------------------
-    # 4️⃣ Send template (UNCHANGED)
-    # -----------------------------------
+    # 4️⃣ Send template (NO cambiado)
     result = await send_whatsapp_template_for_client(
         client_id=client_id,
         to_number=phone,
@@ -161,19 +173,15 @@ async def send_appointment_confirmation(appointment: dict) -> None:
 @router.post("/create_appointment", tags=["Appointments"])
 async def create_appointment(payload: CreateAppointmentPayload):
 
-    try:
-        LOCAL_TZ = MEXICO_TZ
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Invalid timezone configuration"
-        )
+    # 🔥 SOLO agregado: obtener timezone del cliente
+    LOCAL_TZ = get_client_timezone(str(payload.client_id))
 
     if payload.scheduled_time.tzinfo is None:
         scheduled_local = payload.scheduled_time.replace(tzinfo=LOCAL_TZ)
     else:
         scheduled_local = payload.scheduled_time.astimezone(LOCAL_TZ)
 
+    # Guardamos siempre en UTC (esto ya lo hacías)
     scheduled_utc = scheduled_local.astimezone(timezone.utc)
 
     appointment_data = {
@@ -204,7 +212,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
 
     logger.info(f"✅ Appointment created: {appointment_id}")
 
-    # 🔔 Instant confirmation
+    # 🔔 Instant confirmation (NO cambiado)
     try:
         await send_appointment_confirmation(appointment)
     except Exception:
@@ -212,7 +220,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
             "❌ Appointment confirmation crashed unexpectedly"
         )
 
-    # 2️⃣ Track usage
+    # 2️⃣ Track usage (NO cambiado)
     supabase.table("appointment_usage").insert({
         "client_id": str(payload.client_id),
         "appointment_id": appointment_id,
@@ -221,7 +229,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
         "created_at": datetime.utcnow().isoformat(),
     }).execute()
 
-    # 3️⃣ Create reminders
+    # 3️⃣ Create reminders (NO cambiado)
     reminders_created = 0
 
     if payload.send_reminders:
