@@ -274,7 +274,8 @@ def ask_question(
     messages: Union[List[Dict[str, str]], str],
     client_id: str,
     session_id: str = None,
-    disable_rag: bool = False
+    disable_rag: bool = False,
+    channel: str = "chat" 
 ) -> str:
     try:
         session_id = session_id or str(uuid.uuid4())
@@ -336,8 +337,9 @@ def ask_question(
                 if turn_lang == "es"
                 else "Hi! How can I help you today?"
             )
-            save_history(client_id, session_id, "user", original_question, channel="chat")
-            save_history(client_id, session_id, "assistant", answer, channel="chat")
+            save_history(client_id, session_id, "user", original_question, channel=channel)
+            save_history(client_id, session_id, "assistant", answer, channel=channel)
+
             return answer
 
         # =====================================================
@@ -363,8 +365,10 @@ Rules:
             ])
             answer = (resp.content or "").strip() or fallback
 
-            save_history(client_id, session_id, "user", original_question, channel="chat")
-            save_history(client_id, session_id, "assistant", answer, channel="chat")
+           
+            save_history(client_id, session_id, "user", original_question, channel=channel)
+            save_history(client_id, session_id, "assistant", answer, channel=channel)
+
             return answer
 
 
@@ -383,8 +387,8 @@ Rules:
         if not _has_active_documents(client_id):
             fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
 
-            save_history(client_id, session_id, "user", original_question, channel="chat")
-            save_history(client_id, session_id, "assistant", fallback_limit, channel="chat")
+            save_history(client_id, session_id, "user", original_question, channel=channel)
+            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel)
             return fallback_limit
 
 
@@ -406,8 +410,8 @@ Rules:
         if not os.path.exists(client_data_path):
             fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
 
-            save_history(client_id, session_id, "user", original_question, channel="chat")
-            save_history(client_id, session_id, "assistant", fallback_limit, channel="chat")
+            save_history(client_id, session_id, "user", original_question, channel=channel)
+            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel)
             return fallback_limit
 
 
@@ -465,8 +469,8 @@ Rules:
         retrieved_docs = retriever.invoke(rewritten_question)
 
         if not retrieved_docs:
-            save_history(client_id, session_id, "user", original_question, channel="chat")
-            save_history(client_id, session_id, "assistant", fallback, channel="chat")
+            save_history(client_id, session_id, "user", original_question, channel=channel)
+            save_history(client_id, session_id, "assistant", fallback, channel=channel)
             return fallback
 
 
@@ -564,8 +568,8 @@ Rules:
         # =====================================================
         # 💾 Guardar historial
         # =====================================================
-        save_history(client_id, session_id, "user", original_question, channel="chat")
-        save_history(client_id, session_id, "assistant", answer, channel="chat")
+        save_history(client_id, session_id, "user", original_question, channel=channel)
+        save_history(client_id, session_id, "assistant", answer, channel=channel)
 
         logging.info(f"✅ Respuesta generada para {client_id}: {answer}")
         return answer
@@ -586,6 +590,7 @@ Rules:
 # NO rompe widget ni flujos existentes
 # ------------------------------------------------------------------
 
+
 async def handle_message(
     client_id: str,
     session_id: str,
@@ -595,10 +600,10 @@ async def handle_message(
     result = ask_question(
         messages=user_message,
         client_id=client_id,
-        session_id=session_id
+        session_id=session_id,
+        channel=channel
     )
 
-    # 🛡️ Blindaje total: si es coroutine, la resolvemos
     if hasattr(result, "__await__"):
         result = await result
 

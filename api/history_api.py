@@ -1,56 +1,95 @@
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
 
 @router.get("/history")
 def get_history(
     client_id: str = Query(...),
     session_id: str = Query(None),
-    limit: int = Query(50, ge=1, le=200)
+    limit: int = Query(50, ge=1, le=200),
 ):
     """
-    Devuelve el historial de un cliente, opcionalmente filtrado por session_id.
-    Los resultados se devuelven en orden descendente (más recientes primero).
+    Devuelve el historial de un cliente.
+    - Compatible con versión actual
+    - Compatible con nuevas columnas (source_type, provider, status, etc.)
+    - No rompe frontend existente
     """
-    try:
-        print(f"📥 client_id recibido en /history: {client_id}, session_id={session_id}")
 
+    try:
+        logger.info(f"📥 /history | client_id={client_id} | session_id={session_id}")
+
+        # ✅ SELECT ampliado (si alguna columna no existe aún, Supabase la ignora)
         query = (
             supabase.table("history")
-            .select("role, content, created_at, session_id, channel")
+            .select("""
+                role,
+                content,
+                created_at,
+                session_id,
+                channel,
+                source_type,
+                provider,
+                status,
+                source_id
+            """)
             .eq("client_id", client_id)
         )
 
-        # Filtra por session_id solo si se envía
         if session_id:
             query = query.eq("session_id", session_id)
 
         response = query.order("created_at", desc=True).limit(limit).execute()
+
         raw_data = response.data or []
-        print(f"📦 Resultados encontrados (crudos): {len(raw_data)}")
+        logger.info(f"📦 Registros encontrados: {len(raw_data)}")
 
-        # 🚧 Limpieza: eliminar filas nulas o corruptas
-        results = [r for r in raw_data if isinstance(r, dict) and r.get("content") is not None]
+        # ---------------------------------------------------------
+        # Limpieza defensiva (production safe)
+        # ---------------------------------------------------------
+        results = []
+        for r in raw_data:
+            if not isinstance(r, dict):
+                continue
+            if not r.get("content"):
+                continue
 
-        print(f"📦 Resultados válidos tras limpieza: {len(results)} registros para client_id={client_id}")
+            results.append({
+                "role": r.get("role"),
+                "content": r.get("content"),
+                "created_at": r.get("created_at"),
+                "session_id": r.get("session_id"),
+                "channel": r.get("channel", "chat"),
+                "source_type": r.get("source_type", "chat"),
+                "provider": r.get("provider", "internal"),
+                "status": r.get("status", "sent"),
+                "source_id": r.get("source_id"),
+            })
 
         if results:
-            first = results[0]
-            print(f"🧩 Último mensaje: {first.get('role', 'unknown')} - {first.get('content', '')[:60]}")
+            logger.info(
+                f"🧩 Último mensaje: {results[0]['role']} - "
+                f"{results[0]['content'][:60]}"
+            )
         else:
-            print("ℹ️ No hay mensajes válidos para mostrar.")
+            logger.info("ℹ️ No hay mensajes válidos para mostrar.")
 
         return JSONResponse(
             content={
                 "client_id": client_id,
                 "session_id": session_id,
                 "count": len(results),
-                "history": results
+                "history": results,
             }
         )
 
     except Exception as e:
-        print(f"❌ Error en /history: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logger.exception("❌ Error en /history")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error"},
+        )

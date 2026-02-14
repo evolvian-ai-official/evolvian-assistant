@@ -30,6 +30,7 @@ async def ask(
     question: str = Form(...),
     client_id: str = Form(...),
     session_id: str = Form(None),
+    channel: str = Form("chat"),  # ✅ preparado para multicanal
 ):
     """
     Endpoint principal de conversación (PRODUCCIÓN).
@@ -42,7 +43,9 @@ async def ask(
     """
 
     try:
-        logging.info(f"❓ Pregunta recibida | client={client_id} | text='{question}'")
+        logging.info(
+            f"❓ Pregunta recibida | client={client_id} | channel={channel} | text='{question}'"
+        )
 
         # =====================================================
         # 🔐 Límite diario SOLO para asistente interno Evolvian
@@ -59,7 +62,7 @@ async def ask(
                 .execute()
             )
 
-            if usage_res.error:
+            if getattr(usage_res, "error", None):
                 logging.error(f"❌ Error validando uso interno: {usage_res.error}")
                 return JSONResponse(
                     status_code=500,
@@ -88,7 +91,6 @@ async def ask(
 
         # =====================================================
         # 🧠 Flujo especial: disponibilidad de calendario
-        # (NO pasa por RAG)
         # =====================================================
         if is_availability_request(question):
             session_id = session_id or str(uuid.uuid4())
@@ -107,14 +109,14 @@ async def ask(
                     "message", "No se encontraron horarios disponibles."
                 )
 
-            # 🔒 Historial SOLO aquí (flujo alterno)
-            save_history(client_id, session_id, "user", question, channel="chat")
-            save_history(client_id, session_id, "assistant", answer, channel="chat")
+            # ✅ Guardado correcto con canal dinámico
+            save_history(client_id, session_id, "user", question, channel=channel)
+            save_history(client_id, session_id, "assistant", answer, channel=channel)
 
             return JSONResponse(content={"answer": answer, "session_id": session_id})
 
         # =====================================================
-        # 📌 Flujo especial: agendamiento directo por ISO datetime
+        # 📌 Flujo especial: agendamiento directo
         # =====================================================
         iso_match = re.search(
             r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:-\d{2}:\d{2})?",
@@ -132,14 +134,14 @@ async def ask(
                     scheduled_time_str=scheduled_time.isoformat(),
                 )
 
-                save_history(client_id, session_id, "user", question, channel="chat")
-                save_history(client_id, session_id, "assistant", result, channel="chat")
+                save_history(client_id, session_id, "user", question, channel=channel)
+                save_history(client_id, session_id, "assistant", result, channel=channel)
 
                 return JSONResponse(
                     content={"answer": result, "session_id": session_id}
                 )
 
-            except Exception as e:
+            except Exception:
                 logging.exception("❌ Error al intentar agendar cita")
                 return JSONResponse(
                     content={
@@ -152,7 +154,6 @@ async def ask(
         # =====================================================
         session_id = session_id or str(uuid.uuid4())
 
-        # Recuperar contexto conversacional (solo lectura)
         context_res = (
             supabase.table("history")
             .select("role, content")
@@ -172,18 +173,20 @@ async def ask(
             {"role": "user", "content": question}
         ]
 
-        # ⚠️ HISTORIAL SE GUARDA EXCLUSIVAMENTE EN ask_question()
+        # ⚠️ ask_question guarda historial internamente
+        # 👉 Aquí no duplicamos guardado
         response = ask_question(
             messages=message_payload,
             client_id=client_id,
             session_id=session_id,
+            channel=channel  # 🔥 ahora preparado para multicanal
         )
 
         return JSONResponse(
             content={"answer": response, "session_id": session_id}
         )
 
-    except Exception as e:
+    except Exception:
         logging.exception("❌ Error inesperado en /ask")
         return JSONResponse(
             status_code=500,

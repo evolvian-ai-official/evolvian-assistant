@@ -110,28 +110,70 @@ def get_client_id_from_public(public_id: str) -> str | None:
 # HISTORIAL
 # -------------------------------
 
-def save_history(client_id: str, session_id: str, role: str, content: str, channel: str = "chat"):
-    """Guarda un solo mensaje en el historial (role + content)."""
+def save_history(
+    client_id: str,
+    session_id: str,
+    role: str,
+    content: str,
+    channel: str = "chat",
+    source_type: str = "chat",
+    provider: str = "internal",
+    source_id: str | None = None,
+    status: str = "sent",
+    metadata: dict | None = None,
+):
+    """
+    Evolvian unified history + usage tracker.
+    Compatible con flujos actuales (no rompe nada).
+    """
+
     try:
-        logging.info(f"✪ Guardando historial para cliente {client_id}, role={role}")
+        logging.info(
+            f"✪ Guardando historial | client={client_id} | role={role} | channel={channel}"
+        )
 
         data = {
             "client_id": client_id,
             "session_id": session_id,
             "role": role,
-            "content": content,   # ✅ mensaje real
+            "content": content,
             "channel": channel,
+            "source_type": source_type,
+            "provider": provider,
+            "source_id": source_id,
+            "status": status,
+            "metadata": metadata,
+            "created_at": datetime.utcnow().isoformat(),
         }
 
         res = supabase.table("history").insert(data).execute()
 
         if not res or not getattr(res, "data", None):
             logging.error(f"❌ Error al guardar historial: {res}")
-        else:
-            logging.info("✅ Historial guardado correctamente (role + content)")
+            return
+
+        # ---------------------------------------------------------
+        # 🔢 Incrementar usage SOLO si es respuesta del assistant
+        # (No contamos mensajes del usuario)
+        # ---------------------------------------------------------
+        if role == "assistant":
+            try:
+                supabase.rpc(
+                    "increment_usage",
+                    {
+                        "p_client_id": client_id,
+                        "p_channel": channel,
+                        "p_source_type": source_type,
+                    },
+                ).execute()
+            except Exception as usage_error:
+                logging.warning(f"⚠️ Usage increment failed: {usage_error}")
+
+        logging.info("✅ Historial guardado correctamente")
 
     except Exception as e:
-        logging.error(f"❌ Error al guardar historial: {e}")
+        logging.error(f"❌ Error en save_history: {e}")
+
 
 #-----Memoria para los chats tengan coherencia        
 
