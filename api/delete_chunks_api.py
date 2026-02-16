@@ -1,17 +1,19 @@
 # api/delete_chunks_api.py
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from pathlib import Path
 import shutil
 import logging
 
 from api.config.config import supabase
 from api.delete_file import delete_file_from_storage  # helper interno
+from api.authz import authorize_client_request
 
 router = APIRouter()
 
 @router.delete("/delete_chunks")
 def delete_chunks(
+    request: Request,
     client_id: str = Query(..., description="Client ID owner of the document"),
     storage_path: str = Query(..., description="Full storage path of the document"),
 ):
@@ -27,6 +29,8 @@ def delete_chunks(
     # --------------------------------------------------
     # 1️⃣ Disable metadata (SOURCE OF TRUTH)
     # --------------------------------------------------
+    authorize_client_request(request, client_id)
+
     res = (
         supabase
         .table("document_metadata")

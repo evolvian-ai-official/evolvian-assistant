@@ -35,15 +35,15 @@ async def create_checkout_session(request: Request):
         stripe_price_id = plan_lookup.get(plan_id)
         print(f"🔄 Usando price_id automático para plan '{plan_id}': {stripe_price_id}")
 
-    # 🔍 Debug de entorno Stripe
-    print("──────────────────────── DEBUG STRIPE ENV ────────────────────────")
-    print(f"STRIPE_SECRET_KEY starts with: {os.getenv('STRIPE_SECRET_KEY')[:10] if os.getenv('STRIPE_SECRET_KEY') else '❌ NOT SET'}")
-    print(f"STRIPE_PRICE_STARTER_ID: {os.getenv('STRIPE_PRICE_STARTER_ID')}")
-    print(f"STRIPE_PRICE_PREMIUM_ID: {os.getenv('STRIPE_PRICE_PREMIUM_ID')}")
-    print(f"stripe_price_id usado: {stripe_price_id}")
-    print(f"stripe.api_key (in memory): {stripe.api_key[:10] if stripe.api_key else '❌ NOT SET'}")
-    print(f"STRIPE_SUCCESS_URL: {os.getenv('STRIPE_SUCCESS_URL')}")
-    print(f"STRIPE_CANCEL_URL: {os.getenv('STRIPE_CANCEL_URL')}")
+    # 🔍 Debug seguro (sin exponer secretos ni valores completos)
+    print("──────────────────────── DEBUG STRIPE (SAFE) ─────────────────────")
+    print(f"STRIPE_SECRET_KEY configured: {'yes' if os.getenv('STRIPE_SECRET_KEY') else 'no'}")
+    print(f"STRIPE_PRICE_STARTER_ID configured: {'yes' if os.getenv('STRIPE_PRICE_STARTER_ID') else 'no'}")
+    print(f"STRIPE_PRICE_PREMIUM_ID configured: {'yes' if os.getenv('STRIPE_PRICE_PREMIUM_ID') else 'no'}")
+    print(f"stripe_price_id provided: {'yes' if stripe_price_id else 'no'}")
+    print(f"stripe.api_key configured in memory: {'yes' if stripe.api_key else 'no'}")
+    print(f"STRIPE_SUCCESS_URL configured: {'yes' if os.getenv('STRIPE_SUCCESS_URL') else 'no'}")
+    print(f"STRIPE_CANCEL_URL configured: {'yes' if os.getenv('STRIPE_CANCEL_URL') else 'no'}")
     print("──────────────────────────────────────────────────────────────────")
 
     # Validación final

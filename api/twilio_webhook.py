@@ -12,6 +12,7 @@ from api.modules.assistant_rag.supabase_client import (
 
 from api.modules.assistant_rag.rag_pipeline import ask_question
 from api.config import config
+from api.webhook_security import verify_twilio_signature
 
 
 router = APIRouter()
@@ -22,6 +23,9 @@ async def twilio_webhook(
     Body: str = Form(...),
     From: str = Form(...)
 ):
+    form_data = await request.form()
+    verify_twilio_signature(request, form_data)
+
     print(f"📩 Mensaje recibido de {From}: {Body}")
 
     # Limpiar y preparar número

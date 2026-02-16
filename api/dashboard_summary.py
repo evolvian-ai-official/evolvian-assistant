@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 import logging
 from datetime import datetime
 
@@ -39,8 +40,9 @@ def count_bucket_documents(client_id: str) -> int:
 
 
 @router.get("/dashboard_summary")
-def dashboard_summary(client_id: str = Query(...)):
+def dashboard_summary(request: Request, client_id: str = Query(...)):
     try:
+        authorize_client_request(request, client_id)
         logging.info(f"📊 Obteniendo dashboard_summary para client_id={client_id}")
 
         # 1️⃣ Configuración del asistente y plan

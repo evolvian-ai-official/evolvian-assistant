@@ -1,4 +1,7 @@
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
+import os
+import json
+import logging
 
 from api.modules.assistant_rag.rag_pipeline import handle_message
 from api.modules.whatsapp.whatsapp_sender import send_whatsapp_message
@@ -7,10 +10,14 @@ from api.modules.assistant_rag.supabase_client import (
     is_duplicate_wa_message,
     register_wa_message,
 )
+from api.webhook_security import verify_meta_signature
 
 router = APIRouter(prefix="/api/whatsapp")
+logger = logging.getLogger(__name__)
 
-VERIFY_TOKEN = "evolvian2025"
+VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolvian2025")
+if VERIFY_TOKEN == "evolvian2025":
+    logger.warning("⚠️ Using default META_WHATSAPP_VERIFY_TOKEN. Configure env var in production.")
 
 # -------------------------------------------------------------------
 # 🔐 Webhook verification (Meta GET)
@@ -39,7 +46,9 @@ async def incoming_message(
     print("🚀🚀🚀 WHATSAPP WEBHOOK HIT 🚀🚀🚀")
 
     try:
-        payload = await request.json()
+        raw_body = await request.body()
+        verify_meta_signature(request, raw_body)
+        payload = json.loads(raw_body.decode("utf-8") or "{}")
 
         # 🔴 CRÍTICO
         # Respondemos 200 INMEDIATO a Meta para evitar retries
@@ -47,6 +56,8 @@ async def incoming_message(
 
         return {"received": True}
 
+    except HTTPException:
+        raise
     except Exception as e:
         # ⚠️ JAMÁS devolver 4xx/5xx a Meta por errores internos
         # o entrará en retry infinito

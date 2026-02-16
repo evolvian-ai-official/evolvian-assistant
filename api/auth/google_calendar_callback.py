@@ -54,7 +54,16 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
         "is_active": True
     }
 
-    logging.info(f"📤 Token exchange payload: {token_data}")
+    logging.info(
+        "📤 Token exchange payload (safe): %s",
+        {
+            "code_present": bool(code),
+            "client_id_present": bool(GOOGLE_CLIENT_ID),
+            "client_secret_present": bool(GOOGLE_CLIENT_SECRET),
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "grant_type": token_data.get("grant_type"),
+        },
+    )
     token_resp = requests.post(token_url, data=token_data)
     logging.info(f"📥 Token exchange status: {token_resp.status_code}")
     logging.info(f"📥 Token exchange response: {token_resp.text}")

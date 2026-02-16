@@ -1,14 +1,16 @@
 # api/list_files_api.py
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from api.config.config import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
 
 @router.get("/list_files")
-def list_files(client_id: str = Query(...)):
+def list_files(request: Request, client_id: str = Query(...)):
     try:
+        authorize_client_request(request, client_id)
         files = supabase.storage.from_(BUCKET_NAME).list(path=client_id)
         if not files:
             return {"files": []}
@@ -30,5 +32,7 @@ def list_files(client_id: str = Query(...)):
 
         return {"files": result}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al listar archivos: {str(e)}")

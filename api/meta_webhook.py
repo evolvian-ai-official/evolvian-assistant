@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 import os
+import json
+import logging
 from api.modules.assistant_rag.supabase_client import (
     get_client_id_by_channel,
     get_whatsapp_credentials,
@@ -8,10 +10,14 @@ from api.modules.assistant_rag.supabase_client import (
 )
 from api.modules.assistant_rag.rag_pipeline import ask_question
 from api.modules.whatsapp.send_wa_message import send_whatsapp_message
+from api.webhook_security import verify_meta_signature
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolviansecret2025")
+if VERIFY_TOKEN == "evolviansecret2025":
+    logger.warning("⚠️ Using default META_WHATSAPP_VERIFY_TOKEN. Configure env var in production.")
 
 
 @router.get("/webhooks/meta")
@@ -29,7 +35,9 @@ def verify_webhook(request: Request):
 @router.post("/webhooks/meta")
 async def receive_whatsapp_message(request: Request):
     try:
-        data = await request.json()
+        raw_body = await request.body()
+        verify_meta_signature(request, raw_body)
+        data = json.loads(raw_body.decode("utf-8") or "{}")
         print("📥 Webhook recibido:", data)
 
         entry = data.get("entry", [])[0]
@@ -89,6 +97,8 @@ async def receive_whatsapp_message(request: Request):
 
         return JSONResponse(content={"status": "ok"}, status_code=200)
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error procesando mensaje: {str(e)}")
         return JSONResponse(status_code=500, content={"error": str(e)})

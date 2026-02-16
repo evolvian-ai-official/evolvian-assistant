@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 # 🧠 Prompt base por defecto
 DEFAULT_PROMPT = "You are a helpful assistant. Provide relevant answers based only on the uploaded documents."
@@ -88,6 +89,7 @@ async def upsert_client_settings(request: Request):
         if not raw.get("client_id"):
             print("⚠️ Error: Falta client_id en el payload recibido.")
             raise HTTPException(status_code=400, detail="El campo 'client_id' es obligatorio.")
+        authorize_client_request(request, raw["client_id"])
 
         # 🧹 Normalizar tipos (true/false como booleanos, números como int)
         for k, v in list(raw.items()):
@@ -180,6 +182,7 @@ async def upsert_client_settings(request: Request):
 
 @router.get("/client_settings")
 def get_client_settings(
+    request: Request,
     client_id: Optional[str] = Query(None),
     public_client_id: Optional[str] = Query(None)
 ):
@@ -200,6 +203,8 @@ def get_client_settings(
             if not lookup.data:
                 raise HTTPException(status_code=404, detail="Cliente no encontrado")
             client_id = lookup.data["id"]
+        elif client_id:
+            authorize_client_request(request, client_id)
 
         # Obtener settings
         response = (

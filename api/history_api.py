@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 import logging
 
 router = APIRouter()
@@ -9,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/history")
 def get_history(
+    request: Request,
     client_id: str = Query(...),
     session_id: str = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -21,6 +23,7 @@ def get_history(
     """
 
     try:
+        authorize_client_request(request, client_id)
         logger.info(f"📥 /history | client_id={client_id} | session_id={session_id}")
 
         # ✅ SELECT ampliado (si alguna columna no existe aún, Supabase la ignora)
@@ -87,6 +90,8 @@ def get_history(
             }
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("❌ Error en /history")
         return JSONResponse(

@@ -25,7 +25,13 @@ def check_email_exists(payload: EmailCheckRequest):
 
         print("🔍 Supabase Admin Email Check")
         print("🔗 URL:", url)
-        print("🧾 Headers:", headers)
+        print(
+            "🧾 Headers:",
+            {
+                "apikey": "***redacted***",
+                "Authorization": "Bearer ***redacted***",
+            },
+        )
 
         response = requests.get(url, headers=headers)
         print("📥 Status Code:", response.status_code)

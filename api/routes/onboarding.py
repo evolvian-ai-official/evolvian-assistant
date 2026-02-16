@@ -8,6 +8,7 @@ from zoneinfo import available_timezones
 import logging
 
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ async def complete_onboarding(
         client_id = payload.client_id
         if not client_id:
             raise HTTPException(status_code=400, detail="client_id required")
+        authorize_client_request(request, client_id)
 
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
@@ -130,9 +132,10 @@ async def complete_onboarding(
 # =========================
 
 @router.get("/profile/{client_id}")
-async def get_profile(client_id: str):
+async def get_profile(client_id: str, request: Request):
 
     try:
+        authorize_client_request(request, client_id)
         # 🔹 Profile
         profile_res = (
             supabase
