@@ -260,7 +260,8 @@ def get_client_settings(
                     supports_whatsapp,
                     price_usd,
                     duration,
-                    plan_features(feature)
+                    plan_features(feature, is_active)
+
                 )
             """)
             .eq("client_id", client_id)
@@ -284,6 +285,7 @@ def get_client_settings(
 
         # Fallback de plan
         plan = settings.get("plan", {})
+
         if not plan or not plan.get("id"):
             plan = {
                 "id": "free",
@@ -296,7 +298,21 @@ def get_client_settings(
                 "price_usd": 0,
                 "plan_features": []
             }
+
+        # 🔹 Filtrar features activas
+        raw_features = plan.get("plan_features", []) or []
+
+        active_features = [
+            f["feature"]
+            for f in raw_features
+            if f.get("is_active") is True
+        ]
+
+        plan["plan_features"] = active_features
+
         settings["plan"] = plan
+
+
 
         # Fallback de prompt
         if not settings.get("custom_prompt"):

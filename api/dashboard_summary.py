@@ -46,15 +46,17 @@ def dashboard_summary(client_id: str = Query(...)):
         # 1️⃣ Configuración del asistente y plan
         settings_res = (
             supabase.table("client_settings")
+
             .select(
                 "assistant_name, language, temperature, plan_id, show_powered_by, "
                 "subscription_start, subscription_end, cancellation_requested_at, scheduled_plan_id, "
                 "plans!client_settings_plan_id_fkey("
                 "id, name, max_messages, max_documents, is_unlimited, "
                 "show_powered_by, supports_chat, supports_email, supports_whatsapp, price_usd, "
-                "plan_features(feature)"
+                "plan_features(feature, is_active)"
                 ")"
             )
+
             .eq("client_id", client_id)
             .single()
             .execute()
@@ -87,7 +89,16 @@ def dashboard_summary(client_id: str = Query(...)):
                 "reactivate_available": True
             }
 
+
         # 3️⃣ Construir bloque del plan con datos combinados
+        raw_features = plan.get("plan_features", []) or []
+
+        active_features = [
+            f["feature"]
+            for f in raw_features
+            if f.get("is_active") is True
+        ]
+
         plan_info = {
             "id": plan.get("id"),
             "name": plan.get("name"),
@@ -99,8 +110,9 @@ def dashboard_summary(client_id: str = Query(...)):
             "supports_email": plan.get("supports_email"),
             "supports_whatsapp": plan.get("supports_whatsapp"),
             "price_usd": plan.get("price_usd"),
-            "plan_features": [f["feature"] for f in plan.get("plan_features", [])],
+            "plan_features": active_features,
         }
+
 
         # 4️⃣ Contar mensajes de usuario (solo role=user)
         msg_count_res = (
