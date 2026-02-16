@@ -6,9 +6,10 @@ import re
 import unicodedata
 import requests
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 
 from api.config.config import supabase
+from api.authz import authorize_client_request
 from api.modules.document_processor import process_file
 from api.utils.usage_limiter import check_and_increment_usage
 
@@ -32,10 +33,12 @@ def sanitize_filename(filename: str) -> str:
 # --------------------------------------------------
 @router.post("/upload_document")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     client_id: str = Form(...)
 ):
     try:
+        authorize_client_request(request, client_id)
         # --------------------------------------------------
         # 1️⃣ Validar cliente + plan
         # --------------------------------------------------

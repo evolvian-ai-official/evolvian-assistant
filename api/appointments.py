@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 import logging
 
 router = APIRouter(tags=["Calendar"])
@@ -8,7 +9,7 @@ logger = logging.getLogger("appointments")
 
 
 @router.get("/calendar/appointments")
-def list_appointments(client_id: str = Query(...)):
+def list_appointments(request: Request, client_id: str = Query(...)):
     """
     Returns all booked appointments for a specific client.
 
@@ -20,6 +21,7 @@ def list_appointments(client_id: str = Query(...)):
     logger.info(f"📋 Fetching appointments for client_id={client_id}")
 
     try:
+        authorize_client_request(request, client_id)
         res = (
             supabase.table("appointments")
             .select("id, user_name, user_email, scheduled_time, created_at, calendar_event_id")
@@ -52,6 +54,8 @@ def list_appointments(client_id: str = Query(...)):
         logger.info(f"✅ {len(formatted)} appointments retrieved successfully.")
         return JSONResponse(status_code=200, content={"appointments": formatted})
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("❌ Error while fetching appointments")
         return JSONResponse(status_code=500, content={"error": str(e), "appointments": []})

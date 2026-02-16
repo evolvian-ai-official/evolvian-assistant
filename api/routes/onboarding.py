@@ -182,6 +182,8 @@ async def get_profile(client_id: str, request: Request):
             "timezone": timezone_value
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("❌ Failed to fetch profile")
         raise HTTPException(status_code=500, detail="Internal Server Error")

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 import stripe
 import os
 
@@ -24,6 +25,7 @@ async def reactivate_subscription(request: Request):
 
         if not client_id:
             raise HTTPException(status_code=400, detail="Missing client_id")
+        authorize_client_request(request, client_id)
 
         # 🔹 Buscar configuración del cliente
         settings_res = (
@@ -83,7 +85,8 @@ async def reactivate_subscription(request: Request):
     except stripe.error.StripeError as e:
         print(f"❌ Stripe error: {e}")
         raise HTTPException(status_code=500, detail=f"Stripe error: {str(e)}")
-
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error en /reactivate-subscription: {e}")
         raise HTTPException(status_code=500, detail=str(e))

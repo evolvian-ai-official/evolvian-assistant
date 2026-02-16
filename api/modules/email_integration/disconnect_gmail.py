@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter(prefix="/disconnect_gmail", tags=["Email Automation"])
 
@@ -15,6 +16,7 @@ async def disconnect_gmail(request: Request, client_id: str = Query(..., descrip
     print(f"🔌 Solicitando eliminación total de Gmail para client_id={client_id}")
 
     try:
+        authorize_client_request(request, client_id)
         # Buscar todos los canales Gmail asociados al cliente
         channel_resp = (
             supabase.table("channels")

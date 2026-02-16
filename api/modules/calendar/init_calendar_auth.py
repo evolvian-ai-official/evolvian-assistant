@@ -1,15 +1,21 @@
 from fastapi import APIRouter, Request, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 import os
 import urllib.parse
 import logging
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter(tags=["Calendar"])
 
 # ✅ Real Google Calendar OAuth initializer
 @router.get("/auth/google_calendar/init")
-def google_calendar_init(client_id: str, request: Request):
+def google_calendar_init(
+    client_id: str,
+    request: Request,
+    as_json: bool = Query(False),
+):
+    authorize_client_request(request, client_id)
     ENV = os.getenv("ENV", "local").lower()
     IS_PROD = ENV == "prod"
 
@@ -36,17 +42,20 @@ def google_calendar_init(client_id: str, request: Request):
     )
 
     logging.info(f"🔗 Redirecting to Google Auth URL: {auth_url}")
+    if as_json:
+        return JSONResponse({"auth_url": auth_url})
     return RedirectResponse(auth_url)
 
 
 # ✅ Alias route for compatibility with the frontend
 @router.get("/calendar/connect")
-def alias_calendar_connect(client_id: str = Query(...)):
+def alias_calendar_connect(request: Request, client_id: str = Query(...)):
     """
     Alias route for frontend compatibility.
     Redirects to /auth/google_calendar/init so the button URL stays the same.
     """
     try:
+        authorize_client_request(request, client_id)
         target_url = f"/auth/google_calendar/init?client_id={client_id}"
         logging.info(f"🔄 Redirecting alias /calendar/connect → {target_url}")
         return RedirectResponse(url=target_url)
@@ -56,12 +65,13 @@ def alias_calendar_connect(client_id: str = Query(...)):
 
 # ✅ Disconnect Google Calendar
 @router.post("/auth/google_calendar/disconnect")
-def disconnect_google_calendar(client_id: str = Query(...)):
+def disconnect_google_calendar(request: Request, client_id: str = Query(...)):
     """
     Deactivates Google Calendar integration for a client in Supabase.
     Used by frontend to 'disconnect' the account.
     """
     try:
+        authorize_client_request(request, client_id)
         # Buscar integración activa
         res = (
             supabase.table("calendar_integrations")

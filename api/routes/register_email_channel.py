@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter(
     prefix="/register_email_channel",
@@ -7,7 +8,7 @@ router = APIRouter(
 )
 
 @router.post("")
-async def register_email_channel(payload: dict):
+async def register_email_channel(payload: dict, request: Request):
     client_id = payload.get("client_id")
     email = payload.get("email")
     provider = payload.get("provider", "gmail")
@@ -19,6 +20,7 @@ async def register_email_channel(payload: dict):
 
     if not client_id or not email:
         raise HTTPException(status_code=400, detail="client_id y email son obligatorios")
+    authorize_client_request(request, client_id)
 
     # ✅ Verificar que el cliente exista y obtener plan
     client_settings_resp = (
@@ -85,6 +87,8 @@ async def register_email_channel(payload: dict):
             "channel": channel.data[0]
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Error insertando canal: {e}")
         raise HTTPException(status_code=500, detail=str(e))

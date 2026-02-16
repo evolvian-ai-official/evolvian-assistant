@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from api.config.config import supabase
+from api.authz import authorize_client_request
 from api.utils.stripe_plan_utils import modify_subscription_plan, cancel_subscription_at_period_end
 import stripe
 
@@ -30,6 +31,7 @@ async def change_plan(request: Request):
 
         if not client_id or not new_plan_id:
             raise HTTPException(status_code=400, detail="Faltan parámetros requeridos.")
+        authorize_client_request(request, client_id)
 
         print(f"➡️ Cliente {client_id} solicita cambio a plan '{new_plan_id}'")
 

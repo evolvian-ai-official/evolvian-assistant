@@ -4,6 +4,7 @@ import stripe
 import os
 from dotenv import load_dotenv
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 import traceback
 
 load_dotenv()
@@ -50,6 +51,7 @@ async def create_checkout_session(request: Request):
     if not client_id or not plan_id or not stripe_price_id:
         print("⚠️ Faltan parámetros obligatorios para crear la sesión de checkout.")
         return {"error": "Missing required parameters."}
+    authorize_client_request(request, client_id)
 
     try:
         print(f"🔎 Creando sesión para plan '{plan_id}' y cliente '{client_id}'")

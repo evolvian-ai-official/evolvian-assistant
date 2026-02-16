@@ -1,7 +1,8 @@
 import logging
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 # ============================================================
 # 📘 Router: Estado de integración Google Calendar (para UI)
@@ -10,12 +11,16 @@ router = APIRouter(tags=["Calendar UI Status"])
 logger = logging.getLogger("calendar_ui_status")
 
 @router.get("/api/auth/google_calendar")
-async def check_google_calendar_connection(client_id: str = Query(...)):
+async def check_google_calendar_connection(
+    request: Request,
+    client_id: str = Query(...),
+):
     """
     ✅ Verifica si el cliente tiene una integración activa con Google Calendar.
     Este endpoint es usado exclusivamente por la interfaz de usuario del panel Evolvian.
     """
     try:
+        authorize_client_request(request, client_id)
         res = (
             supabase.table("calendar_integrations")
             .select("connected_email, calendar_id, is_active")
@@ -42,7 +47,8 @@ async def check_google_calendar_connection(client_id: str = Query(...)):
                 "connected_email": connected_email,
             }
         )
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"❌ Error verifying Google Calendar connection for {client_id}: {e}")
         return JSONResponse(

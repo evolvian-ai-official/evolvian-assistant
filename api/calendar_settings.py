@@ -6,12 +6,13 @@
 # Auto-crea el registro si no existe (fix para PROD).
 # ============================================================
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List
 from datetime import datetime
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 import logging
 
 router = APIRouter(tags=["Calendar Settings"])
@@ -37,12 +38,13 @@ class CalendarSettingsPayload(BaseModel):
 # 📘 GET /calendar/settings — AUTO-CREA SI NO EXISTE (FIX)
 # ============================================================
 @router.get("/calendar/settings")
-def get_calendar_settings(client_id: str = Query(...)):
+def get_calendar_settings(request: Request, client_id: str = Query(...)):
     """
     Devuelve las configuraciones de calendario del cliente.
     Si no existen, las crea automáticamente (importante para producción).
     """
     try:
+        authorize_client_request(request, client_id)
         # Buscar la fila
         res = (
             supabase.table("calendar_settings")
@@ -72,6 +74,8 @@ def get_calendar_settings(client_id: str = Query(...)):
         # Devolver lo recién insertado
         return JSONResponse(content=defaults)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("❌ Error fetching calendar settings")
         raise HTTPException(status_code=500, detail=str(e))
@@ -80,12 +84,13 @@ def get_calendar_settings(client_id: str = Query(...)):
 # 💾 POST /calendar/settings
 # ============================================================
 @router.post("/calendar/settings")
-def upsert_calendar_settings(payload: CalendarSettingsPayload):
+def upsert_calendar_settings(payload: CalendarSettingsPayload, request: Request):
     """
     Guarda o actualiza las configuraciones del calendario.
     Usa 'calendar_status' en lugar de boolean para evitar conflictos.
     """
     try:
+        authorize_client_request(request, payload.client_id)
         data = payload.model_dump()
         client_id = data.pop("client_id")
         data["updated_at"] = datetime.utcnow().isoformat()
@@ -123,6 +128,8 @@ def upsert_calendar_settings(payload: CalendarSettingsPayload):
         saved = confirm.data[0]
         return JSONResponse(content={"success": True, "settings": saved})
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("❌ Error saving calendar settings")
         raise HTTPException(status_code=500, detail=str(e))
@@ -131,11 +138,16 @@ def upsert_calendar_settings(payload: CalendarSettingsPayload):
 # 🧪 PATCH /calendar/status (toggle rápido)d
 # ============================================================
 @router.patch("/calendar/status")
-def toggle_calendar_status(client_id: str = Query(...), status: str = Query(...)):
+def toggle_calendar_status(
+    request: Request,
+    client_id: str = Query(...),
+    status: str = Query(...),
+):
     """
     Permite activar o desactivar el calendario rápidamente desde el frontend.
     """
     try:
+        authorize_client_request(request, client_id)
         if status not in ["active", "inactive"]:
             raise HTTPException(status_code=400, detail="Invalid status value")
 
@@ -166,6 +178,8 @@ def toggle_calendar_status(client_id: str = Query(...), status: str = Query(...)
 
         return JSONResponse(content={"success": True, "calendar_status": status})
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("❌ Error toggling calendar status")
         raise HTTPException(status_code=500, detail=str(e))
