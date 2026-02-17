@@ -4,12 +4,18 @@
 import json
 import logging
 import re
+import uuid
 from datetime import datetime, timedelta, time as dtime
+from babel.dates import format_datetime
 from api.modules.assistant_rag.prompts.calendar_prompt import get_calendar_prompt
 from api.modules.assistant_rag.llm import openai_chat
 from api.modules.assistant_rag.supabase_client import supabase
 from zoneinfo import ZoneInfo
 from api.modules.calendar.get_booked_slots import get_booked_slots
+from api.appointments.create_appointment import (
+    CreateAppointmentPayload,
+    create_appointment as create_appointment_route,
+)
 
 
 
@@ -52,6 +58,48 @@ def _is_valid_email(email: str) -> bool:
     )
 
     return bool(pattern.match(email))
+
+
+def _detect_lang_signal(text: str) -> str | None:
+    t = (text or "").lower()
+    es_signals = {
+        "hola", "quiero", "agendar", "cita", "correo", "teléfono", "telefono",
+        "mañana", "viernes", "lunes", "martes", "miércoles", "miercoles", "jueves",
+        "confirmo", "sí", "si", "a las"
+    }
+    en_signals = {
+        "hello", "book", "appointment", "email", "phone", "tomorrow",
+        "friday", "monday", "tuesday", "wednesday", "thursday", "confirm"
+    }
+    if any(c in t for c in "áéíóúñ¿¡") or any(w in t for w in es_signals):
+        return "es"
+    if any(w in t for w in en_signals):
+        return "en"
+    return None
+
+
+def _format_slot_for_lang(iso_str: str, tz_name: str, lang: str) -> str:
+    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    target_tz = ZoneInfo(tz_name or "UTC")
+    if dt.tzinfo is None:
+        # Compatibilidad con citas históricas guardadas sin offset.
+        dt = dt.replace(tzinfo=target_tz)
+    local_dt = dt.astimezone(target_tz)
+    return format_datetime(
+        local_dt,
+        "EEEE dd 'de' MMMM yyyy, HH:mm" if lang == "es" else "EEEE, MMMM dd yyyy, HH:mm",
+        locale="es_MX" if lang == "es" else "en_US",
+    )
+
+
+def _format_slot_list_for_lang(slots: list[dict], tz_name: str, lang: str, limit: int = 9) -> str:
+    out = []
+    for slot in (slots or [])[:limit]:
+        iso = slot.get("start_iso")
+        if not iso:
+            continue
+        out.append(f"- {_format_slot_for_lang(iso, tz_name, lang)}")
+    return "\n".join(out)
 
 
 def _coerce_dict(val):
@@ -295,6 +343,13 @@ def _extract_times_from_text(text: str) -> list[str]:
     if relaxed:
         return [f"{hh}{ampm}" for hh, ampm in relaxed]
 
+    # 4️⃣ "a las 11" / "at 11" (sin minutos ni am/pm)
+    plain_hour = re.search(r"(?:a\s+las|at)\s*(\d{1,2})\b", text, flags=re.IGNORECASE)
+    if plain_hour:
+        h = int(plain_hour.group(1))
+        if 0 <= h <= 23:
+            return [f"{h:02d}:00"]
+
     return []
 
 
@@ -357,7 +412,21 @@ def _extract_selection_index(msg: str) -> int | None:
 def _load_settings(client_id: str) -> dict | None:
     try:
         res = supabase.table("calendar_settings").select("*").eq("client_id", client_id).limit(1).execute()
-        return res.data[0] if res and res.data else None
+        settings = res.data[0] if res and res.data else {}
+
+        # Prioriza timezone de My Profile (client_settings.timezone)
+        profile_res = (
+            supabase.table("client_settings")
+            .select("timezone")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        profile_tz = (profile_res.data or [{}])[0].get("timezone")
+        if profile_tz:
+            settings["timezone"] = profile_tz
+
+        return settings or None
     except Exception as e:
         logger.warning(f"⚠️ Could not load calendar_settings: {e}")
         return None
@@ -397,21 +466,52 @@ def _validate_slot(settings: dict, iso_str: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def _book_appointment(client_id: str, collected: dict) -> bool:
+def _normalize_session_uuid(client_id: str, session_id: str) -> uuid.UUID:
     try:
-        payload = {
-            "client_id": client_id,
-            "user_email": collected.get("user_email"),
-            "user_name": collected.get("user_name"),
-            "scheduled_time": collected.get("scheduled_time"),
-        }
-        supabase.table("appointments").insert(payload).execute()
-        return True
+        return uuid.UUID(str(session_id))
+    except Exception:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, f"{client_id}:{session_id}")
+
+
+def _appointment_label_for_channel(channel: str) -> str:
+    c = (channel or "").lower()
+    if "whatsapp" in c:
+        return "AI Assistant - WhatsApp"
+    if "widget" in c:
+        return "AI Assistant - Chat Widget"
+    return "AI Assistant - Chat"
+
+
+async def _book_appointment(client_id: str, session_id: str, collected: dict, channel: str, replace_existing: bool = False) -> dict:
+    try:
+        scheduled_time = datetime.fromisoformat(
+            str(collected.get("scheduled_time")).replace("Z", "+00:00")
+        )
+
+        payload = CreateAppointmentPayload(
+            client_id=uuid.UUID(client_id),
+            session_id=_normalize_session_uuid(client_id, session_id),
+            scheduled_time=scheduled_time,
+            user_name=collected.get("user_name") or "Cliente",
+            user_email=collected.get("user_email"),
+            user_phone=collected.get("user_phone"),
+            appointment_type=_appointment_label_for_channel(channel),
+            channel=channel or "chat",
+            send_reminders=False,
+            replace_existing=replace_existing,
+        )
+
+        result = await create_appointment_route(payload)
+        if result and result.get("duplicate_active"):
+            return {
+                "ok": False,
+                "duplicate_active": True,
+                "existing_appointment": result.get("existing_appointment") or {},
+            }
+        return {"ok": bool(result and result.get("success"))}
     except Exception as e:
-        logger.error(f"❌ Error inserting appointment: {e}")
-        return False
-
-
+        logger.error(f"❌ Error creating appointment via appointments module: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 from datetime import datetime, timedelta
@@ -620,6 +720,29 @@ def _extract_fields(message: str, state: dict, settings: dict) -> dict:
     if times:
         out["scheduled_time_hint"] = times[0]
 
+    # -----------------------------------------------------------
+    # 🎯 Match directo contra proposed_slots usando fecha + hora
+    # -----------------------------------------------------------
+    if state.get("proposed_slots") and date_iso and times:
+        try:
+            target_time = _normalize_time_str(times[0])
+            tz = ZoneInfo((settings or {}).get("timezone") or "UTC")
+
+            for slot in state["proposed_slots"]:
+                start_iso = slot.get("start_iso")
+                if not start_iso:
+                    continue
+                dt = datetime.fromisoformat(start_iso)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+                local_dt = dt.astimezone(tz)
+
+                if local_dt.strftime("%Y-%m-%d") == date_iso and local_dt.strftime("%H:%M") == target_time:
+                    out["scheduled_time"] = start_iso
+                    break
+        except Exception:
+            pass
+
     # ===========================================================
     # 🧠 Unified SAFE scheduled_time construction
     # ===========================================================
@@ -688,7 +811,7 @@ def _extract_fields(message: str, state: dict, settings: dict) -> dict:
 
 
 
-def handle_calendar_intent(client_id: str, message: str, session_id: str, channel: str, lang: str):
+async def handle_calendar_intent(client_id: str, message: str, session_id: str, channel: str, lang: str):
     logger.info(f"🧭 [LLM-Only Mode] Calendar intent for client_id={client_id}")
 
     # ============================================================
@@ -725,6 +848,11 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
     state.setdefault("intent", "calendar")
     state.setdefault("status", "collecting")
     state.setdefault("collected", {})
+    state.setdefault("lang", lang)
+    signal_lang = _detect_lang_signal(message)
+    if signal_lang:
+        state["lang"] = signal_lang
+    lang = state.get("lang", lang)
     collected = state["collected"]
 
     # 🛡️ Corregir estado corrupto: nunca permitir pending_confirmation sin horario
@@ -814,7 +942,114 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
         state["status"] = "pending_confirmation"
         state.pop("proposed_slots", None)
 
+    # Si ya tenemos todo, confirmar SIEMPRE con respuesta backend (sin LLM) para evitar loops e idioma mixto.
+    if (
+        state.get("status") == "pending_confirmation"
+        and collected.get("user_name")
+        and collected.get("user_email")
+        and collected.get("user_phone")
+        and collected.get("scheduled_time")
+        and not _is_yes(message)
+        and not _is_no(message)
+    ):
+        tz_name = (settings or {}).get("timezone") or "UTC"
+        pretty_slot = _format_slot_for_lang(collected["scheduled_time"], tz_name, lang)
+        confirm_msg = (
+            f"Perfecto, {collected['user_name']}. Tengo todo listo.\n"
+            f"Tu cita sería el {pretty_slot}.\n"
+            "¿Confirmas la cita? (responde: Sí o No)"
+            if lang == "es"
+            else (
+                f"Perfect, {collected['user_name']}. I have everything ready.\n"
+                f"Your appointment would be on {pretty_slot}.\n"
+                "Do you confirm the appointment? (reply: Yes or No)"
+            )
+        )
 
+        state["collected"] = collected
+        try:
+            supabase.table("conversation_state").upsert(
+                {"client_id": client_id, "session_id": session_id, "state": state},
+                on_conflict="client_id,session_id",
+            ).execute()
+        except Exception:
+            pass
+        return confirm_msg
+
+
+
+    # ============================================================
+    # 🔁 Resolver reemplazo de cita activa (duplicados)
+    # ============================================================
+    if state.get("status") == "pending_replace_existing":
+        if _is_yes(message):
+            booking_result = await _book_appointment(
+                client_id,
+                session_id,
+                collected,
+                channel,
+                replace_existing=True,
+            )
+            if booking_result.get("ok"):
+                state["status"] = "confirmed"
+                state.pop("proposed_slots", None)
+                state.pop("existing_appointment", None)
+                state["collected"] = collected
+                try:
+                    supabase.table("conversation_state").upsert(
+                        {
+                            "client_id": client_id,
+                            "session_id": session_id,
+                            "state": state,
+                        },
+                        on_conflict="client_id,session_id",
+                    ).execute()
+                except Exception:
+                    pass
+                return (
+                    "✅ Listo. Cancelé tu cita activa y registré la nueva."
+                    if lang == "es"
+                    else "✅ Done. I cancelled your active appointment and booked the new one."
+                )
+
+            return (
+                "❌ No pude reemplazar la cita. Intenta de nuevo en unos minutos."
+                if lang == "es"
+                else "❌ I couldn't replace the appointment. Please try again in a few minutes."
+            )
+
+        if _is_no(message):
+            state["status"] = "collecting"
+            state.pop("existing_appointment", None)
+            collected.pop("scheduled_time", None)
+            state["collected"] = collected
+            try:
+                supabase.table("conversation_state").upsert(
+                    {"client_id": client_id, "session_id": session_id, "state": state},
+                    on_conflict="client_id,session_id",
+                ).execute()
+            except Exception:
+                pass
+            return (
+                "Perfecto. Mantengo tu cita actual. Si quieres, te ayudo a elegir otro horario."
+                if lang == "es"
+                else "Perfect. I'll keep your current appointment. I can help you pick another time."
+            )
+
+        existing = state.get("existing_appointment") or {}
+        existing_time = existing.get("scheduled_time")
+        pretty_existing = existing_time
+        try:
+            if existing_time:
+                tz_name = (settings or {}).get("timezone") or "UTC"
+                pretty_existing = _format_slot_for_lang(existing_time, tz_name, lang)
+        except Exception:
+            pass
+        return (
+            f"Ya tienes una cita activa ({pretty_existing}). ¿Quieres cancelarla y crear la nueva? (Sí/No)"
+            if lang == "es"
+            else f"You already have an active appointment ({pretty_existing}). Do you want to cancel it and create the new one? (Yes/No)"
+        )
 
     # ============================================================
     # 📅 Confirmar cita si ya hay horario propuesto
@@ -826,16 +1061,16 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
             if settings:
                 ok, reason = _validate_slot(settings, collected["scheduled_time"])
                 if not ok:
-                    reply = f"{'⚠️' if lang == 'es' else '⚠️'} " + (
-                        f"Ese horario no cumple reglas: {reason}. "
-                        if lang == "es"
-                        else f"That time violates rules: {reason}. "
-                    )
-                    reply += (
-                        "¿Te propongo opciones válidas?"
-                        if lang == "es"
-                        else "Shall I propose valid options?"
-                    )
+                    # Reset invalid slot to avoid infinite confirmation loops.
+                    collected.pop("scheduled_time", None)
+                    state["status"] = "collecting"
+                    state.pop("proposed_slots", None)
+
+                    try:
+                        available_slots = _generate_available_slots(settings, client_id)
+                        state["proposed_slots"] = available_slots
+                    except Exception:
+                        state["proposed_slots"] = []
 
                     state["collected"] = collected
                     try:
@@ -850,13 +1085,39 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
                     except Exception:
                         pass
 
-                    return reply
+                    tz_name = (settings or {}).get("timezone") or "UTC"
+                    slot_text = _format_slot_list_for_lang(
+                        state.get("proposed_slots") or [],
+                        tz_name,
+                        lang,
+                    )
+                    if not slot_text:
+                        return (
+                            f"⚠️ Ese horario no cumple reglas: {reason}. No encontré horarios válidos por ahora."
+                            if lang == "es"
+                            else f"⚠️ That time violates rules: {reason}. I couldn't find valid slots right now."
+                        )
+
+                    return (
+                        f"⚠️ Ese horario no cumple reglas: {reason}.\n"
+                        "Te propongo estos horarios válidos:\n"
+                        f"{slot_text}\n"
+                        "Elige uno de esta lista."
+                        if lang == "es"
+                        else (
+                            f"⚠️ That time violates rules: {reason}.\n"
+                            "Here are valid slots:\n"
+                            f"{slot_text}\n"
+                            "Choose one from this list."
+                        )
+                    )
 
 
             # ====================================================
             # 💾 Registrar cita en appointments
             # ====================================================
-            if _book_appointment(client_id, collected):
+            booking_result = await _book_appointment(client_id, session_id, collected, channel)
+            if booking_result.get("ok"):
                 state["status"] = "confirmed"
                 state.pop("proposed_slots", None)
                 state["collected"] = collected
@@ -873,73 +1134,42 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
                 except Exception:
                     pass
 
-                # ====================================================
-                # 🚀 Post-booking pipeline (Calendar + Emails)
-                # ====================================================
-                try:
-                    import datetime, sys
-                    from pathlib import Path
-
-                    # 🧭 Asegurar que la raíz del proyecto esté en el path
-                    BASE_DIR = Path(__file__).resolve().parents[2]
-                    if str(BASE_DIR) not in sys.path:
-                        sys.path.append(str(BASE_DIR))
-                        logger.info(f"🧩 Added BASE_DIR to sys.path: {BASE_DIR}")
-
-                    # 📦 Importar módulos reales
-                    from api.modules.calendar.schedule_event import schedule_event
-                    from api.modules.calendar.send_confirmation_email import send_confirmation_email
-                    from api.modules.calendar.notify_business_owner import notify_business_owner
-
-                    logger.info("📤 Starting post-booking pipeline (email + calendar)...")
-
-                    # 🗓️ Crear evento en Google Calendar
-                    try:
-                        payload = {
-                            "client_id": client_id,
-                            "start": collected["scheduled_time"],
-                            "user_email": collected.get("user_email"),
-                            "user_name": collected.get("user_name"),
-                        }
-                        schedule_event(payload)
-                        logger.info("✅ Google Calendar event scheduled successfully.")
-                    except Exception as e:
-                        logger.error(f"❌ Error creating Google Calendar event: {e}")
-
-                    # 📧 Enviar correos
-                    try:
-                        dt = datetime.datetime.fromisoformat(collected["scheduled_time"])
-                        date_str = dt.strftime("%Y-%m-%d")
-                        hour_str = dt.strftime("%H:%M")
-
-                        if collected.get("user_email"):
-                            send_confirmation_email(
-                                collected["user_email"], date_str, hour_str
-                            )
-                            logger.info(
-                                f"✅ Confirmation email sent to {collected['user_email']}"
-                            )
-
-                        notify_business_owner(
-                            client_id,
-                            collected["scheduled_time"],
-                            collected.get("user_email"),
-                            collected.get("user_name"),
-                            collected.get("user_phone"),
-                        )
-                        logger.info("✅ Business owner notification sent successfully.")
-                    except Exception as e:
-                        logger.error(
-                            f"❌ Error sending confirmation/notification emails: {e}"
-                        )
-
-                except Exception as e:
-                    logger.error(f"❌ Post-booking pipeline general error: {e}")
+                # WhatsApp + Email confirmation comes from appointments.create_appointment flow.
 
                 return (
                     "✅ Tu cita ha sido registrada. (Recibirás confirmación pronto.)"
                     if lang == "es"
                     else "✅ Your appointment has been registered. (You’ll receive a confirmation soon.)"
+                )
+            elif booking_result.get("duplicate_active"):
+                state["status"] = "pending_replace_existing"
+                state["existing_appointment"] = booking_result.get("existing_appointment") or {}
+                state["collected"] = collected
+                try:
+                    supabase.table("conversation_state").upsert(
+                        {
+                            "client_id": client_id,
+                            "session_id": session_id,
+                            "state": state,
+                        },
+                        on_conflict="client_id,session_id",
+                    ).execute()
+                except Exception:
+                    pass
+
+                existing = booking_result.get("existing_appointment") or {}
+                existing_time = existing.get("scheduled_time")
+                pretty_existing = existing_time
+                try:
+                    tz_name = (settings or {}).get("timezone") or "UTC"
+                    if existing_time:
+                        pretty_existing = _format_slot_for_lang(existing_time, tz_name, lang)
+                except Exception:
+                    pass
+                return (
+                    f"Ya tienes una cita activa ({pretty_existing}). ¿Quieres cancelarla y crear la nueva? (Sí/No)"
+                    if lang == "es"
+                    else f"You already have an active appointment ({pretty_existing}). Do you want to cancel it and create the new one? (Yes/No)"
                 )
             else:
                 return (
@@ -987,6 +1217,56 @@ def handle_calendar_intent(client_id: str, message: str, session_id: str, channe
             logger.info(f"🟦 Proposed slots generated: {len(available_slots)}")
     except Exception as e:
         logger.error(f"❌ Error generating proposed slots: {e}")
+
+
+    # ============================================================
+    # 🧱 Backend-first collecting flow (sin LLM para evitar cambio de idioma)
+    # ============================================================
+    if state.get("status") == "collecting":
+        tz_name = (settings or {}).get("timezone") or "UTC"
+
+        if not collected.get("scheduled_time"):
+            slot_text = _format_slot_list_for_lang(state.get("proposed_slots") or [], tz_name, lang)
+            if not slot_text:
+                return (
+                    "No encontré horarios disponibles por ahora. ¿Quieres intentar otra fecha?"
+                    if lang == "es"
+                    else "I could not find available slots right now. Do you want to try another date?"
+                )
+            return (
+                "Con gusto te ayudo a agendar tu cita.\n\n"
+                "Estos son los próximos horarios disponibles:\n"
+                f"{slot_text}\n\n"
+                "Indícame cuál prefieres."
+                if lang == "es"
+                else (
+                    "I can help you book your appointment.\n\n"
+                    "Here are the next available slots:\n"
+                    f"{slot_text}\n\n"
+                    "Tell me which one you prefer."
+                )
+            )
+
+        if not collected.get("user_name"):
+            return (
+                "Perfecto. ¿Cuál es tu nombre completo?"
+                if lang == "es"
+                else "Perfect. What is your full name?"
+            )
+
+        if not collected.get("user_email"):
+            return (
+                "Gracias. ¿Cuál es tu correo electrónico?"
+                if lang == "es"
+                else "Thanks. What is your email address?"
+            )
+
+        if not collected.get("user_phone"):
+            return (
+                "Gracias. ¿Cuál es tu número de teléfono con WhatsApp?"
+                if lang == "es"
+                else "Thanks. What is your WhatsApp phone number?"
+            )
 
 
 

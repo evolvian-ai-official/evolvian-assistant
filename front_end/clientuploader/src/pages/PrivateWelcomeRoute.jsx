@@ -1,12 +1,14 @@
 // src/pages/PrivateWelcomeRoute.jsx
 import { Navigate } from "react-router-dom";
 import { useInitializeUser } from "../hooks/useInitializeUser";
+import { useLanguage } from "../contexts/LanguageContext";
 
 export default function PrivateWelcomeRoute({ children }) {
-  const { loading, session, clientId, isNewUser } = useInitializeUser();
+  const { loading, session, isNewUser } = useInitializeUser();
+  const { t } = useLanguage();
 
   if (loading) {
-    return <div style={{ color: "white", padding: "2rem" }}>Cargando...</div>;
+    return <div style={{ color: "white", padding: "2rem" }}>{t("loading")}</div>;
   }
 
   if (!session) {

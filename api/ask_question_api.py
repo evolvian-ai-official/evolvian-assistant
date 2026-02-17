@@ -15,6 +15,20 @@ router = APIRouter()
 MAX_DAILY_MESSAGES_INTERNAL = 1000  # 💡 Límite diario solo para Evolvian Support Bot
 
 
+def is_calendar_active(client_id: str) -> bool:
+    try:
+        res = (
+            supabase.table("calendar_settings")
+            .select("calendar_status")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        return (res.data or [{}])[0].get("calendar_status") == "active"
+    except Exception:
+        return False
+
+
 def is_availability_request(text: str) -> bool:
     """Detecta si el texto del usuario está pidiendo disponibilidad."""
     text = text.lower()
@@ -94,6 +108,11 @@ async def ask(
         # =====================================================
         if is_availability_request(question):
             session_id = session_id or str(uuid.uuid4())
+            if not is_calendar_active(client_id):
+                answer = "⛔ La agenda está desactivada para este asistente."
+                save_history(client_id, session_id, "user", question, channel=channel)
+                save_history(client_id, session_id, "assistant", answer, channel=channel)
+                return JSONResponse(content={"answer": answer, "session_id": session_id})
 
             calendar_res = get_availability_from_google_calendar(client_id)
             slots = calendar_res.get("available_slots", [])
@@ -125,6 +144,11 @@ async def ask(
 
         if iso_match:
             session_id = session_id or str(uuid.uuid4())
+            if not is_calendar_active(client_id):
+                answer = "⛔ La agenda está desactivada para este asistente."
+                save_history(client_id, session_id, "user", question, channel=channel)
+                save_history(client_id, session_id, "assistant", answer, channel=channel)
+                return JSONResponse(content={"answer": answer, "session_id": session_id})
 
             try:
                 scheduled_time = datetime.fromisoformat(iso_match.group())

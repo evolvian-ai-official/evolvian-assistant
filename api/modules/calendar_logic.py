@@ -157,6 +157,17 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
 # ============================================================
 def save_appointment_if_valid(client_id: str, scheduled_time_str: str, user_email: str = "invitado@evolvian.com", user_name: str = "Invitado", user_phone: str = None, session_id: str = None, channel: str = "chat") -> str:
     try:
+        settings = (
+            supabase.table("calendar_settings")
+            .select("calendar_status")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        calendar_status = (settings.data or [{}])[0].get("calendar_status")
+        if calendar_status != "active":
+            return "⛔ La agenda está desactivada para este asistente."
+
         # Convertir a UTC
         scheduled_time_local = datetime.datetime.fromisoformat(scheduled_time_str)
         scheduled_time_utc = scheduled_time_local.astimezone(ZoneInfo("UTC"))

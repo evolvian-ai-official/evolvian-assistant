@@ -12,6 +12,6 @@ if (!clientId) {
   document.body.appendChild(container);
 
   ReactDOM.createRoot(container).render(
-    <ChatWidgetFloating clientId={clientId} />
+    <ChatWidgetFloating publicClientId={clientId} />
   );
 }

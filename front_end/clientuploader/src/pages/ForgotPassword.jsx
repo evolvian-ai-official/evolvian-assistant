@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
@@ -7,10 +7,26 @@ import { useLanguage } from "../contexts/LanguageContext";
 export default function ForgotPassword() {
   const { t } = useLanguage();
   const [email, setEmail] = useState("");
+  const [animateLogo, setAnimateLogo] = useState(false);
+
+  useEffect(() => {
+    setTimeout(() => setAnimateLogo(true), 100);
+
+    if (!document.getElementById("pulseGlow")) {
+      const style = document.createElement("style");
+      style.id = "pulseGlow";
+      style.textContent = `
+        @keyframes pulseGlow {
+          0%, 100% { box-shadow: 0 0 15px rgba(74,144,226,0.4); }
+          50% { box-shadow: 0 0 25px rgba(163,217,177,0.7); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
 
   const handleReset = async (e) => {
     e.preventDefault();
-
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/reset-password`,
     });
@@ -26,13 +42,27 @@ export default function ForgotPassword() {
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
-        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <img src="/logo-evolvian.svg" alt="Logo Evolvian" style={{ width: "64px", margin: "0 auto 1rem" }} />
-          <h1 style={titleStyle}>{t("recover_password")}</h1>
-          <p style={subtitleStyle}>{t("enter_your_email")}</p>
+        {/* 🔹 Logo circular degradado con animación */}
+        <div style={logoWrapper}>
+          <div
+            style={{
+              ...logoCircle,
+              transform: animateLogo ? "rotate(360deg)" : "rotate(0deg)",
+              transition: "transform 1s ease-in-out",
+              animation: "pulseGlow 4s ease-in-out infinite",
+            }}
+          >
+            <img src="/logo-evolvian.svg" alt="Evolvian Logo" style={logoFull} />
+          </div>
         </div>
 
-        <form onSubmit={handleReset} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <h1 style={titleStyle}>{t("recover_password")}</h1>
+        <p style={subtitleStyle}>{t("enter_your_email")}</p>
+
+        <form
+          onSubmit={handleReset}
+          style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1.5rem" }}
+        >
           <div style={inputWrapperStyle}>
             <input
               type="email"
@@ -40,7 +70,7 @@ export default function ForgotPassword() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              style={{ ...inputStyle, border: "none", flex: 1 }}
+              style={inputStyle}
             />
           </div>
           <button type="submit" style={primaryButtonStyle}>
@@ -59,78 +89,105 @@ export default function ForgotPassword() {
   );
 }
 
-// 🎨 Estilos
+/* 🎨 Estilos Evolvian */
 const containerStyle = {
   height: "100vh",
   width: "100vw",
-  backgroundColor: "#0f1c2e",
+  backgroundColor: "#f9fafb",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  padding: "1rem",
-  fontFamily: "system-ui, Avenir, Helvetica, Arial, sans-serif",
+  fontFamily: "Inter, system-ui, sans-serif",
 };
 
 const cardStyle = {
   width: "100%",
   maxWidth: "400px",
-  backgroundColor: "#1b2a41",
-  borderRadius: "1.5rem",
-  padding: "2rem",
-  color: "white",
-  boxShadow: "0 15px 40px rgba(0,0,0,0.3)",
-  border: "1px solid #274472",
+  backgroundColor: "#ffffff",
+  borderRadius: "20px",
+  padding: "2.5rem 2rem",
+  boxShadow: "0 8px 40px rgba(39,68,114,0.1)",
+  textAlign: "center",
+  border: "1px solid #e5e7eb",
+};
+
+const logoWrapper = {
+  display: "flex",
+  justifyContent: "center",
+  marginBottom: "1.2rem",
+};
+
+const logoCircle = {
+  width: "80px",
+  height: "80px",
+  borderRadius: "50%",
+  background: "radial-gradient(circle, #a3d9b1 0%, #4a90e2 100%)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  overflow: "hidden",
+};
+
+const logoFull = {
+  width: "100%",
+  height: "100%",
+  objectFit: "cover",
 };
 
 const titleStyle = {
-  fontSize: "1.5rem",
-  fontWeight: "bold",
+  fontSize: "1.6rem",
+  fontWeight: "700",
+  color: "#274472",
+  marginBottom: "0.5rem",
 };
 
 const subtitleStyle = {
-  fontSize: "0.9rem",
-  color: "#ccc",
+  fontSize: "0.95rem",
+  color: "#6b7280",
+  marginBottom: "1rem",
 };
 
 const inputWrapperStyle = {
   display: "flex",
   alignItems: "center",
-  border: "1px solid #274472",
   borderRadius: "8px",
-  backgroundColor: "transparent",
-  height: "40px",
+  border: "1px solid #d1d5db",
+  backgroundColor: "#f9fafb",
+  height: "42px",
   paddingRight: "0.75rem",
 };
 
 const inputStyle = {
   width: "100%",
   padding: "0.6rem 1rem",
-  background: "transparent",
-  borderRadius: "8px",
-  color: "white",
+  backgroundColor: "transparent",
+  border: "none",
+  outline: "none",
+  color: "#1b2a41",
   fontSize: "1rem",
 };
 
 const primaryButtonStyle = {
-  backgroundColor: "#2eb39a",
-  padding: "0.7rem",
+  backgroundColor: "#4a90e2",
+  padding: "0.8rem",
   color: "white",
   borderRadius: "8px",
-  fontWeight: "bold",
+  fontWeight: "600",
   border: "none",
   cursor: "pointer",
   fontSize: "1rem",
+  marginTop: "0.5rem",
 };
 
 const footerTextStyle = {
   textAlign: "center",
   fontSize: "0.875rem",
-  color: "#bbb",
+  color: "#6b7280",
   marginTop: "2rem",
 };
 
 const linkStyle = {
   color: "#f5a623",
-  fontWeight: "bold",
+  fontWeight: "600",
   textDecoration: "underline",
 };

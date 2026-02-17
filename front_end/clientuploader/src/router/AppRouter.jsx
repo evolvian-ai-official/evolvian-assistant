@@ -16,7 +16,7 @@ import WhatsAppSetup from "../features/services/WhatsAppSetup";
 import ServicesDashboard from "../features/services/ServicesDashboard";
 import ChatSetup from "../features/services/ChatSetup";
 import EmailSetup from "../features/services/EmailSetup";
-import GoogleCalendar from "../features/services/GoogleCalendar"; // ✅ NUEVO
+import GoogleCalendar from "../features/services/GoogleCalendar";
 import ClientSettings from "../features/settings/ClientSettings";
 import MainLayout from "../layouts/MainLayout";
 import PrivateRoutes from "./PrivateRoutes";
@@ -24,16 +24,21 @@ import WidgetPreview from "../pages/WidgetPreview";
 import Terms from "../pages/Terms";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
 
+/* ✅ NUEVO */
+import Templates from "../features/services/Templates";
+
 export default function AppRouter() {
   const location = useLocation();
 
   const publicRoutes = [
     "/", "/login", "/register", "/confirm",
     "/forgot-password", "/reset-password", "/verify-mfa",
-    "/welcome", "/chat-widget", "/widget", "/widget-preview", 
+    "/welcome", "/chat-widget", "/widget", "/widget-preview",
     "/terms", "/PrivacyPolicy"
   ];
+
   const isPublicRoute = publicRoutes.includes(location.pathname);
+  // (lo dejo intacto aunque no se use)
 
   return (
     <Routes>
@@ -47,57 +52,123 @@ export default function AppRouter() {
       <Route path="/verify-mfa" element={<VerifyMfa />} />
       <Route path="/welcome" element={<Welcome />} />
       <Route path="/terms" element={<Terms />} />
-       <Route path="/PrivacyPolicy" element={<PrivacyPolicy />} />
+      <Route path="/PrivacyPolicy" element={<PrivacyPolicy />} />
+
       <Route path="/chat-widget" element={<ChatWidgetPage />} />
       <Route path="/widget" element={<ClientWidget />} />
       <Route path="/widget-preview" element={<WidgetPreview />} />
 
       {/* Rutas protegidas */}
-      <Route path="/dashboard" element={
-        <PrivateRoutes>
-          <MainLayout><Dashboard /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/upload" element={
-        <PrivateRoutes>
-          <MainLayout><Upload /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/history" element={
-        <PrivateRoutes>
-          <MainLayout><History /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/services" element={
-        <PrivateRoutes>
-          <MainLayout><ServicesDashboard /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/services/chat" element={
-        <PrivateRoutes>
-          <MainLayout><ChatSetup /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/services/email" element={
-        <PrivateRoutes>
-          <MainLayout><EmailSetup /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/services/whatsapp" element={
-        <PrivateRoutes>
-          <MainLayout><WhatsAppSetup /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/services/calendar" element={
-        <PrivateRoutes>
-          <MainLayout><GoogleCalendar /></MainLayout>
-        </PrivateRoutes>
-      } />
-      <Route path="/settings" element={
-        <PrivateRoutes>
-          <MainLayout><ClientSettings /></MainLayout>
-        </PrivateRoutes>
-      } />
+      <Route
+        path="/dashboard"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <Dashboard />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/upload"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <Upload />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/history"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <History />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/services"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <ServicesDashboard />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/services/chat"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <ChatSetup />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/services/email"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <EmailSetup />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/services/whatsapp"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <WhatsAppSetup />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/services/calendar"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <GoogleCalendar />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      {/* ✅ NUEVA RUTA: Templates */}
+      <Route
+        path="/services/templates"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <Templates />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/settings"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <ClientSettings />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
 
       {/* Catch all */}
       <Route path="*" element={<NotFound />} />

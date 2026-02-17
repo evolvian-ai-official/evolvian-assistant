@@ -12,10 +12,10 @@ export default defineConfig({
   },
   build: {
     // ⚡ Usa "dist" para despliegues de frontend SaaS (Render)
-      outDir: "dist",
+    //outDir: "dist",
 
     // ⚡ Usa "../../static" cuando quieras regenerar el widget servido por FastAPI
-   //outDir: "../../static",
+    outDir: "../../static",
 
     assetsDir: "assets",
     rollupOptions: {
@@ -25,7 +25,11 @@ export default defineConfig({
       },
     },
   },
+
   server: {
-    port: 4223,
+    port: 4223,       // Siempre usar 4223
+    strictPort: true, // No usar otro puerto si está ocupado → fallo visible
+    host: true,       // Siempre mostrar la URL en terminal
+    open: false,      // No abrir navegador automático
   },
 });

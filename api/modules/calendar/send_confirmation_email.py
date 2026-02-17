@@ -1,11 +1,19 @@
 import os
 import requests
 import logging
+from typing import Optional
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 logger = logging.getLogger(__name__)
 
-def send_confirmation_email(to_email: str, date_str: str, hour_str: str):
+
+def send_confirmation_email(
+    to_email: str,
+    date_str: str,
+    hour_str: str,
+    html_body: Optional[str] = None,
+    subject: Optional[str] = None,
+):
     if not RESEND_API_KEY:
         logger.error("❌ RESEND_API_KEY no está definido.")
         return
@@ -19,8 +27,8 @@ def send_confirmation_email(to_email: str, date_str: str, hour_str: str):
         json={
             "from": "Evolvian AI <noreply@notifications.evolvianai.com>",
             "to": [to_email],
-            "subject": "✅ Confirmación de tu cita",
-            "html": f"""
+            "subject": subject or "✅ Confirmación de tu cita",
+            "html": html_body or f"""
                 <p>Hola 👋</p>
                 <p>Tu cita ha sido agendada para el <strong>{date_str}</strong> a las <strong>{hour_str}</strong>.</p>
                 <p>Gracias por usar Evolvian AI 💙</p>

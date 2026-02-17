@@ -1,346 +1,109 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useLanguage } from "../contexts/LanguageContext";
 import countries from "../assets/countries.json";
+import { authFetch, getAuthHeaders } from "../lib/authFetch";
 
-const industries = ["Software", "Educación", "Salud", "Finanzas", "Retail", "Manufactura", "Consultoría", "Otro"];
-const roles = ["Fundador/CEO", "CMO / Marketing Manager", "Customer Support", "Operations Manager", "Sales Executive", "IT Manager", "Product Manager", "Developer / Engineer", "HR / People", "Otro"];
-const channels = ["Chat Widget", "WhatsApp", "Email", "Otros"];
-const companySizes = ["1-10 empleados", "11-50 empleados", "51-200 empleados", "201-500 empleados", "501-1000 empleados", "Más de 1000 empleados"];
+/* ================================
+   Data
+================================ */
 
-const steps = ["welcome_intro", "personalization", "terms", "plan"];
+const industries = [
+  "Software","Education","Healthcare","Finance","Retail",
+  "Manufacturing","Consulting","Other",
+];
 
-export default function WelcomeModal({ onClose }) {
-  const { t } = useLanguage();
-  const [currentStep, setCurrentStep] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    industry: "",
-    role: "",
-    country: "",
-    channels: [],
-    companySize: "",
-  });
-  const [settings, setSettings] = useState(null);
-  const [error, setError] = useState(null);
+const roles = [
+  "Founder / CEO","CMO / Marketing Manager","Customer Support",
+  "Operations Manager","Sales Executive","IT Manager",
+  "Product Manager","Developer / Engineer","HR / People","Other",
+];
 
-  useEffect(() => {
-    async function fetchClientSettings() {
-      try {
-        const clientId = localStorage.getItem("client_id");
-        if (!clientId) throw new Error("client_id no encontrado en localStorage");
+const channels = ["Chat Widget","WhatsApp","Email","Others"];
 
-        const res = await fetch(`${import.meta.env.VITE_API_URL}/client_settings?client_id=${clientId}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+const companySizes = [
+  "1-10 employees","11-50 employees","51-200 employees",
+  "201-500 employees","501-1000 employees","More than 1000 employees",
+];
 
-        const data = await res.json();
-        setSettings(data);
-      } catch (error) {
-        console.error("❌ Error cargando configuración:", error);
-      }
-    }
-    fetchClientSettings();
-  }, []);
+/* ================================
+   Styles
+================================ */
 
-  const handleContinue = async () => {
-    try {
-      setLoading(true);
-      sessionStorage.setItem("alreadyRedirected", "true");
-      onClose();
-    } catch (error) {
-      console.error("❌ Error en handleContinue:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleNext = async () => {
-    setError(null);
-
-    if (currentStep === 3) {
-      try {
-        const clientId = localStorage.getItem("client_id");
-        if (!clientId) throw new Error("No se encontró client_id");
-
-        console.log("📝 Guardando perfil del cliente...");
-        const profileRes = await fetch(`${import.meta.env.VITE_API_URL}/save_client_profile`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            client_id: clientId,
-            industry: formData.industry,
-            role: formData.role,
-            country: formData.country,
-            channels: formData.channels,
-            company_size: formData.companySize,
-          }),
-        });
-
-        const profileData = await profileRes.text();
-        console.log("📦 Respuesta perfil:", profileRes.status, profileData);
-        if (!profileRes.ok) throw new Error("Error al guardar el perfil del cliente");
-
-        console.log("✅ Perfil guardado. Ahora aceptando términos...");
-        const termsRes = await fetch(`${import.meta.env.VITE_API_URL}/accept_terms`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: clientId }),
-        });
-
-        const termsData = await termsRes.text();
-        console.log("📦 Respuesta términos:", termsRes.status, termsData);
-        if (!termsRes.ok) throw new Error("Error al aceptar los términos y condiciones");
-
-        console.log("✅ Consentimiento completo. Avanzando al paso final...");
-        setCurrentStep((prev) => {
-          const nextStep = Math.min(prev + 1, steps.length);
-          console.log("➡️ Paso actualizado a:", nextStep);
-          return nextStep;
-        });
-      } catch (error) {
-        console.error("❌ Error en paso 3:", error);
-        setError("Hubo un problema guardando tu consentimiento. Por favor, intenta de nuevo.");
-      }
-    } else {
-      setCurrentStep((prev) => Math.min(prev + 1, steps.length));
-    }
-  };
-
-  const handleBack = () => setCurrentStep((prev) => Math.max(prev - 1, 1));
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleChannelChange = (channel) => {
-    setFormData((prev) => {
-      const alreadySelected = prev.channels.includes(channel);
-      const newChannels = alreadySelected
-        ? prev.channels.filter((ch) => ch !== channel)
-        : [...prev.channels, channel];
-      return { ...prev, channels: newChannels };
-    });
-  };
-
-  const renderStepContent = () => {
-    switch (currentStep) {
-      case 1:
-        return (
-          <>
-            <img src="/logo-evolvian.svg" alt="Evolvian Logo" style={{ width: "60px", marginBottom: "1.5rem" }} />
-            <h1 style={titleStyle}>{t("welcome_title")}</h1>
-            <p style={textStyle}>{t("welcome_description")}</p>
-          </>
-        );
-      case 2:
-        return (
-          <>
-            <h2 style={titleStyle}>{t("personalization_title")}</h2>
-            <p style={textStyle}>{t("personalization_description")}</p>
-            <div style={formGroupStyle}>
-              <select name="industry" value={formData.industry} onChange={handleChange} style={inputStyle}>
-                <option value="">{t("select_industry")}</option>
-                {industries.map((ind) => <option key={ind} value={ind}>{ind}</option>)}
-              </select>
-              <select name="role" value={formData.role} onChange={handleChange} style={inputStyle}>
-                <option value="">{t("select_role")}</option>
-                {roles.map((role) => <option key={role} value={role}>{role}</option>)}
-              </select>
-              <select name="country" value={formData.country} onChange={handleChange} style={inputStyle}>
-                <option value="">{t("select_country")}</option>
-                {countries.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <div style={{ textAlign: "left", marginTop: "1rem" }}>
-                <p style={{ ...textStyle, marginBottom: "0.5rem" }}>{t("interested_channels")}</p>
-                {channels.map((ch) => (
-                  <label key={ch} style={{ color: "#ededed", fontSize: "0.9rem", display: "block", marginBottom: "0.3rem" }}>
-                    <input type="checkbox" checked={formData.channels.includes(ch)} onChange={() => handleChannelChange(ch)} style={{ marginRight: "0.5rem" }} />
-                    {ch}
-                  </label>
-                ))}
-              </div>
-              <select name="companySize" value={formData.companySize} onChange={handleChange} style={inputStyle}>
-                <option value="">{t("select_company_size")}</option>
-                {companySizes.map((size) => <option key={size} value={size}>{size}</option>)}
-              </select>
-            </div>
-          </>
-        );
-      case 3:
-        return (
-          <>
-            <h2 style={titleStyle}>{t("terms_title")}</h2>
-            <p style={textStyle}>
-              {t("terms_description")} <a href="/terms" target="_blank" rel="noopener noreferrer" style={linkStyle}>{t("terms_and_conditions")}</a>.
-            </p>
-            {error && <p style={{ color: "red", marginTop: "1rem" }}>{error}</p>}
-          </>
-        );
-      case 4:
-        console.log("🧭 Entrando al paso 4 (plan), settings:", settings);
-        return settings && (
-          <>
-            <h2 style={titleStyle}>{t("your_plan_title")}</h2>
-            <p style={textStyle}>{t("current_plan")} <strong>{settings.plan?.name || "Free"}</strong></p>
-          </>
-        );
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <div style={backdropStyle}>
-      <div style={modalStyle}>
-        <div style={stepsContainerStyle}>
-          {steps.map((step, index) => (
-            <div key={index} style={{
-              ...stepItemStyle,
-              backgroundColor: currentStep === index + 1 ? "#4a90e2" : "#f5a623",
-              color: currentStep === index + 1 ? "white" : "#274472"
-            }}>
-              {t(step)}
-              {index !== steps.length - 1 && <span style={arrowStyle}>→</span>}
-            </div>
-          ))}
-        </div>
-
-        {renderStepContent()}
-
-        <div style={{ marginTop: "2rem", display: "flex", justifyContent: "flex-end" }}>
-          {currentStep > 1 && <button onClick={handleBack} style={backButtonStyle}>{t("back")}</button>}
-          {currentStep < steps.length
-            ? <button onClick={handleNext} style={nextButtonStyle}>{t("next")}</button>
-            : <button onClick={handleContinue} style={nextButtonStyle} disabled={loading}>
-                {loading ? t("loading") : t("start")}
-              </button>
-          }
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Estilos los tienes ya completos como antes, no hay cambios.
-
-
-
-// 🎨 Estilos (te los paso en el siguiente mensaje para no cortar)
-
-const backdropStyle = {
+const overlayStyle = {
   position: "fixed",
-  top: 0,
-  left: 0,
-  width: "100%",
-  height: "100%",
-  backgroundColor: "rgba(0, 0, 0, 0.7)",
+  inset: 0,
+  background: "rgba(15, 28, 46, 0.75)",
   backdropFilter: "blur(8px)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  zIndex: 1000,
+  zIndex: 9999,
+  padding: "1rem",
 };
 
 const modalStyle = {
-  backgroundColor: "#1b2a41",
-  padding: "3rem",
-  borderRadius: "1.5rem",
-  textAlign: "center",
-  maxWidth: "700px",
-  width: "90%",
-  boxShadow: "0 0 30px rgba(0,0,0,0.3)",
-  border: "1px solid #274472",
+  background: "#1b2a41",
+  border: "2px solid #274472",
+  borderRadius: "20px",
+  padding: "2rem",
+  width: "100%",
+  maxWidth: "850px",
+  maxHeight: "90vh",
+  overflowY: "auto",
+  color: "#fff",
+  boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
 };
+
+const progressBarContainer = {
+  height: "6px",
+  background: "#274472",
+  borderRadius: "6px",
+  marginBottom: "1.5rem",
+};
+
+const progressBar = (step) => ({
+  height: "100%",
+  width: `${(step / 4) * 100}%`,
+  background: "#a3d9b1",
+  borderRadius: "6px",
+  transition: "width 0.3s ease",
+});
 
 const titleStyle = {
   fontSize: "1.8rem",
   color: "#a3d9b1",
-  marginBottom: "1rem",
+  marginBottom: "0.8rem",
 };
 
 const textStyle = {
-  fontSize: "1rem",
+  fontSize: "0.95rem",
   color: "#ededed",
-  marginBottom: "1.5rem",
-};
-
-const formGroupStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "1rem",
-  marginTop: "1rem",
+  marginBottom: "1.2rem",
+  lineHeight: 1.6,
 };
 
 const inputStyle = {
-  padding: "0.8rem",
-  borderRadius: "8px",
+  padding: "0.75rem",
+  borderRadius: "10px",
   border: "1px solid #4a90e2",
-  backgroundColor: "#1b2a41",
-  color: "white",
-  appearance: "none", // 👈 Esto ayuda a quitar la flecha fea del select en navegadores
-  WebkitAppearance: "none",
-  MozAppearance: "none",
-  backgroundImage: "url(\"data:image/svg+xml;charset=UTF-8,%3Csvg viewBox='0 0 140 140' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolygon points='70,100 20,40 120,40' fill='%23ffffff'/%3E%3C/svg%3E\")",
-  backgroundRepeat: "no-repeat",
-  backgroundPosition: "right 1rem center",
-  backgroundSize: "12px",
-};
-
-const nextButtonStyle = {
-  backgroundColor: "#2eb39a",
-  color: "white",
-  padding: "0.8rem 1.6rem",
-  border: "none",
-  borderRadius: "8px",
-  fontWeight: "bold",
-  cursor: "pointer",
-};
-
-const backButtonStyle = {
-  backgroundColor: "#274472",
-  color: "white",
-  padding: "0.8rem 1.6rem",
-  border: "none",
-  borderRadius: "8px",
-  fontWeight: "bold",
-  cursor: "pointer",
-};
-
-const plansContainerStyle = {
-  marginTop: "1.5rem",
-  display: "flex",
-  overflowX: "auto",
-  gap: "1rem",
-  paddingBottom: "1rem",
-};
-
-const planCardStyle = {
-  minWidth: "180px",
   backgroundColor: "#0f1c2e",
-  padding: "1rem",
-  borderRadius: "12px",
-  flexShrink: 0,
+  color: "white",
+  outline: "none",
+  width: "100%",
 };
 
-const selectedBadgeStyle = {
-  marginTop: "0.5rem",
-  display: "inline-block",
-  backgroundColor: "#4a90e2",
-  color: "white",
-  padding: "4px 8px",
-  borderRadius: "999px",
-  fontSize: "0.8rem",
+const formGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
+  gap: "1rem",
 };
 
-const contactButtonStyle = {
-  display: "inline-block",
-  marginTop: "0.5rem",
-  backgroundColor: "#f5a623",
-  color: "white",
-  padding: "0.5rem 1rem",
-  borderRadius: "8px",
-  fontWeight: "bold",
-  textDecoration: "none",
+const checkboxLabel = {
+  fontSize: "0.9rem",
+  marginBottom: "0.6rem",
+  display: "block",
+  cursor: "pointer",
 };
 
 const linkStyle = {
@@ -348,26 +111,328 @@ const linkStyle = {
   textDecoration: "underline",
 };
 
-const stepsContainerStyle = {
-  display: "flex",
-  justifyContent: "center",
-  gap: "0.8rem",
-  marginBottom: "2rem",
-  flexWrap: "wrap",
-  alignItems: "center",
+const primaryBtn = (disabled=false) => ({
+  background: disabled ? "#274472" : "#2eb39a",
+  color: disabled ? "#bbb" : "#fff",
+  padding: "10px 22px",
+  borderRadius: "8px",
+  fontWeight: 600,
+  border: "none",
+  cursor: disabled ? "not-allowed" : "pointer",
+});
+
+const secondaryBtn = {
+  background: "#4b5563",
+  color: "#fff",
+  padding: "10px 22px",
+  borderRadius: "8px",
+  border: "none",
+  cursor: "pointer",
 };
 
-const stepItemStyle = {
-  padding: "0.5rem 1rem",
-  borderRadius: "999px",
-  fontSize: "0.9rem",
-  fontWeight: "bold",
-  textAlign: "center",
-  minWidth: "120px",
-};
+/* ================================
+   Component
+================================ */
 
-const arrowStyle = {
-  margin: "0 0.5rem",
-  color: "#ededed",
-  fontSize: "1.2rem",
-};
+export default function WelcomeModal({ onClose }) {
+  const { t, lang, changeLanguage } = useLanguage();
+  const navigate = useNavigate();
+
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [settings, setSettings] = useState(null);
+
+  const clientId = localStorage.getItem("client_id");
+
+  const sortedCountries = useMemo(() => {
+    if (!Array.isArray(countries)) return [];
+    return countries
+      .map((c) => (typeof c === "string" ? c : c.name))
+      .sort((a, b) => a.localeCompare(b));
+  }, []);
+
+  const [formData, setFormData] = useState({
+    contact_name: "",
+    company_name: "",
+    phone: "",
+    industry: "",
+    role: "",
+    country: "",
+    company_size: "",
+    channels: [],
+  });
+
+  const [agreeTerms, setAgreeTerms] = useState(true);
+  const [agreeMarketing, setAgreeMarketing] = useState(true);
+  const [selectedLanguage, setSelectedLanguage] = useState(lang || "en");
+
+  /* ================================
+     Load Plan + Verify Onboarding
+  ================================= */
+
+  useEffect(() => {
+    const init = async () => {
+      if (!clientId) return;
+
+      try {
+        const res = await authFetch(
+          `${import.meta.env.VITE_API_URL}/client_settings?client_id=${clientId}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setSettings(data);
+          setSelectedLanguage(data?.language || lang || "en");
+        }
+      } catch {}
+
+    };
+
+    init();
+  }, [clientId, lang]);
+
+  /* ================================
+     Handlers
+  ================================= */
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const toggleChannel = (channel) => {
+    setFormData((prev) => ({
+      ...prev,
+      channels: prev.channels.includes(channel)
+        ? prev.channels.filter((c) => c !== channel)
+        : [...prev.channels, channel],
+    }));
+  };
+
+  const validateProfile = () => {
+    if (!formData.contact_name || formData.contact_name.trim().length < 2) {
+      setError(t("welcome_full_name_required"));
+      return false;
+    }
+    return true;
+  };
+
+  const handleNext = () => {
+    setError(null);
+    if (step === 2 && !validateProfile()) return;
+    setStep((prev) => prev + 1);
+  };
+
+  const handleSubmit = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      if (!clientId) throw new Error("Missing client_id");
+
+      const cleanedProfile = {
+        ...formData,
+        company_name: formData.company_name?.trim() || null,
+        phone: formData.phone?.trim() || null,
+        industry: formData.industry || null,
+        role: formData.role || null,
+        country: formData.country || null,
+        company_size: formData.company_size || null,
+      };
+
+      const res = await authFetch(
+        `${import.meta.env.VITE_API_URL}/complete_onboarding`,
+        {
+          method: "POST",
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            client_id: clientId,
+            profile: cleanedProfile,
+            terms: {
+              accepted: agreeTerms,
+              accepted_marketing: agreeMarketing,
+            },
+          }),
+        }
+      );
+
+      if (!res.ok) throw new Error(t("onboarding_failed"));
+      const languageRes = await authFetch(
+        `${import.meta.env.VITE_API_URL}/client_settings`,
+        {
+          method: "POST",
+          headers: await getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            client_id: clientId,
+            language: selectedLanguage,
+          }),
+        }
+      );
+
+      if (!languageRes.ok) throw new Error(t("language_update_failed"));
+
+      await changeLanguage(selectedLanguage);
+
+      if (onClose) onClose();
+      navigate("/dashboard", { replace: true });
+
+    } catch (err) {
+      console.error(err);
+      setError(t("something_went_wrong_retry"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ================================
+     Render
+  ================================= */
+
+  const renderContent = () => {
+    switch (step) {
+      case 1:
+        return (
+          <>
+            <img src="/logo-evolvian.svg" style={{ width: "70px", marginBottom: "1rem" }} />
+            <h2 style={titleStyle}>{t("welcome_to_evolvian")}</h2>
+            <p style={textStyle}>
+              {t("welcome_setup_under_2_minutes")}
+            </p>
+            <div style={{ maxWidth: 320, margin: "0.75rem auto 0", textAlign: "left" }}>
+              <label style={{ ...checkboxLabel, marginBottom: "0.5rem" }}>
+                {t("preferred_language")}
+              </label>
+              <select
+                value={selectedLanguage}
+                onChange={(e) => setSelectedLanguage(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="en">English</option>
+                <option value="es">Español</option>
+              </select>
+            </div>
+          </>
+        );
+
+      case 2:
+        return (
+          <>
+            <h2 style={titleStyle}>{t("company_profile")}</h2>
+
+            <div style={formGrid}>
+              <input name="contact_name" placeholder={t("full_name")} value={formData.contact_name} onChange={handleChange} style={inputStyle}/>
+              <input name="company_name" placeholder={t("company_name_optional")} value={formData.company_name} onChange={handleChange} style={inputStyle}/>
+              <input name="phone" placeholder={t("phone_optional")} value={formData.phone} onChange={handleChange} style={inputStyle}/>
+              
+              <select name="industry" value={formData.industry} onChange={handleChange} style={inputStyle}>
+                <option value="">{t("industry")}</option>
+                {industries.map((i) => <option key={i}>{i}</option>)}
+              </select>
+
+              <select name="role" value={formData.role} onChange={handleChange} style={inputStyle}>
+                <option value="">{t("role")}</option>
+                {roles.map((r) => <option key={r}>{r}</option>)}
+              </select>
+
+              <select name="country" value={formData.country} onChange={handleChange} style={inputStyle}>
+                <option value="">{t("country")}</option>
+                {sortedCountries.map((c) => <option key={c}>{c}</option>)}
+              </select>
+
+              <select name="company_size" value={formData.company_size} onChange={handleChange} style={inputStyle}>
+                <option value="">{t("company_size")}</option>
+                {companySizes.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+
+            <div style={{ marginTop: "1.5rem", textAlign: "left" }}>
+              <p style={{ marginBottom: "0.5rem" }}>{t("interested_channels")}</p>
+              {channels.map((c) => (
+                <label key={c} style={checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={formData.channels.includes(c)}
+                    onChange={() => toggleChannel(c)}
+                    style={{ marginRight: "0.5rem" }}
+                  />
+                  {c}
+                </label>
+              ))}
+            </div>
+          </>
+        );
+
+      case 3:
+        return (
+          <>
+            <h2 style={titleStyle}>{t("terms_and_conditions")}</h2>
+
+            <p style={textStyle}>
+              {t("please_review_our")}{" "}
+              <a href="https://evolvianai.net/terms" target="_blank" rel="noopener noreferrer" style={linkStyle}>
+                {t("terms_and_conditions")}
+              </a>.
+            </p>
+
+            <label style={checkboxLabel}>
+              <input type="checkbox" checked={agreeTerms} onChange={() => setAgreeTerms(!agreeTerms)} />
+              {t("agree_terms_conditions")}
+            </label>
+
+            <label style={checkboxLabel}>
+              <input type="checkbox" checked={agreeMarketing} onChange={() => setAgreeMarketing(!agreeMarketing)} />
+              {t("agree_marketing_emails")}
+            </label>
+
+            {error && <p style={{ color: "#f87171", marginTop: "1rem" }}>{error}</p>}
+          </>
+        );
+
+      case 4:
+        return settings && (
+          <>
+            <h2 style={titleStyle}>{t("your_plan")}</h2>
+            <p style={textStyle}>
+              {t("you_are_on_plan")} <strong>{settings.plan?.name}</strong>.
+            </p>
+          </>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div style={overlayStyle}>
+      <div style={modalStyle}>
+        <div style={progressBarContainer}>
+          <div style={progressBar(step)} />
+        </div>
+
+        {renderContent()}
+
+        <div style={{ marginTop: "2rem", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
+          {step > 1 && (
+            <button style={secondaryBtn} onClick={() => setStep(step - 1)}>
+              {t("back")}
+            </button>
+          )}
+
+          {step < 4 ? (
+            <button style={primaryBtn()} onClick={handleNext}>
+              {t("next")}
+            </button>
+          ) : (
+            <button style={primaryBtn(loading)} disabled={loading} onClick={handleSubmit}>
+              {loading ? t("saving") : t("start")}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

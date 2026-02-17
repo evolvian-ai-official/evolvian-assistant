@@ -45,17 +45,22 @@ export default function ResetPassword() {
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
-        <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
+        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
           <img
             src="/logo-evolvian.svg"
             alt="Logo Evolvian"
-            style={{ width: "64px", margin: "0 auto 1rem" }}
+            style={{
+              width: "64px",
+              height: "64px",
+              margin: "0 auto 1rem",
+              animation: "spin 6s linear infinite",
+            }}
           />
           <h1 style={titleStyle}>{t("new_password")}</h1>
           <p style={subtitleStyle}>{t("enter_new_password")}</p>
         </div>
 
-        <form onSubmit={handleUpdate} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <form onSubmit={handleUpdate} style={formStyle}>
           <div style={inputWrapperStyle}>
             <input
               type={showPassword ? "text" : "password"}
@@ -63,12 +68,11 @@ export default function ResetPassword() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              style={{ ...inputStyle, border: "none", flex: 1 }}
+              style={inputStyle}
             />
             <div
               style={eyeIconWrapperStyle}
-              onMouseEnter={() => setShowPassword(true)}
-              onMouseLeave={() => setShowPassword(false)}
+              onClick={() => setShowPassword((prev) => !prev)}
             >
               {showPassword ? <FaEyeSlash /> : <FaEye />}
             </div>
@@ -91,37 +95,48 @@ export default function ResetPassword() {
   );
 }
 
-// 🎨 Estilos
+// 🎨 Estilos Evolvian™ 2025
 const containerStyle = {
   height: "100vh",
   width: "100vw",
-  backgroundColor: "#0f1c2e",
+  backgroundColor: "#ffffff", // ✅ Fondo blanco total
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   padding: "1rem",
-  fontFamily: "system-ui, Avenir, Helvetica, Arial, sans-serif",
+  fontFamily: "Inter, system-ui, sans-serif",
 };
 
 const cardStyle = {
   width: "100%",
   maxWidth: "400px",
-  backgroundColor: "#1b2a41",
+  backgroundColor: "#f8fafc", // gris muy claro
   borderRadius: "1.5rem",
   padding: "2rem",
-  color: "white",
-  boxShadow: "0 15px 40px rgba(0,0,0,0.3)",
-  border: "1px solid #274472",
+  color: "#274472",
+  boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+  border: "1px solid #e5e7eb",
+  textAlign: "center",
 };
 
 const titleStyle = {
-  fontSize: "1.5rem",
+  fontSize: "1.6rem",
   fontWeight: "bold",
+  color: "#274472",
+  marginBottom: "0.5rem",
 };
 
 const subtitleStyle = {
   fontSize: "0.9rem",
-  color: "#ccc",
+  color: "#6b7280",
+  marginBottom: "1rem",
+};
+
+const formStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "1rem",
+  textAlign: "left",
 };
 
 const inputWrapperStyle = {
@@ -129,32 +144,50 @@ const inputWrapperStyle = {
   alignItems: "center",
   border: "1px solid #274472",
   borderRadius: "8px",
-  backgroundColor: "transparent",
-  height: "40px",
+  backgroundColor: "#ffffff",
+  height: "42px",
   paddingRight: "0.75rem",
+  boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
 };
 
 const inputStyle = {
   width: "100%",
   padding: "0.6rem 1rem",
   background: "transparent",
+  border: "none",
   borderRadius: "8px",
-  color: "white",
+  color: "#274472",
   fontSize: "1rem",
+  outline: "none",
 };
 
 const eyeIconWrapperStyle = {
-  color: "#ccc",
+  color: "#4a90e2",
   cursor: "pointer",
   fontSize: "1.1rem",
+  transition: "color 0.2s",
 };
 
 const buttonStyle = {
-  backgroundColor: "#2eb39a",
+  backgroundColor: "#4a90e2", // azul brillante Evolvian
   padding: "0.7rem",
-  color: "white",
+  color: "#ffffff",
   borderRadius: "8px",
   fontWeight: "bold",
   border: "none",
   fontSize: "1rem",
+  marginTop: "1rem",
+  transition: "background-color 0.3s ease",
 };
+
+if (typeof document !== "undefined" && !document.getElementById("spin-keyframes")) {
+  const style = document.createElement("style");
+  style.id = "spin-keyframes";
+  style.textContent = `
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(style);
+}

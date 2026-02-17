@@ -94,43 +94,98 @@
     opacity: "0",
   });
 
+  // 🟦 Bandera lateral "Agendar" (lado izquierdo del widget)
+  const scheduleFlag = document.createElement("button");
+  scheduleFlag.textContent = "Agendar";
+  Object.assign(scheduleFlag.style, {
+    position: "fixed",
+    right: "392px",
+    bottom: "300px",
+    border: "none",
+    borderRadius: "10px 0 0 10px",
+    background: "#4a90e2",
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: "13px",
+    padding: "10px 12px",
+    cursor: "pointer",
+    zIndex: "9998",
+    boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
+    display: "none",
+  });
+
+  function postWidgetView(view) {
+    try {
+      iframe.contentWindow?.postMessage(
+        { type: "EVOLVIAN_WIDGET_VIEW", view },
+        "*"
+      );
+    } catch (err) {
+      console.warn("No se pudo enviar vista al widget:", err);
+    }
+  }
+
+  function closeWidget() {
+    isOpen = false;
+    iframe.style.transform = "translateY(20px)";
+    iframe.style.opacity = "0";
+    scheduleFlag.style.display = "none";
+    setTimeout(() => {
+      iframe.style.display = "none";
+    }, 300);
+    button.innerHTML = "";
+    button.appendChild(logo);
+  }
+
   // 🟦 Toggle mostrar/ocultar
   button.addEventListener("click", () => {
     isOpen = !isOpen;
     if (isOpen) {
       iframe.style.display = "block";
+      scheduleFlag.style.display = "block";
       setTimeout(() => {
         iframe.style.transform = "translateY(0)";
         iframe.style.opacity = "1";
+        postWidgetView("chat");
       }, 10);
     } else {
-      iframe.style.transform = "translateY(20px)";
-      iframe.style.opacity = "0";
-      setTimeout(() => {
-        iframe.style.display = "none";
-      }, 300);
+      closeWidget();
     }
 
     button.innerHTML = "";
     button.appendChild(isOpen ? closeIcon : logo);
   });
 
+  scheduleFlag.addEventListener("click", () => {
+    if (!isOpen) {
+      isOpen = true;
+      iframe.style.display = "block";
+      scheduleFlag.style.display = "block";
+      setTimeout(() => {
+        iframe.style.transform = "translateY(0)";
+        iframe.style.opacity = "1";
+      }, 10);
+      button.innerHTML = "";
+      button.appendChild(closeIcon);
+    }
+    postWidgetView("calendar");
+  });
+
   // 🟦 Cerrar con tecla ESC
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && isOpen) {
-      isOpen = false;
-      iframe.style.transform = "translateY(20px)";
-      iframe.style.opacity = "0";
-      setTimeout(() => {
-        iframe.style.display = "none";
-      }, 300);
-
-      button.innerHTML = "";
-      button.appendChild(logo);
+      closeWidget();
     }
+  });
+
+  window.addEventListener("message", (event) => {
+    const payload = event?.data;
+    if (!payload || payload.type !== "EVOLVIAN_WIDGET_CLOSE") return;
+    if (isOpen) closeWidget();
   });
 
   // 🟦 Insertar en el DOM
   document.body.appendChild(button);
   document.body.appendChild(iframe);
+  document.body.appendChild(scheduleFlag);
 })();

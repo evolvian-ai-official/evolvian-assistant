@@ -30,6 +30,19 @@ async def book_calendar(request: Request):
         user_name = payload.get("user_name")
         scheduled_time = datetime.fromisoformat(payload.get("scheduled_time"))
 
+        settings = (
+            supabase.table("calendar_settings")
+            .select("calendar_status")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if (settings.data or [{}])[0].get("calendar_status") != "active":
+            return JSONResponse(
+                content={"success": False, "message": "Appointments are disabled for this client."},
+                status_code=403,
+            )
+
         # =====================================
         # 1️⃣ Guardar cita en Supabase
         # =====================================

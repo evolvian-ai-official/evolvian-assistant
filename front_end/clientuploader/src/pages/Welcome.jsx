@@ -1,37 +1,34 @@
 // src/pages/Welcome.jsx
 import { useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTermsAcceptance } from "../hooks/useTermsAcceptance";
 import { useClientId } from "../hooks/useClientId";
 import { supabase } from "../lib/supabaseClient";
+import { authFetch } from "../lib/authFetch";
+import { useLanguage } from "../contexts/LanguageContext";
 
 export default function Welcome() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const clientId = useClientId();
   const { hasAccepted, acceptTerms } = useTermsAcceptance(clientId);
+  const { t } = useLanguage();
 
   const handleContinue = async () => {
     setLoading(true);
-    const userId = localStorage.getItem("user_id");
-    console.log("🧠 Obtenido user_id desde localStorage:", userId);
 
     try {
-      if (userId) {
-        const res = await fetch(`${import.meta.env.VITE_API_URL}/clear_new_user_flag?user_id=${userId}`, {
-          method: "POST",
-        });
-        const result = await res.json();
-        console.log("✅ Respuesta de clear_new_user_flag:", result);
+      const res = await authFetch(`${import.meta.env.VITE_API_URL}/clear_new_user_flag`, {
+        method: "POST",
+      });
+      const result = await res.json();
+      console.log("✅ Respuesta de clear_new_user_flag:", result);
 
-        console.log("🔄 Refrescando sesión después de limpiar bandera...");
-        await supabase.auth.refreshSession();
+      console.log("🔄 Refrescando sesión después de limpiar bandera...");
+      await supabase.auth.refreshSession();
 
-        // 🧠 Muy importante: eliminar alreadyRedirected
-        sessionStorage.removeItem("alreadyRedirected");
-      } else {
-        console.warn("⚠️ user_id no está disponible en localStorage");
-      }
+      // 🧠 Muy importante: eliminar alreadyRedirected
+      sessionStorage.removeItem("alreadyRedirected");
 
       if (!hasAccepted && clientId) {
         console.log("📩 Aceptando términos con client_id:", clientId);
@@ -50,7 +47,7 @@ export default function Welcome() {
   };
 
   if (hasAccepted === null) {
-    return <div style={{ color: "white", padding: "2rem" }}>Cargando...</div>;
+    return <div style={{ color: "white", padding: "2rem" }}>{t("loading")}</div>;
   }
 
   return (
@@ -76,13 +73,11 @@ export default function Welcome() {
       }}>
         <img src="/logo-evolvian.svg" alt="Evolvian" style={{ width: "60px", marginBottom: "1.5rem" }} />
         <h1 style={{ fontSize: "1.8rem", color: "#a3d9b1", marginBottom: "1rem" }}>
-          Bienvenido a Evolvian, tu nuevo copiloto de conocimiento.
+          {t("welcome_page_title")}
         </h1>
         <p style={{ fontSize: "1rem", color: "#ededed", marginBottom: "1.5rem" }}>
-          Has dado el primer paso hacia una forma más rápida, segura y precisa de resolver tus dudas,
-          compartir respuestas y empoderar a tus usuarios.<br /><br />
-          Evolvian es un asistente de inteligencia artificial que entiende tus documentos y responde como si fueras tú.
-          Aquí empieza todo.
+          {t("welcome_page_description_line1")}<br /><br />
+          {t("welcome_page_description_line2")}
         </p>
         <button
           onClick={handleContinue}
@@ -98,7 +93,7 @@ export default function Welcome() {
             cursor: loading ? "not-allowed" : "pointer"
           }}
         >
-          {loading ? "Cargando..." : "Ir al panel"}
+          {loading ? t("loading") : t("welcome_page_cta")}
         </button>
       </div>
     </div>

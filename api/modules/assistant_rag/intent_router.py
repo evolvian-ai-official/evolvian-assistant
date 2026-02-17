@@ -202,8 +202,34 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
         t = (msg or "").lower()
         return any(k in t for k in EXIT_CALENDAR_KEYWORDS)
 
+    def get_calendar_gate() -> tuple[bool, str | None]:
+        try:
+            from api.utils.plan_features_logic import client_has_feature
+            has_calendar_feature = client_has_feature(client_id, "calendar_sync")
+            res = (
+                supabase.table("calendar_settings")
+                .select("calendar_status")
+                .eq("client_id", client_id)
+                .maybe_single()
+                .execute()
+            )
+            calendar_status = res.data.get("calendar_status") if res and res.data else None
+            return bool(has_calendar_feature and calendar_status == "active"), calendar_status
+        except Exception:
+            return False, None
+
     # 📅 Mantener sticky intent (pero permitir salir si cambia de tema)
     if active_intent == "calendar" and status in ["collecting", "pending_confirmation"]:
+        calendar_enabled, calendar_status = get_calendar_gate()
+        if not calendar_enabled:
+            print(f"{YELLOW}🧹 Calendar sticky cleared (status={calendar_status}){RESET}")
+            upsert_state(client_id, session_id, {"intent": None})
+            lang = detect_language(message)
+            return (
+                "⚠️ La agenda está desactivada en este momento."
+                if lang == "es"
+                else "⚠️ Scheduling is currently disabled."
+            )
 
         # 🚪 El usuario explícitamente cambia de tema → SALIR DEL FLUJO
         if user_wants_to_exit_calendar(message):
@@ -218,30 +244,17 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
     # 🕵️ Activar flujo calendario desde cero
     if detect_intent_to_schedule(message):
         try:
-            # 1️⃣ Validar feature calendar_sync
-            from api.utils.plan_features_logic import client_has_feature
-            has_calendar_feature = client_has_feature(client_id, "calendar_sync")
-
-            # 2️⃣ Validar estado del calendario
-            res = (
-                supabase.table("calendar_settings")
-                .select("calendar_status")
-                .eq("client_id", client_id)
-                .maybe_single()
-                .execute()
-            )
-            calendar_status = res.data.get("calendar_status") if res and res.data else None
-
-            print(f"📡 Client={client_id} | has_feature={has_calendar_feature} | status={calendar_status}")
+            calendar_enabled, calendar_status = get_calendar_gate()
+            print(f"📡 Client={client_id} | status={calendar_status} | enabled={calendar_enabled}")
 
             # 🚫 Bloqueo si no aplica
-            if not has_calendar_feature or calendar_status != "active":
+            if not calendar_enabled:
                 lang = detect_language(message)
                 print(f"{RED}🚫 Calendar intent blocked{RESET}")
                 return (
-                    "⚠️ Tu plan actual no incluye la función de agenda o está desactivada."
+                    "⚠️ Tu agenda está desactivada en este momento."
                     if lang == "es"
-                    else "⚠️ Your current plan does not include scheduling or it's disabled."
+                    else "⚠️ Scheduling is currently disabled."
                 )
 
             # ✅ Activar calendario
@@ -252,7 +265,7 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
                 "intent": "calendar",
                 "status": "collecting",
                 "calendar_status": calendar_status,
-                "has_calendar_feature": has_calendar_feature,
+                "has_calendar_feature": True,
             })
             upsert_state(client_id, session_id, state)
 
@@ -277,7 +290,7 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
 # ============================================================
 # 🎯 Orquestador principal (router + handlers)
 # ============================================================
-def process_user_message(client_id: str, session_id: str, message: str, channel: str = "chat"):
+async def process_user_message(client_id: str, session_id: str, message: str, channel: str = "chat"):
     """
     Entrada principal de intents:
     - Detecta idioma
@@ -290,11 +303,15 @@ def process_user_message(client_id: str, session_id: str, message: str, channel:
 
     route = route_message(client_id, session_id, message)
 
+    # route_message can return a direct user-facing blocked message.
+    if route not in {"calendar", "rag"}:
+        return route
+
     # 📅 Flujo de calendario
     if route == "calendar":
         print("📅 Routing → calendar")
         if _calendar_handler:
-            return _calendar_handler(client_id, message, session_id, channel, lang)
+            return await _calendar_handler(client_id, message, session_id, channel, lang)
         return "🗓️ It seems you’d like to schedule an appointment, but this feature isn’t available yet."
 
     # 💬 Flujo RAG

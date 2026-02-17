@@ -1,12 +1,13 @@
 import { useState } from "react";
 import ChatWidget from "./ChatWidget";
-import { useClientId } from "../hooks/useClientId";
 
-export default function ChatWidgetFloating() {
-  const clientId = useClientId();
+export default function ChatWidgetFloating({ publicClientId: propPublicClientId }) {
   const [isOpen, setIsOpen] = useState(false);
+  const params = new URLSearchParams(window.location.search);
+  const urlPublicClientId = params.get("public_client_id");
+  const publicClientId = propPublicClientId || urlPublicClientId;
 
-  if (!clientId) return null;
+  if (!publicClientId) return null;
 
   return (
     <>
@@ -51,7 +52,7 @@ export default function ChatWidgetFloating() {
       {/* Contenedor del widget */}
       {isOpen && (
         <div style={styles.container}>
-          <ChatWidget clientId={clientId} />
+          <ChatWidget clientId={publicClientId} />
         </div>
       )}
     </>
