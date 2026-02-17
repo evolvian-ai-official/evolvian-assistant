@@ -56,6 +56,17 @@ def _run_timed(metrics: dict, key: str, fn):
     return result
 
 
+def _is_no_rows_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "406 not acceptable" in msg
+        or "'code': '204'" in msg
+        or '"code": "204"' in msg
+        or "missing response" in msg
+        or "0 rows" in msg
+    )
+
+
 def format_date(dt_str):
     """Convierte un string SQL o ISO en un formato legible (ej: Oct 14, 2025)"""
     if not dt_str:
@@ -196,21 +207,28 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
         logging.info(f"💬 Mensajes de usuario encontrados: {total_user_messages}")
 
         # 5️⃣ Leer uso actual (para fallback/caché)
-        usage_row = _run_timed(
-            perf_ms,
-            "usage_read_query",
-            lambda: _with_retries(
-                lambda: (
-                    supabase.table("client_usage")
-                    .select("messages_used, documents_uploaded, last_used_at")
-                    .eq("client_id", client_id)
-                    .maybe_single()
-                    .execute()
+        try:
+            usage_row = _run_timed(
+                perf_ms,
+                "usage_read_query",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("client_usage")
+                        .select("messages_used, documents_uploaded, last_used_at")
+                        .eq("client_id", client_id)
+                        .limit(1)
+                        .execute()
+                    ),
+                    op_name="dashboard.usage_read",
                 ),
-                op_name="dashboard.usage_read",
-            ),
-        )
-        usage_data = usage_row.data or {}
+            )
+            usage_data = (usage_row.data or [{}])[0] if isinstance(usage_row.data, list) else (usage_row.data or {})
+        except Exception as usage_read_exc:
+            if _is_no_rows_error(usage_read_exc):
+                logging.info("ℹ️ client_usage sin registro para client_id=%s (se inicializa en memoria)", client_id)
+                usage_data = {}
+            else:
+                raise
 
         usage = {
             "messages_used": total_user_messages,
