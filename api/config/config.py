@@ -1,4 +1,5 @@
 import os
+import httpx
 
 # Cargar .env solo en entorno local
 if os.getenv("RENDER") is None:
@@ -6,6 +7,7 @@ if os.getenv("RENDER") is None:
     load_dotenv()
 
 from supabase import create_client
+from supabase.lib.client_options import SyncClientOptions
 
 # Variables de entorno
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -25,8 +27,21 @@ if not OPENAI_API_KEY:
 # Registrar la API key de OpenAI
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-# Crear cliente Supabase normal (sin http_client porque tu SDK no lo soporta)
+# Cliente HTTP explícito para evitar inestabilidad en HTTP/2 bajo carga
+_supabase_httpx_client = httpx.Client(
+    http2=False,
+    timeout=httpx.Timeout(12.0, connect=4.0, read=10.0, write=10.0),
+    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=15.0),
+)
+
+# Crear cliente Supabase con opciones de timeout y transporte estable
 supabase = create_client(
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY,
+    options=SyncClientOptions(
+        postgrest_client_timeout=12,
+        storage_client_timeout=20,
+        function_client_timeout=10,
+        httpx_client=_supabase_httpx_client,
+    ),
 )

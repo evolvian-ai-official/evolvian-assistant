@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
+import logging
+import time
+import httpx
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
 
@@ -12,6 +15,51 @@ DEFAULT_PROMPT = "You are a helpful assistant. Provide relevant answers based on
 ALLOWED_FONTS = ["Inter", "Roboto", "Poppins", "Open Sans"]
 
 router = APIRouter()
+
+_TRANSIENT_ERROR_MARKERS = (
+    "server disconnected",
+    "remoteprotocolerror",
+    "readtimeout",
+    "connection reset",
+    "eof",
+    "http2",
+)
+
+
+def _is_transient_network_error(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+def _with_retries(fn, *, attempts: int = 3, op_name: str = "supabase_call"):
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient_network_error(exc) or attempt == attempts:
+                raise
+            sleep_s = 0.2 * (2 ** (attempt - 1))
+            logging.warning(
+                "⚠️ %s falló (%s/%s). Reintentando en %.1fs: %s",
+                op_name,
+                attempt,
+                attempts,
+                sleep_s,
+                exc,
+            )
+            time.sleep(sleep_s)
+    raise last_exc
+
+
+def _run_timed(metrics: dict, key: str, fn):
+    started = time.perf_counter()
+    result = fn()
+    metrics[key] = round((time.perf_counter() - started) * 1000, 1)
+    return result
 
 # ------------------------------
 # MODELO DE PAYLOAD
@@ -187,29 +235,39 @@ def get_client_settings(
     public_client_id: Optional[str] = Query(None)
 ):
     """Obtiene la configuración del cliente."""
+    request_started = time.perf_counter()
+    perf_ms = {}
     try:
         if not client_id and not public_client_id:
             raise HTTPException(status_code=400, detail="Debe especificarse client_id o public_client_id")
 
         # Buscar client_id si llega public_client_id
         if public_client_id and not client_id:
-            lookup = (
-                supabase.table("clients")
-                .select("id")
-                .eq("public_client_id", public_client_id)
-                .single()
-                .execute()
+            lookup = _run_timed(
+                perf_ms,
+                "public_id_lookup",
+                lambda: (
+                    supabase.table("clients")
+                    .select("id")
+                    .eq("public_client_id", public_client_id)
+                    .single()
+                    .execute()
+                ),
             )
             if not lookup.data:
                 raise HTTPException(status_code=404, detail="Cliente no encontrado")
             client_id = lookup.data["id"]
         elif client_id:
-            authorize_client_request(request, client_id)
+            _run_timed(perf_ms, "authorize_client_request", lambda: authorize_client_request(request, client_id))
 
         # Obtener settings
-        response = (
-            supabase.table("client_settings")
-            .select("""
+        response = _run_timed(
+            perf_ms,
+            "settings_query",
+            lambda: _with_retries(
+                lambda: (
+                    supabase.table("client_settings")
+                    .select("""
                 client_id,
                 assistant_name,
                 language,
@@ -268,10 +326,13 @@ def get_client_settings(
                     plan_features(feature, is_active)
 
                 )
-            """)
-            .eq("client_id", client_id)
-            .single()
-            .execute()
+                    """)
+                    .eq("client_id", client_id)
+                    .single()
+                    .execute()
+                ),
+                op_name="client_settings.fetch",
+            ),
         )
 
         if not response.data:
@@ -359,22 +420,41 @@ def get_client_settings(
             })
 
         # Listar planes disponibles
-        plans_response = (
-            supabase.table("plans")
-            .select("""
+        plans_response = _run_timed(
+            perf_ms,
+            "available_plans_query",
+            lambda: _with_retries(
+                lambda: (
+                    supabase.table("plans")
+                    .select("""
                 id, name, description, max_messages, max_documents,
                 is_unlimited, supports_chat, supports_email, supports_whatsapp,
                 show_powered_by, price_usd, duration
-            """)
-            .order("price_usd")
-            .execute()
+                    """)
+                    .order("price_usd")
+                    .execute()
+                ),
+                op_name="client_settings.available_plans",
+            ),
         )
         settings["available_plans"] = plans_response.data or []
+
+        total_ms = round((time.perf_counter() - request_started) * 1000, 1)
+        perf_ms["total"] = total_ms
+        logging.info("⏱️ client_settings timings | client_id=%s | %s", client_id, perf_ms)
 
         return JSONResponse(content=settings)
 
     except HTTPException:
+        total_ms = round((time.perf_counter() - request_started) * 1000, 1)
+        perf_ms["total"] = total_ms
+        logging.info("⏱️ client_settings early-exit timings | client_id=%s | %s", client_id, perf_ms)
         raise
     except Exception as e:
+        total_ms = round((time.perf_counter() - request_started) * 1000, 1)
+        perf_ms["total"] = total_ms
+        logging.error("⏱️ client_settings failed timings | client_id=%s | %s", client_id, perf_ms)
         print(f"❌ Error en GET /client_settings: {e}")
+        if _is_transient_network_error(e):
+            raise HTTPException(status_code=503, detail="Servicio temporalmente no disponible. Intenta nuevamente.")
         raise HTTPException(status_code=500, detail=f"Error al obtener configuración: {str(e)}")

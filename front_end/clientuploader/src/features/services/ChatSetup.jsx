@@ -33,10 +33,11 @@ export default function ChatSetup() {
   const domain = window.location.hostname.includes("localhost")
     ? "http://localhost:5180/static"
     : "https://evolvian-assistant.onrender.com/static";
+  const widgetVersion = "2026-02-17-01";
 
   const scriptCode = `<script
   type="module"
-  src="${domain}/embed-floating.js"
+  src="${domain}/embed-floating.js?v=${widgetVersion}"
   data-public-client-id="${publicClientId}"
 ></script>`;
 

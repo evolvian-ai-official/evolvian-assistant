@@ -120,6 +120,22 @@ export default function GoogleCalendarSettings() {
     };
   };
 
+  const applySettingsToState = (source = {}) => {
+    setCalendarStatus(source.calendar_status || "inactive");
+    setSelectedDays(normalizeDays(source.selected_days));
+    setTimeRange({ start: source.start_time ?? "09:00", end: source.end_time ?? "18:00" });
+    setSlotDuration(Number(source.slot_duration_minutes ?? 30));
+    setMinNoticeHours(Number(source.min_notice_hours ?? 4));
+    setMaxDaysAhead(Number(source.max_days_ahead ?? 14));
+    setBufferTime(Number(source.buffer_minutes ?? 15));
+    setAllowSameDay(parseBool(source.allow_same_day, true));
+    setTimezone(source.timezone ?? "America/Mexico_City");
+    setShowAgendaInChatWidget(parseBool(source.show_agenda_in_chat_widget, true));
+    setAiSchedulingChatEnabled(parseBool(source.ai_scheduling_chat_enabled, true));
+    setAiSchedulingWhatsappEnabled(parseBool(source.ai_scheduling_whatsapp_enabled, true));
+    setLastSavedSnapshot(buildSnapshot(source));
+  };
+
   // Forzar estilo claro
   useEffect(() => {
     const id = "evo-calendar-settings-style";
@@ -164,20 +180,9 @@ export default function GoogleCalendarSettings() {
       try {
         setLoadingSettings(true);
         const res = await authFetch(`${backendUrl}/calendar/settings?client_id=${clientId}`);
+        if (!res.ok) throw new Error(t("google_calendar_load_settings_error"));
         const s = await res.json();
-        setCalendarStatus(s.calendar_status || "inactive");
-        setSelectedDays(normalizeDays(s.selected_days));
-        setTimeRange({ start: s.start_time ?? "09:00", end: s.end_time ?? "18:00" });
-        setSlotDuration(s.slot_duration_minutes ?? 30);
-        setMinNoticeHours(s.min_notice_hours ?? 4);
-        setMaxDaysAhead(s.max_days_ahead ?? 14);
-        setBufferTime(s.buffer_minutes ?? 15);
-        setAllowSameDay(parseBool(s.allow_same_day, true));
-        setTimezone(s.timezone ?? "America/Mexico_City");
-        setShowAgendaInChatWidget(parseBool(s.show_agenda_in_chat_widget, true));
-        setAiSchedulingChatEnabled(parseBool(s.ai_scheduling_chat_enabled, true));
-        setAiSchedulingWhatsappEnabled(parseBool(s.ai_scheduling_whatsapp_enabled, true));
-        setLastSavedSnapshot(buildSnapshot(s));
+        applySettingsToState(s);
       } catch {
         toast({ title: t("error"), description: t("google_calendar_load_settings_error"), variant: "destructive" });
       } finally {
@@ -209,19 +214,9 @@ export default function GoogleCalendarSettings() {
       setCalendarStatus(data.calendar_status);
 
       const refreshed = await authFetch(`${backendUrl}/calendar/settings?client_id=${clientId}`);
+      if (!refreshed.ok) throw new Error(t("google_calendar_load_settings_error"));
       const settings = await refreshed.json();
-      setSelectedDays(normalizeDays(settings.selected_days));
-      setTimeRange({ start: settings.start_time ?? "09:00", end: settings.end_time ?? "18:00" });
-      setSlotDuration(settings.slot_duration_minutes ?? 30);
-      setMinNoticeHours(settings.min_notice_hours ?? 4);
-      setMaxDaysAhead(settings.max_days_ahead ?? 14);
-      setBufferTime(settings.buffer_minutes ?? 15);
-      setAllowSameDay(parseBool(settings.allow_same_day, true));
-      setTimezone(settings.timezone ?? "America/Mexico_City");
-      setShowAgendaInChatWidget(parseBool(settings.show_agenda_in_chat_widget, true));
-      setAiSchedulingChatEnabled(parseBool(settings.ai_scheduling_chat_enabled, true));
-      setAiSchedulingWhatsappEnabled(parseBool(settings.ai_scheduling_whatsapp_enabled, true));
-      setLastSavedSnapshot(buildSnapshot(settings));
+      applySettingsToState(settings);
 
       toast({
         title: t("calendar_updated"),
@@ -266,24 +261,29 @@ export default function GoogleCalendarSettings() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(t("save_failed"));
+      let postData = null;
+      try {
+        postData = await res.json();
+      } catch {
+        postData = null;
+      }
 
-      // Reload persisted settings to avoid stale/local mismatches and UI freezes.
-      const refreshed = await authFetch(`${backendUrl}/calendar/settings?client_id=${clientId}`);
-      if (!refreshed.ok) throw new Error(t("google_calendar_load_settings_error"));
-      const s = await refreshed.json();
-      setCalendarStatus(s.calendar_status || "inactive");
-      setSelectedDays(normalizeDays(s.selected_days));
-      setTimeRange({ start: s.start_time ?? "09:00", end: s.end_time ?? "18:00" });
-      setSlotDuration(Number(s.slot_duration_minutes ?? 30));
-      setMinNoticeHours(Number(s.min_notice_hours ?? 4));
-      setMaxDaysAhead(Number(s.max_days_ahead ?? 14));
-      setBufferTime(Number(s.buffer_minutes ?? 15));
-      setAllowSameDay(parseBool(s.allow_same_day, true));
-      setTimezone(s.timezone ?? "America/Mexico_City");
-      setShowAgendaInChatWidget(parseBool(s.show_agenda_in_chat_widget, true));
-      setAiSchedulingChatEnabled(parseBool(s.ai_scheduling_chat_enabled, true));
-      setAiSchedulingWhatsappEnabled(parseBool(s.ai_scheduling_whatsapp_enabled, true));
-      setLastSavedSnapshot(buildSnapshot(s));
+      // Prefer POST response to update UI immediately and avoid transient blue/freeze states.
+      const savedSettings = postData?.settings && typeof postData.settings === "object"
+        ? postData.settings
+        : payload;
+      applySettingsToState(savedSettings);
+
+      // Best-effort refresh from backend, without blocking the UI.
+      try {
+        const refreshed = await authFetch(`${backendUrl}/calendar/settings?client_id=${clientId}`);
+        if (refreshed.ok) {
+          const s = await refreshed.json();
+          applySettingsToState(s);
+        }
+      } catch {
+        // no-op
+      }
       toast({ title: t("settings_saved_title"), description: t("google_calendar_settings_updated") });
     } catch {
       toast({ title: t("error"), description: t("google_calendar_save_settings_error"), variant: "destructive" });

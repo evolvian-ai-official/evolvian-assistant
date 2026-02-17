@@ -280,6 +280,15 @@ class CORSMiddlewareStatic(StaticFiles):
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "*"
+        normalized_path = (path or "").lower()
+        # Entry points must never be cached to avoid stale widget UIs across client sites.
+        if normalized_path.endswith(".html") or normalized_path.endswith("embed-floating.js"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        else:
+            # Keep hashed assets cacheable for performance.
+            response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
         return response
 
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")

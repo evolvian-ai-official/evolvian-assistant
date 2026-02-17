@@ -4,8 +4,56 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
 import logging
 from datetime import datetime
+import time
+import httpx
 
 router = APIRouter()
+
+
+_TRANSIENT_ERROR_MARKERS = (
+    "server disconnected",
+    "remoteprotocolerror",
+    "readtimeout",
+    "connection reset",
+    "eof",
+    "http2",
+)
+
+
+def _is_transient_network_error(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+def _with_retries(fn, *, attempts: int = 3, op_name: str = "supabase_call"):
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient_network_error(exc) or attempt == attempts:
+                raise
+            sleep_s = 0.2 * (2 ** (attempt - 1))
+            logging.warning(
+                "⚠️ %s falló (%s/%s). Reintentando en %.1fs: %s",
+                op_name,
+                attempt,
+                attempts,
+                sleep_s,
+                exc,
+            )
+            time.sleep(sleep_s)
+    raise last_exc
+
+
+def _run_timed(metrics: dict, key: str, fn):
+    started = time.perf_counter()
+    result = fn()
+    metrics[key] = round((time.perf_counter() - started) * 1000, 1)
+    return result
 
 
 def format_date(dt_str):
@@ -26,10 +74,16 @@ def count_bucket_documents(client_id: str) -> int:
     """Cuenta los archivos en el bucket evolvian-documents."""
     try:
         total_files = 0
-        root_files = supabase.storage.from_("evolvian-documents").list(path=client_id)
+        root_files = _with_retries(
+            lambda: supabase.storage.from_("evolvian-documents").list(path=client_id),
+            op_name="storage.list.root",
+        )
         for f in root_files:
             if f["id"].endswith("/"):  # 📁 subcarpeta
-                subfiles = supabase.storage.from_("evolvian-documents").list(path=f["name"])
+                subfiles = _with_retries(
+                    lambda: supabase.storage.from_("evolvian-documents").list(path=f["name"]),
+                    op_name="storage.list.subfolder",
+                )
                 total_files += len(subfiles)
             else:
                 total_files += 1
@@ -41,27 +95,34 @@ def count_bucket_documents(client_id: str) -> int:
 
 @router.get("/dashboard_summary")
 def dashboard_summary(request: Request, client_id: str = Query(...)):
+    request_started = time.perf_counter()
+    perf_ms = {}
     try:
-        authorize_client_request(request, client_id)
+        _run_timed(perf_ms, "authorize_client_request", lambda: authorize_client_request(request, client_id))
         logging.info(f"📊 Obteniendo dashboard_summary para client_id={client_id}")
 
         # 1️⃣ Configuración del asistente y plan
-        settings_res = (
-            supabase.table("client_settings")
-
-            .select(
-                "assistant_name, language, temperature, plan_id, show_powered_by, "
-                "subscription_start, subscription_end, cancellation_requested_at, scheduled_plan_id, "
-                "plans!client_settings_plan_id_fkey("
-                "id, name, max_messages, max_documents, is_unlimited, "
-                "show_powered_by, supports_chat, supports_email, supports_whatsapp, price_usd, "
-                "plan_features(feature, is_active)"
-                ")"
-            )
-
-            .eq("client_id", client_id)
-            .single()
-            .execute()
+        settings_res = _run_timed(
+            perf_ms,
+            "settings_query",
+            lambda: _with_retries(
+                lambda: (
+                    supabase.table("client_settings")
+                    .select(
+                        "assistant_name, language, temperature, plan_id, show_powered_by, "
+                        "subscription_start, subscription_end, cancellation_requested_at, scheduled_plan_id, "
+                        "plans!client_settings_plan_id_fkey("
+                        "id, name, max_messages, max_documents, is_unlimited, "
+                        "show_powered_by, supports_chat, supports_email, supports_whatsapp, price_usd, "
+                        "plan_features(feature, is_active)"
+                        ")"
+                    )
+                    .eq("client_id", client_id)
+                    .single()
+                    .execute()
+                ),
+                op_name="dashboard.settings",
+            ),
         )
 
         if not settings_res.data:
@@ -117,69 +178,135 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
 
 
         # 4️⃣ Contar mensajes de usuario (solo role=user)
-        msg_count_res = (
-            supabase.table("history")
-            .select("id", count="exact")
-            .eq("client_id", client_id)
-            .eq("role", "user")
-            .execute()
+        msg_count_res = _run_timed(
+            perf_ms,
+            "history_count_query",
+            lambda: _with_retries(
+                lambda: (
+                    supabase.table("history")
+                    .select("id", count="exact")
+                    .eq("client_id", client_id)
+                    .eq("role", "user")
+                    .execute()
+                ),
+                op_name="dashboard.message_count",
+            ),
         )
         total_user_messages = getattr(msg_count_res, "count", 0) or 0
         logging.info(f"💬 Mensajes de usuario encontrados: {total_user_messages}")
 
-        # 5️⃣ Sincronizar uso (client_usage)
-        usage_row = (
-            supabase.table("client_usage")
-            .select("messages_used, documents_uploaded, last_used_at, created_at")
-            .eq("client_id", client_id)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
+        # 5️⃣ Leer uso actual (para fallback/caché)
+        usage_row = _run_timed(
+            perf_ms,
+            "usage_read_query",
+            lambda: _with_retries(
+                lambda: (
+                    supabase.table("client_usage")
+                    .select("messages_used, documents_uploaded, last_used_at")
+                    .eq("client_id", client_id)
+                    .maybe_single()
+                    .execute()
+                ),
+                op_name="dashboard.usage_read",
+            ),
         )
+        usage_data = usage_row.data or {}
 
         usage = {
             "messages_used": total_user_messages,
-            "documents_uploaded": 0,
+            "documents_uploaded": usage_data.get("documents_uploaded") or 0,
             "last_used_at": datetime.utcnow().isoformat(),
         }
 
-        if usage_row.data:
-            supabase.table("client_usage").update({
-                "messages_used": total_user_messages,
-                "last_used_at": usage["last_used_at"],
-            }).eq("client_id", client_id).execute()
-        else:
-            supabase.table("client_usage").insert({
-                "client_id": client_id,
-                "messages_used": total_user_messages,
-                "documents_uploaded": 0,
-                "last_used_at": usage["last_used_at"],
-            }).execute()
+        # Escritura de usage en modo best-effort para no tirar el endpoint
+        try:
+            _run_timed(
+                perf_ms,
+                "usage_upsert_write",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("client_usage")
+                        .upsert(
+                            {
+                                "client_id": client_id,
+                                "messages_used": total_user_messages,
+                                "documents_uploaded": usage["documents_uploaded"],
+                                "last_used_at": usage["last_used_at"],
+                            },
+                            on_conflict="client_id",
+                        )
+                        .execute()
+                    ),
+                    op_name="dashboard.usage_upsert",
+                ),
+            )
+        except Exception as usage_exc:
+            logging.warning("⚠️ No se pudo sincronizar usage (non-blocking): %s", usage_exc)
 
-        # 6️⃣ Contar documentos en bucket
-        bucket_count = count_bucket_documents(client_id)
-        usage["documents_uploaded"] = bucket_count
-        supabase.table("client_usage").update({
-            "documents_uploaded": bucket_count,
-        }).eq("client_id", client_id).execute()
+        # 6️⃣ Contar documentos en bucket solo bajo demanda o sin caché
+        refresh_docs = request.query_params.get("refresh_documents") == "1"
+        if refresh_docs or usage["documents_uploaded"] == 0:
+            bucket_count = _run_timed(
+                perf_ms,
+                "documents_count_storage",
+                lambda: count_bucket_documents(client_id),
+            )
+            usage["documents_uploaded"] = bucket_count
+            try:
+                _run_timed(
+                    perf_ms,
+                    "documents_upsert_write",
+                    lambda: _with_retries(
+                        lambda: (
+                            supabase.table("client_usage")
+                            .upsert(
+                                {
+                                    "client_id": client_id,
+                                    "documents_uploaded": bucket_count,
+                                    "messages_used": total_user_messages,
+                                    "last_used_at": usage["last_used_at"],
+                                },
+                                on_conflict="client_id",
+                            )
+                            .execute()
+                        ),
+                        op_name="dashboard.usage_docs_upsert",
+                    ),
+                )
+            except Exception as docs_exc:
+                logging.warning("⚠️ No se pudo guardar documents_uploaded (non-blocking): %s", docs_exc)
 
         # 7️⃣ Canales activos
-        channels_res = supabase.table("channels").select("type").eq("client_id", client_id).execute()
+        channels_res = _run_timed(
+            perf_ms,
+            "channels_query",
+            lambda: _with_retries(
+                lambda: supabase.table("channels").select("type").eq("client_id", client_id).execute(),
+                op_name="dashboard.channels",
+            ),
+        )
         active_channels = [c["type"] for c in channels_res.data or []]
         all_channels = ["chat", "whatsapp", "email"]
         channels = {c: c in active_channels for c in all_channels}
 
         # 8️⃣ Historial de usuario (últimos 3)
-        history_res = (
-            supabase.table("history")
-            .select("content, created_at, channel, role")
-            .eq("client_id", client_id)
-            .eq("role", "user")
-            .not_.is_("content", None)
-            .neq("content", "")
-            .order("created_at", desc=True)
-            .limit(3)
-            .execute()
+        history_res = _run_timed(
+            perf_ms,
+            "history_preview_query",
+            lambda: _with_retries(
+                lambda: (
+                    supabase.table("history")
+                    .select("content, created_at, channel, role")
+                    .eq("client_id", client_id)
+                    .eq("role", "user")
+                    .not_.is_("content", None)
+                    .neq("content", "")
+                    .order("created_at", desc=True)
+                    .limit(3)
+                    .execute()
+                ),
+                op_name="dashboard.history_preview",
+            ),
         )
 
         history_preview = []
@@ -209,6 +336,10 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
                     upgrade_suggestion = {"action": "contact_support", "email": "support@evolvianai.com"}
 
         # ✅ Respuesta final (todo igual, solo agrega el nuevo campo)
+        total_ms = round((time.perf_counter() - request_started) * 1000, 1)
+        perf_ms["total"] = total_ms
+        logging.info("⏱️ dashboard_summary timings | client_id=%s | %s", client_id, perf_ms)
+
         return JSONResponse(
             content={
                 "plan": plan_info,
@@ -231,5 +362,8 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
     except HTTPException:
         raise
     except Exception as e:
+        total_ms = round((time.perf_counter() - request_started) * 1000, 1)
+        perf_ms["total"] = total_ms
+        logging.error("⏱️ dashboard_summary failed timings | client_id=%s | %s", client_id, perf_ms)
         logging.exception("❌ Error en /dashboard_summary")
         raise HTTPException(status_code=500, detail="Error al obtener el resumen del cliente.")

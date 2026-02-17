@@ -471,6 +471,24 @@ def get_widget_calendar_availability(
         raise HTTPException(status_code=500, detail=f"Calendar availability error: {e}")
 
 
+@router.get("/widget/calendar/visibility")
+def get_widget_calendar_visibility(public_client_id: str = Query(...)):
+    try:
+        client_id = get_client_id_from_public_client_id(public_client_id)
+        config = _get_widget_calendar_config(client_id)
+        return {
+            "show_agenda_in_chat_widget": bool(config.get("show_agenda_in_chat_widget", True)),
+            "calendar_status": config.get("calendar_status") or "inactive",
+            "ai_scheduling_chat_enabled": bool(config.get("ai_scheduling_chat_enabled", True)),
+            "timezone": config.get("timezone") or "UTC",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("❌ Error getting widget calendar visibility")
+        raise HTTPException(status_code=500, detail=f"Calendar visibility error: {e}")
+
+
 @router.post("/widget/calendar/book")
 async def book_widget_calendar(payload: WidgetBookRequest):
     try:

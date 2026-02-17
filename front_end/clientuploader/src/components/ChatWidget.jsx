@@ -70,6 +70,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [calendarError, setCalendarError] = useState("");
   const [calendarTimezone, setCalendarTimezone] = useState("");
   const [calendarEnabled, setCalendarEnabled] = useState(true);
+  const [showAgendaButton, setShowAgendaButton] = useState(true);
   const [selectedCalendarSlot, setSelectedCalendarSlot] = useState(null);
   const [bookingName, setBookingName] = useState("");
   const [bookingEmail, setBookingEmail] = useState("");
@@ -381,30 +382,34 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   useEffect(() => {
     if (!publicClientId) return;
 
-    const checkCalendarFlag = async () => {
+    const loadCalendarVisibility = async () => {
       try {
         const apiUrl =
           window.location.hostname === "localhost"
             ? "http://localhost:8001"
             : "https://evolvian-assistant.onrender.com";
-        const today = formatDateKey(new Date());
-        const url = new URL(`${apiUrl}/widget/calendar/availability`);
+        const url = new URL(`${apiUrl}/widget/calendar/visibility`);
         url.searchParams.set("public_client_id", publicClientId);
-        url.searchParams.set("from_date", today);
-        url.searchParams.set("to_date", today);
         const res = await fetch(url.toString());
         const data = await res.json();
-        const enabled = Boolean(res.ok && data?.available !== false);
-        setCalendarEnabled(enabled);
-        if (!enabled) setActivePanel("chat");
+        if (!res.ok) throw new Error(data?.detail || "No se pudo cargar visibilidad de agenda");
+
+        const showAgenda = Boolean(data?.show_agenda_in_chat_widget ?? true);
+        const status = String(data?.calendar_status || "inactive").toLowerCase();
+        setShowAgendaButton(showAgenda);
+        setCalendarEnabled(status === "active");
+
+        if (!showAgenda && activePanel === "calendar") {
+          setActivePanel("chat");
+        }
       } catch {
-        setCalendarEnabled(false);
-        setActivePanel("chat");
+        // Fail-open for visibility: keep button visible to avoid regressions caused by transient API failures.
+        setShowAgendaButton(true);
       }
     };
 
-    checkCalendarFlag();
-  }, [publicClientId]);
+    loadCalendarVisibility();
+  }, [publicClientId, activePanel]);
 
   useEffect(() => {
     if (activePanel !== "calendar" || !publicClientId) return;
@@ -431,7 +436,6 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         }
         if (data?.available === false) {
           setCalendarEnabled(false);
-          setActivePanel("chat");
           setCalendarSlots([]);
           setCalendarCountsByDay({});
           setCalendarTimezone(data.timezone || "");
@@ -570,7 +574,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
           >
             Chat
           </button>
-          {calendarEnabled && (
+          {showAgendaButton && (
             <button
               style={{
                 ...styles.headerActionBtn,

@@ -11,11 +11,9 @@ export default defineConfig({
     },
   },
   build: {
-    // ⚡ Usa "dist" para despliegues de frontend SaaS (Render)
-    //outDir: "dist",
-
-    // ⚡ Usa "../../static" cuando quieras regenerar el widget servido por FastAPI
-    outDir: "../../static",
+    // Build first into local dist, then sync to BE static via npm script.
+    outDir: "dist",
+    emptyOutDir: true,
 
     assetsDir: "assets",
     rollupOptions: {

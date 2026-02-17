@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:be-static",
+    "build:dist": "vite build",
+    "build:be-static": "npm run build:dist && node ./scripts/sync-dist-to-static.mjs",
     "lint": "eslint .",
     "preview": "vite preview --port 4217"
   },
