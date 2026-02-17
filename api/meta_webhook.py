@@ -6,9 +6,8 @@ import logging
 from api.modules.assistant_rag.supabase_client import (
     get_client_id_by_channel,
     get_whatsapp_credentials,
-    save_history
 )
-from api.modules.assistant_rag.rag_pipeline import ask_question
+from api.modules.assistant_rag.intent_router import process_user_message
 from api.modules.whatsapp.send_wa_message import send_whatsapp_message
 from api.webhook_security import verify_meta_signature
 
@@ -75,8 +74,14 @@ async def receive_whatsapp_message(request: Request):
         credentials = get_whatsapp_credentials(client_id)
         print(f"🔑 Credenciales de WhatsApp obtenidas: {credentials}")
 
-        # ✅ Preguntar al asistente con documentos
-        response = ask_question(text, client_id)
+        # ✅ Procesar con intent router (agenda + RAG)
+        session_id = f"whatsapp-{user_phone}"
+        response = await process_user_message(
+            client_id=client_id,
+            session_id=session_id,
+            message=text,
+            channel="whatsapp",
+        )
         print(f"💬 Respuesta generada por RAG: {response}")
 
         # 🔧 Ajuste temporal para evitar error (#131030) con +521
@@ -91,9 +96,6 @@ async def receive_whatsapp_message(request: Request):
             phone_id=credentials["wa_phone_id"]
         )
         print(f"✅ Mensaje enviado a {user_phone} con éxito.")
-
-        save_history(client_id, text, response, channel="whatsapp")
-        print(f"📂 Historial guardado para client_id {client_id}")
 
         return JSONResponse(content={"status": "ok"}, status_code=200)
 

@@ -6,12 +6,9 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 from api.modules.assistant_rag.supabase_client import (
     get_client_id_by_channel,
-    save_history,
-    track_usage
 )
 
-from api.modules.assistant_rag.rag_pipeline import ask_question
-from api.config import config
+from api.modules.assistant_rag.intent_router import process_user_message
 from api.webhook_security import verify_twilio_signature
 
 
@@ -47,22 +44,21 @@ async def twilio_webhook(
 
     pregunta = Body.strip()
 
-    # Procesar pregunta con RAG
+    # Procesar pregunta con intent router (agenda + RAG)
     try:
-        respuesta = ask_question(pregunta, client_id)
+        session_id = f"whatsapp-{numero}"
+        respuesta = await process_user_message(
+            client_id=client_id,
+            session_id=session_id,
+            message=pregunta,
+            channel="whatsapp",
+        )
         print(f"🤖 Respuesta generada: {respuesta}")
         if not respuesta:
             respuesta = "No encontré información relacionada en tus documentos. Puedes cargar más desde tu panel."
     except Exception as e:
         print(f"❌ Error al generar respuesta RAG: {e}")
         respuesta = "Lo siento, ocurrió un error procesando tu pregunta."
-
-    # Guardar historial y registrar uso
-    try:
-        save_history(client_id, pregunta, respuesta, channel="whatsapp")
-        track_usage(client_id, channel="whatsapp", type="question")
-    except Exception as e:
-        print(f"⚠️ Error guardando historial o uso: {e}")
 
     # Preparar y devolver respuesta a Twilio
     twiml_response = MessagingResponse()

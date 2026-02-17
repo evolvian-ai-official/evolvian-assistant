@@ -156,7 +156,7 @@ def set_intent(client_id: str, session_id: str, intent: str) -> None:
 # ============================================================
 # 🚦 Router lógico
 # ============================================================
-def route_message(client_id: str, session_id: str, message: str) -> str:
+def route_message(client_id: str, session_id: str, message: str, channel: str = "chat") -> str:
     """
     Devuelve: "calendar" | "rag"
     Mantiene el intent 'calendar' activo mientras el flujo esté en progreso.
@@ -202,19 +202,49 @@ def route_message(client_id: str, session_id: str, message: str) -> str:
         t = (msg or "").lower()
         return any(k in t for k in EXIT_CALENDAR_KEYWORDS)
 
+    def _is_truthy(val: Any, default: bool = True) -> bool:
+        if val is None:
+            return default
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(val)
+
+    def _normalize_channel(raw: str | None) -> str:
+        c = (raw or "chat").strip().lower()
+        if c in {"widget", "web", "chat_widget"}:
+            return "chat"
+        if "whatsapp" in c:
+            return "whatsapp"
+        return c
+
     def get_calendar_gate() -> tuple[bool, str | None]:
         try:
             from api.utils.plan_features_logic import client_has_feature
             has_calendar_feature = client_has_feature(client_id, "calendar_sync")
             res = (
                 supabase.table("calendar_settings")
-                .select("calendar_status")
+                .select("*")
                 .eq("client_id", client_id)
                 .maybe_single()
                 .execute()
             )
-            calendar_status = res.data.get("calendar_status") if res and res.data else None
-            return bool(has_calendar_feature and calendar_status == "active"), calendar_status
+            settings = res.data or {}
+            calendar_status = settings.get("calendar_status") if settings else None
+            if not (has_calendar_feature and calendar_status == "active"):
+                return False, calendar_status
+
+            normalized_channel = _normalize_channel(channel)
+            chat_ai_enabled = _is_truthy(settings.get("ai_scheduling_chat_enabled"), True)
+            wa_ai_enabled = _is_truthy(settings.get("ai_scheduling_whatsapp_enabled"), True)
+
+            if normalized_channel == "whatsapp" and not wa_ai_enabled:
+                return False, calendar_status
+            if normalized_channel in {"chat", "widget"} and not chat_ai_enabled:
+                return False, calendar_status
+
+            return True, calendar_status
         except Exception:
             return False, None
 
@@ -301,7 +331,7 @@ async def process_user_message(client_id: str, session_id: str, message: str, ch
     lang = detect_language(message)
     print(f"🌍 Detected language: {lang}")
 
-    route = route_message(client_id, session_id, message)
+    route = route_message(client_id, session_id, message, channel=channel)
 
     # route_message can return a direct user-facing blocked message.
     if route not in {"calendar", "rag"}:

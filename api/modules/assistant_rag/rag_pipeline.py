@@ -597,11 +597,13 @@ async def handle_message(
     user_message: str,
     channel: str = "chat"
 ) -> str:
-    result = ask_question(
-        messages=user_message,
+    from api.modules.assistant_rag.intent_router import process_user_message
+
+    result = process_user_message(
         client_id=client_id,
         session_id=session_id,
-        channel=channel
+        message=user_message,
+        channel=channel,
     )
 
     if hasattr(result, "__await__"):

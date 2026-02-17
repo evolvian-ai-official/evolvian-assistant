@@ -34,12 +34,25 @@ export default function GoogleCalendarSettings() {
   const [bufferTime, setBufferTime] = useState(15);
   const [allowSameDay, setAllowSameDay] = useState(true);
   const [timezone, setTimezone] = useState("America/Mexico_City");
+  const [showAgendaInChatWidget, setShowAgendaInChatWidget] = useState(true);
+  const [aiSchedulingChatEnabled, setAiSchedulingChatEnabled] = useState(true);
+  const [aiSchedulingWhatsappEnabled, setAiSchedulingWhatsappEnabled] = useState(true);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState(null);
 
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const parseBool = (value, fallback = true) => {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes", "on"].includes(normalized)) return true;
+      if (["false", "0", "no", "off"].includes(normalized)) return false;
+    }
+    return Boolean(value);
+  };
   const normalizeDays = (value) => {
     const defaultDays = ["Mon", "Tue", "Wed", "Thu", "Fri"];
     if (Array.isArray(value)) {
@@ -82,8 +95,11 @@ export default function GoogleCalendarSettings() {
         min_notice_hours: Number(source.min_notice_hours ?? 4),
         max_days_ahead: Number(source.max_days_ahead ?? 14),
         buffer_minutes: Number(source.buffer_minutes ?? 15),
-        allow_same_day: Boolean(source.allow_same_day ?? true),
+        allow_same_day: parseBool(source.allow_same_day, true),
         timezone: source.timezone ?? "America/Mexico_City",
+        show_agenda_in_chat_widget: parseBool(source.show_agenda_in_chat_widget, true),
+        ai_scheduling_chat_enabled: parseBool(source.ai_scheduling_chat_enabled, true),
+        ai_scheduling_whatsapp_enabled: parseBool(source.ai_scheduling_whatsapp_enabled, true),
       };
     }
 
@@ -96,8 +112,11 @@ export default function GoogleCalendarSettings() {
       min_notice_hours: Number(minNoticeHours),
       max_days_ahead: Number(maxDaysAhead),
       buffer_minutes: Number(bufferTime),
-      allow_same_day: Boolean(allowSameDay),
+      allow_same_day: parseBool(allowSameDay, true),
       timezone,
+      show_agenda_in_chat_widget: parseBool(showAgendaInChatWidget, true),
+      ai_scheduling_chat_enabled: parseBool(aiSchedulingChatEnabled, true),
+      ai_scheduling_whatsapp_enabled: parseBool(aiSchedulingWhatsappEnabled, true),
     };
   };
 
@@ -153,8 +172,11 @@ export default function GoogleCalendarSettings() {
         setMinNoticeHours(s.min_notice_hours ?? 4);
         setMaxDaysAhead(s.max_days_ahead ?? 14);
         setBufferTime(s.buffer_minutes ?? 15);
-        setAllowSameDay(s.allow_same_day ?? true);
+        setAllowSameDay(parseBool(s.allow_same_day, true));
         setTimezone(s.timezone ?? "America/Mexico_City");
+        setShowAgendaInChatWidget(parseBool(s.show_agenda_in_chat_widget, true));
+        setAiSchedulingChatEnabled(parseBool(s.ai_scheduling_chat_enabled, true));
+        setAiSchedulingWhatsappEnabled(parseBool(s.ai_scheduling_whatsapp_enabled, true));
         setLastSavedSnapshot(buildSnapshot(s));
       } catch {
         toast({ title: t("error"), description: t("google_calendar_load_settings_error"), variant: "destructive" });
@@ -194,8 +216,11 @@ export default function GoogleCalendarSettings() {
       setMinNoticeHours(settings.min_notice_hours ?? 4);
       setMaxDaysAhead(settings.max_days_ahead ?? 14);
       setBufferTime(settings.buffer_minutes ?? 15);
-      setAllowSameDay(settings.allow_same_day ?? true);
+      setAllowSameDay(parseBool(settings.allow_same_day, true));
       setTimezone(settings.timezone ?? "America/Mexico_City");
+      setShowAgendaInChatWidget(parseBool(settings.show_agenda_in_chat_widget, true));
+      setAiSchedulingChatEnabled(parseBool(settings.ai_scheduling_chat_enabled, true));
+      setAiSchedulingWhatsappEnabled(parseBool(settings.ai_scheduling_whatsapp_enabled, true));
       setLastSavedSnapshot(buildSnapshot(settings));
 
       toast({
@@ -229,8 +254,11 @@ export default function GoogleCalendarSettings() {
         min_notice_hours: Number(minNoticeHours),
         max_days_ahead: Number(maxDaysAhead),
         buffer_minutes: Number(bufferTime),
-        allow_same_day: Boolean(allowSameDay),
+        allow_same_day: parseBool(allowSameDay, true),
         timezone,
+        show_agenda_in_chat_widget: parseBool(showAgendaInChatWidget, true),
+        ai_scheduling_chat_enabled: parseBool(aiSchedulingChatEnabled, true),
+        ai_scheduling_whatsapp_enabled: parseBool(aiSchedulingWhatsappEnabled, true),
       };
       const res = await authFetch(`${backendUrl}/calendar/settings`, {
         method: "POST",
@@ -250,8 +278,11 @@ export default function GoogleCalendarSettings() {
       setMinNoticeHours(Number(s.min_notice_hours ?? 4));
       setMaxDaysAhead(Number(s.max_days_ahead ?? 14));
       setBufferTime(Number(s.buffer_minutes ?? 15));
-      setAllowSameDay(Boolean(s.allow_same_day ?? true));
+      setAllowSameDay(parseBool(s.allow_same_day, true));
       setTimezone(s.timezone ?? "America/Mexico_City");
+      setShowAgendaInChatWidget(parseBool(s.show_agenda_in_chat_widget, true));
+      setAiSchedulingChatEnabled(parseBool(s.ai_scheduling_chat_enabled, true));
+      setAiSchedulingWhatsappEnabled(parseBool(s.ai_scheduling_whatsapp_enabled, true));
       setLastSavedSnapshot(buildSnapshot(s));
       toast({ title: t("settings_saved_title"), description: t("google_calendar_settings_updated") });
     } catch {
@@ -482,6 +513,43 @@ export default function GoogleCalendarSettings() {
               <p style={sectionHint}>
                 Para cambiar tu zona horaria ve a <strong>Settings - My Profile</strong>.
               </p>
+            </section>
+
+            <section style={sectionStyle}>
+              <h3 style={sectionTitle}>💬 Canales de agenda</h3>
+              <p style={sectionHint}>
+                Controla si los clientes ven y usan agendado con AI por canal.
+              </p>
+
+              <div style={toggleRow}>
+                <label style={labelStyle}>Mostrar botón "Agendar" en Chat Widget</label>
+                <input
+                  type="checkbox"
+                  checked={showAgendaInChatWidget}
+                  onChange={(e) => setShowAgendaInChatWidget(e.target.checked)}
+                  style={checkboxStyle}
+                />
+              </div>
+
+              <div style={toggleRow}>
+                <label style={labelStyle}>Agendar con AI en chat</label>
+                <input
+                  type="checkbox"
+                  checked={aiSchedulingChatEnabled}
+                  onChange={(e) => setAiSchedulingChatEnabled(e.target.checked)}
+                  style={checkboxStyle}
+                />
+              </div>
+
+              <div style={toggleRow}>
+                <label style={labelStyle}>Agendar con AI en WhatsApp</label>
+                <input
+                  type="checkbox"
+                  checked={aiSchedulingWhatsappEnabled}
+                  onChange={(e) => setAiSchedulingWhatsappEnabled(e.target.checked)}
+                  style={checkboxStyle}
+                />
+              </div>
             </section>
 
             <div style={{ textAlign: "right", marginTop: "2rem" }}>

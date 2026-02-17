@@ -178,6 +178,15 @@ def _normalize_selected_days(raw_days) -> set[int]:
 
 
 def _get_widget_calendar_config(client_id: str) -> dict:
+    def _as_bool(value, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
     default_config = {
         "calendar_status": "inactive",
         "selected_days": {0, 1, 2, 3, 4},
@@ -189,21 +198,40 @@ def _get_widget_calendar_config(client_id: str) -> dict:
         "allow_same_day": True,
         "max_days_ahead": 365,
         "timezone": "UTC",
+        "show_agenda_in_chat_widget": True,
+        "ai_scheduling_chat_enabled": True,
+        "ai_scheduling_whatsapp_enabled": True,
     }
 
     try:
-        settings_res = (
-            supabase.table("calendar_settings")
-            .select(
-                "calendar_status, selected_days, start_time, end_time, "
-                "slot_duration_minutes, buffer_minutes, min_notice_hours, "
-                "allow_same_day, max_days_ahead, timezone"
+        try:
+            settings_res = (
+                supabase.table("calendar_settings")
+                .select(
+                    "calendar_status, selected_days, start_time, end_time, "
+                    "slot_duration_minutes, buffer_minutes, min_notice_hours, "
+                    "allow_same_day, max_days_ahead, timezone, "
+                    "show_agenda_in_chat_widget, ai_scheduling_chat_enabled, ai_scheduling_whatsapp_enabled"
+                )
+                .eq("client_id", client_id)
+                .limit(1)
+                .execute()
             )
-            .eq("client_id", client_id)
-            .limit(1)
-            .execute()
-        )
-        settings_data = (settings_res.data or [{}])[0]
+            settings_data = (settings_res.data or [{}])[0]
+        except Exception:
+            # Compatibilidad con esquemas legacy sin columnas nuevas.
+            legacy_res = (
+                supabase.table("calendar_settings")
+                .select(
+                    "calendar_status, selected_days, start_time, end_time, "
+                    "slot_duration_minutes, buffer_minutes, min_notice_hours, "
+                    "allow_same_day, max_days_ahead, timezone"
+                )
+                .eq("client_id", client_id)
+                .limit(1)
+                .execute()
+            )
+            settings_data = (legacy_res.data or [{}])[0]
     except Exception:
         settings_data = {}
 
@@ -240,9 +268,21 @@ def _get_widget_calendar_config(client_id: str) -> dict:
         "slot_duration_minutes": int(_value_or_default("slot_duration_minutes")),
         "buffer_minutes": int(_value_or_default("buffer_minutes")),
         "min_notice_hours": int(_value_or_default("min_notice_hours")),
-        "allow_same_day": bool(settings_data.get("allow_same_day", default_config["allow_same_day"])),
+        "allow_same_day": _as_bool(settings_data.get("allow_same_day"), default_config["allow_same_day"]),
         "max_days_ahead": int(_value_or_default("max_days_ahead")),
         "timezone": timezone_name,
+        "show_agenda_in_chat_widget": _as_bool(
+            settings_data.get("show_agenda_in_chat_widget", default_config["show_agenda_in_chat_widget"]),
+            default_config["show_agenda_in_chat_widget"],
+        ),
+        "ai_scheduling_chat_enabled": _as_bool(
+            settings_data.get("ai_scheduling_chat_enabled", default_config["ai_scheduling_chat_enabled"]),
+            default_config["ai_scheduling_chat_enabled"],
+        ),
+        "ai_scheduling_whatsapp_enabled": _as_bool(
+            settings_data.get("ai_scheduling_whatsapp_enabled", default_config["ai_scheduling_whatsapp_enabled"]),
+            default_config["ai_scheduling_whatsapp_enabled"],
+        ),
     }
     config["max_days_ahead"] = max(1, min(config["max_days_ahead"], 365))
     config["slot_duration_minutes"] = max(5, min(config["slot_duration_minutes"], 240))
@@ -303,6 +343,14 @@ def get_widget_calendar_availability(
                 "slots": [],
                 "counts_by_day": {},
                 "message": "Calendar is inactive for this client.",
+            }
+        if not config.get("show_agenda_in_chat_widget", True):
+            return {
+                "available": False,
+                "timezone": config["timezone"],
+                "slots": [],
+                "counts_by_day": {},
+                "message": "Calendar is hidden in chat widget for this client.",
             }
 
         tz = ZoneInfo(config["timezone"])
@@ -430,6 +478,8 @@ async def book_widget_calendar(payload: WidgetBookRequest):
         config = _get_widget_calendar_config(client_id)
         if config["calendar_status"] != "active":
             raise HTTPException(status_code=403, detail="Calendar booking is disabled for this client.")
+        if not config.get("ai_scheduling_chat_enabled", True):
+            raise HTTPException(status_code=403, detail="AI scheduling in chat is disabled for this client.")
         user_name = (payload.user_name or "").strip()
         user_email = (payload.user_email or "").strip() or None
         user_phone = (payload.user_phone or "").strip() or None

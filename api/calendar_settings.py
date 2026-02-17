@@ -33,6 +33,9 @@ class CalendarSettingsPayload(BaseModel):
     buffer_minutes: int = 15
     allow_same_day: bool = True
     timezone: str = "America/Mexico_City"
+    show_agenda_in_chat_widget: bool = True
+    ai_scheduling_chat_enabled: bool = True
+    ai_scheduling_whatsapp_enabled: bool = True
 
 # ============================================================
 # 📘 GET /calendar/settings — AUTO-CREA SI NO EXISTE (FIX)
@@ -107,14 +110,29 @@ def upsert_calendar_settings(payload: CalendarSettingsPayload, request: Request)
             .execute()
         )
 
-        if existing.data:
-            # Update
-            supabase.table("calendar_settings").update(data).eq("client_id", client_id).execute()
-            logger.info(f"🔄 Updated calendar_status={data['calendar_status']} for {client_id}")
-        else:
-            # Insert
-            supabase.table("calendar_settings").insert({ "client_id": client_id, **data }).execute()
-            logger.info(f"🆕 Created new settings with calendar_status={data['calendar_status']}")
+        advanced_keys = {
+            "show_agenda_in_chat_widget",
+            "ai_scheduling_chat_enabled",
+            "ai_scheduling_whatsapp_enabled",
+        }
+
+        try:
+            if existing.data:
+                # Update
+                supabase.table("calendar_settings").update(data).eq("client_id", client_id).execute()
+                logger.info(f"🔄 Updated calendar_status={data['calendar_status']} for {client_id}")
+            else:
+                # Insert
+                supabase.table("calendar_settings").insert({"client_id": client_id, **data}).execute()
+                logger.info(f"🆕 Created new settings with calendar_status={data['calendar_status']}")
+        except Exception as db_error:
+            # Compatibilidad con esquemas legacy sin columnas nuevas.
+            logger.warning(f"⚠️ Retrying calendar_settings save without advanced columns: {db_error}")
+            legacy_data = {k: v for k, v in data.items() if k not in advanced_keys}
+            if existing.data:
+                supabase.table("calendar_settings").update(legacy_data).eq("client_id", client_id).execute()
+            else:
+                supabase.table("calendar_settings").insert({"client_id": client_id, **legacy_data}).execute()
 
         # Confirmar guardado
         confirm = (
