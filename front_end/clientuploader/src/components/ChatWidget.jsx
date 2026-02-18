@@ -7,6 +7,13 @@ const ASSETS_BASE_URL =
   import.meta.env.VITE_WIDGET_ASSETS_URL ||
   "https://evolvian-assistant.onrender.com/static";
 
+const generateSessionId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `sid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 const withAlpha = (color, alpha) => {
   if (!color) return `rgba(17, 24, 39, ${alpha})`;
 
@@ -107,6 +114,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [usageCount, setUsageCount] = useState(0);
   const [usageLimitReached, setUsageLimitReached] = useState(false);
   const messagesEndRef = useRef(null);
+  const lastSendTriggerAtRef = useRef(0);
   const [activePanel, setActivePanel] = useState("chat");
   const [calendarViewMode, setCalendarViewMode] = useState("month");
   const [calendarDate, setCalendarDate] = useState(new Date());
@@ -171,10 +179,15 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   // 🧠 Generar sessionId persistente
   // =============================
   useEffect(() => {
-    let sid = localStorage.getItem("evolvian_session_id");
-    if (!sid) {
-      sid = crypto.randomUUID();
-      localStorage.setItem("evolvian_session_id", sid);
+    let sid = null;
+    try {
+      sid = localStorage.getItem("evolvian_session_id");
+      if (!sid) {
+        sid = generateSessionId();
+        localStorage.setItem("evolvian_session_id", sid);
+      }
+    } catch {
+      sid = generateSessionId();
     }
     setSessionId(sid);
   }, []);
@@ -284,7 +297,19 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const sendMessage = async (overrideText = null) => {
     const outboundText = (overrideText ?? input).trim();
     if (!outboundText || usageLimitReached) return;
-    if (!publicClientId || !sessionId) return;
+    if (sending) return;
+    if (!publicClientId) return;
+
+    let effectiveSessionId = sessionId;
+    if (!effectiveSessionId) {
+      effectiveSessionId = generateSessionId();
+      setSessionId(effectiveSessionId);
+      try {
+        localStorage.setItem("evolvian_session_id", effectiveSessionId);
+      } catch {
+        // Ignore storage failures in restricted iframe/mobile environments.
+      }
+    }
 
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const userMsg = { from: "user", text: outboundText, timestamp: now };
@@ -303,11 +328,15 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           public_client_id: publicClientId,
-          session_id: sessionId,
+          session_id: effectiveSessionId,
           message: userMsg.text,
           channel: "widget",
         }),
       });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
       const data = await res.json();
       const botMsg = {
@@ -324,6 +353,12 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       });
     } catch (err) {
       console.error("❌ Error al enviar mensaje:", err);
+      const fallback = {
+        from: "bot",
+        text: t("send_error") || "No se pudo enviar el mensaje. Intenta nuevamente.",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, fallback]);
     } finally {
       setSending(false);
     }
@@ -335,6 +370,19 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       sendMessage();
     }
   };
+
+  const triggerSendFromUi = () => {
+    const now = Date.now();
+    if (now - lastSendTriggerAtRef.current < 320) return;
+    lastSendTriggerAtRef.current = now;
+    sendMessage();
+  };
+
+  const handleSendButtonClick = () => triggerSendFromUi();
+
+  const handleSendButtonTouchEnd = () => triggerSendFromUi();
+
+  const handleSendButtonPointerUp = () => triggerSendFromUi();
 
   const todayStart = useMemo(() => {
     const tday = new Date();
@@ -640,6 +688,14 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             style={{
               fontSize: isMobileLayout ? "0.95rem" : "1rem",
               color: theme.headerTextColor,
+              ...(isMobileLayout
+                ? {
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    maxWidth: "58vw",
+                  }
+                : null),
             }}
           >
             {assistantName}
@@ -989,7 +1045,9 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             />
 
             <button
-              onClick={sendMessage}
+              onClick={handleSendButtonClick}
+              onPointerUp={handleSendButtonPointerUp}
+              onTouchEnd={handleSendButtonTouchEnd}
               style={{
                 ...styles.button,
                 ...(isMobileLayout ? styles.buttonMobile : null),
@@ -999,6 +1057,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 color: theme.buttonTextColor,
                 opacity: sending ? 0.7 : 1,
                 boxShadow: usageLimitReached ? "none" : aura.buttonShadow,
+                touchAction: "manipulation",
               }}
               disabled={sending || usageLimitReached}
             >
@@ -1262,9 +1321,9 @@ const styles = {
   headerMobile: {
     minHeight: "56px",
     height: "auto",
-    padding: "0.5rem 0.7rem",
-    gap: "0.5rem",
-    flexWrap: "wrap",
+    padding: "0.45rem 0.65rem",
+    gap: "0.35rem",
+    flexWrap: "nowrap",
   },
   headerLeft: {
     display: "flex",
@@ -1281,8 +1340,11 @@ const styles = {
     gap: "0.35rem",
   },
   headerActionsMobile: {
-    marginLeft: 0,
-    width: "100%",
+    marginLeft: "auto",
+    width: "auto",
+    flexShrink: 0,
+    alignSelf: "flex-start",
+    gap: "0.28rem",
   },
   headerActionBtn: {
     border: "1px solid #d8e7f8",
@@ -1293,8 +1355,12 @@ const styles = {
     cursor: "pointer",
   },
   headerActionBtnMobile: {
-    flex: 1,
+    flex: "none",
     textAlign: "center",
+    padding: "0.12rem 0.48rem",
+    fontSize: "0.66rem",
+    minHeight: "24px",
+    lineHeight: 1.05,
   },
   messages: {
     flex: 1,

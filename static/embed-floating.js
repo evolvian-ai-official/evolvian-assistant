@@ -94,7 +94,7 @@
 
   // 🟦 Iframe oculto (ventana flotante, tamaño fijo)
   // Bump this when widget UI changes to force fresh widget shell on client sites.
-  const widgetBuildVersion = "2026-02-18-02";
+  const widgetBuildVersion = "2026-02-18-04";
   const iframe = document.createElement("iframe");
   iframe.src = `${baseOrigin}/widget.html?public_client_id=${encodeURIComponent(clientId)}&v=${encodeURIComponent(widgetBuildVersion)}`;
   Object.assign(iframe.style, {
