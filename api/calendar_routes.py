@@ -161,7 +161,13 @@ async def book_calendar(request: Request):
             hour_str = scheduled_time.strftime("%H:%M")
 
             # ✉️ Confirmación al usuario
-            send_confirmation_email(user_email, date_str, hour_str)
+            send_confirmation_email(
+                user_email,
+                date_str,
+                hour_str,
+                client_id=client_id,
+                user_name=user_name,
+            )
             logger.info(f"📨 Confirmation email sent to {user_email}")
 
             # ✉️ Notificación al negocio (usa client_id internamente)

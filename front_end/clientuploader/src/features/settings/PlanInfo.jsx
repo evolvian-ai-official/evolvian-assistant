@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { authFetch } from "@/lib/authFetch";
+import { trackClientEvent } from "../../lib/tracking";
 import "./PlanInfo.css";
 
 export default function PlanInfo({ activeTab, formData, refetchSettings }) {
@@ -83,11 +84,15 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
     },
   ];
 
+  const normalizePlanId = (id) => {
+    const normalized = (id || "free").toLowerCase();
+    return normalized === "enterprise" ? "white_label" : normalized;
+  };
+
   const planOrder = { free: 1, starter: 2, premium: 3, white_label: 4 };
-  const currentPlanId = formData?.plan?.id?.toLowerCase() || "free";
+  const currentPlanId = normalizePlanId(formData?.plan?.id || "free");
   const currentPlanName = formData?.plan?.name || t("current_plan_label");
   const cancellationRequested = !!formData?.cancellation_requested_at;
-  const scheduledPlanId = formData?.scheduled_plan_id || null; // (disponible para banner futuro)
   const subscriptionEnd = formData?.subscription_end;
 
   const formatDate = (date) =>
@@ -134,7 +139,22 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
         body: JSON.stringify({ plan_id: planId, client_id: clientId, email: userEmail }),
       });
       const data = await res.json();
-      if (res.ok && data.url) window.location.href = data.url;
+      if (res.ok && data.url) {
+        void trackClientEvent({
+          clientId,
+          name: "Funnel_Upgrade_Started",
+          category: "funnel",
+          label: planId,
+          value: currentPlanId,
+          eventKey: "funnel_upgrade_started",
+          metadata: {
+            from_plan: currentPlanId,
+            to_plan: planId,
+          },
+          dedupeLocal: true,
+        });
+        window.location.href = data.url;
+      }
       else throw new Error(data.error || t("checkout_session_failed"));
     } catch (err) {
       toast({ title: t("upgrade_failed"), description: err.message });
@@ -196,10 +216,144 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
 
   const comparePlans = (planId) => {
     const current = planOrder[currentPlanId];
-    const target = planOrder[planId];
+    const target = planOrder[normalizePlanId(planId)];
     if (target > current) return "upgrade";
     if (target < current) return "downgrade";
     return "current";
+  };
+
+  const comparisonRows = [
+    {
+      id: "messages",
+      label: t("messages") || "Messages / month",
+      values: {
+        free: t("plan_feature_100_messages"),
+        starter: t("plan_feature_1000_messages"),
+        premium: t("plan_feature_5000_messages"),
+        white_label: t("unlimited"),
+      },
+    },
+    {
+      id: "documents",
+      label: t("documents") || "Documents",
+      values: {
+        free: t("plan_feature_1_document"),
+        starter: t("plan_feature_1_document"),
+        premium: t("plan_feature_3_documents"),
+        white_label: t("unlimited"),
+      },
+    },
+    {
+      id: "dashboard",
+      label: t("plan_feature_basic_dashboard"),
+      values: {
+        free: "✅",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
+      },
+    },
+    {
+      id: "widget",
+      label: t("plan_feature_widget_integration"),
+      values: {
+        free: "✅",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
+      },
+    },
+    {
+      id: "whatsapp_setup",
+      label: t("plan_feature_whatsapp_setup_required"),
+      values: {
+        free: "—",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
+      },
+    },
+    {
+      id: "brand_customization",
+      label: t("plan_feature_brand_customization"),
+      values: {
+        free: "—",
+        starter: "—",
+        premium: "✅",
+        white_label: "✅",
+      },
+    },
+    {
+      id: "custom_prompt",
+      label: t("plan_feature_custom_prompt"),
+      values: {
+        free: "—",
+        starter: "—",
+        premium: "✅",
+        white_label: "✅",
+      },
+    },
+    {
+      id: "appointments",
+      label: t("plan_feature_whatsapp_appointments"),
+      values: {
+        free: "—",
+        starter: "—",
+        premium: "✅",
+        white_label: "✅",
+      },
+    },
+    {
+      id: "support",
+      label: t("plan_feature_dedicated_support"),
+      values: {
+        free: "—",
+        starter: "—",
+        premium: "—",
+        white_label: "✅",
+      },
+    },
+  ];
+
+  const renderPlanAction = (plan) => {
+    const relation = comparePlans(plan.id);
+
+    if (plan.id === "white_label") {
+      return (
+        <div className="plan-footer">
+          <p className="contact-text">{t("contact_for_whitelabel")}</p>
+          <a href={`mailto:${plan.contact}`} className="contact-link">
+            {plan.contact}
+          </a>
+        </div>
+      );
+    }
+
+    if (relation === "current") {
+      return <button className="btn current">✅ {t("current_plan_label")}</button>;
+    }
+
+    if (relation === "upgrade") {
+      return (
+        <button
+          onClick={() => setConfirmModal({ type: "upgrade", plan })}
+          disabled={loadingPlan === plan.id || cancellationRequested}
+          className="btn upgrade"
+        >
+          {loadingPlan === plan.id ? t("processing") : t("upgrade")}
+        </button>
+      );
+    }
+
+    return (
+      <button
+        onClick={() => setConfirmModal({ type: "downgrade", plan })}
+        disabled={loadingPlan === plan.id || cancellationRequested}
+        className="btn downgrade"
+      >
+        {loadingPlan === plan.id ? t("processing") : t("downgrade")}
+      </button>
+    );
   };
 
   // 🔹 Modal de confirmación (branding via CSS)
@@ -283,60 +437,65 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
         </div>
       )}
 
-      <div className="plan-grid">
-        {availablePlans.map((p) => {
-          const relation = comparePlans(p.id);
+      <section className="plans-compare">
+        <h3 className="plans-compare-title">
+          {t("change_or_update_plan") || "Change or update plan"}: {t("included_features") || "Included Features"}
+        </h3>
+        <div className="plans-compare-wrapper">
+          <table className="plans-compare-table">
+            <thead>
+              <tr>
+                <th>{t("included_features") || "Feature"}</th>
+                {availablePlans.map((p) => {
+                  const planId = normalizePlanId(p.id);
+                  const colClass = [
+                    planId === currentPlanId ? "is-current-col" : "",
+                    planId === "premium" ? "is-premium-col" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
 
-          return (
-            <div
-              key={p.id}
-              className={`plan-card ${p.badge ? "highlighted" : ""} ${currentPlanId === p.id ? "current" : ""}`}
-            >
-              <div className="plan-header">
-                <h3 className="plan-name">
-                  {p.name} {p.badge && <span className="badge">{p.badge}</span>}
-                </h3>
-                <span className="price">{p.price}</span>
-              </div>
+                  return (
+                    <th key={`head-${p.id}`} className={colClass}>
+                      <div className="compare-plan-head">
+                        <div className="compare-plan-name-row">
+                          <span>{p.name}</span>
+                          {p.badge ? <span className="compare-badge">{p.badge}</span> : null}
+                        </div>
+                        <div className="compare-plan-price">{p.price}</div>
+                        <p className="compare-plan-desc">{p.desc}</p>
+                        <div className="compare-plan-cta">{renderPlanAction(p)}</div>
+                      </div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {comparisonRows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.label}</td>
+                  {availablePlans.map((p) => {
+                    const planId = normalizePlanId(p.id);
+                    const colClass = [
+                      planId === currentPlanId ? "is-current-col" : "",
+                      planId === "premium" ? "is-premium-col" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
 
-              <p className="plan-desc">{p.desc}</p>
-              <ul className="plan-features">
-                {p.features.map((f, i) => (
-                  <li key={i}>✅ {f}</li>
-                ))}
-              </ul>
-
-              {/* Footer / Acciones */}
-              {p.id === "white_label" ? (
-                <div className="plan-footer">
-                  <p className="contact-text">{t("contact_for_whitelabel")}</p>
-                  <a href={`mailto:${p.contact}`} className="contact-link">
-                    {p.contact}
-                  </a>
-                </div>
-              ) : relation === "current" ? (
-                <button className="btn current">✅ {t("current_plan_label")}</button>
-              ) : relation === "upgrade" ? (
-                <button
-                  onClick={() => setConfirmModal({ type: "upgrade", plan: p })}
-                  disabled={loadingPlan === p.id || cancellationRequested}
-                  className="btn upgrade"
-                >
-                  {loadingPlan === p.id ? t("processing") : t("upgrade")}
-                </button>
-              ) : (
-                <button
-                  onClick={() => setConfirmModal({ type: "downgrade", plan: p })}
-                  disabled={loadingPlan === p.id || cancellationRequested}
-                  className="btn downgrade"
-                >
-                  {loadingPlan === p.id ? t("processing") : t("downgrade")}
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                    return (
+                      <td key={`${row.id}-${p.id}`} className={colClass}>
+                        {row.values[planId] || "—"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {/* Modal */}
       {confirmModal && (

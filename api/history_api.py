@@ -41,6 +41,7 @@ def get_history(
                 source_id
             """)
             .eq("client_id", client_id)
+            .neq("source_type", "analytics_event")
         )
 
         if session_id:

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { authFetch, getAuthHeaders } from "../../lib/authFetch";
@@ -11,6 +12,7 @@ import "../../components/ui/internal-admin-responsive.css";
 
 export default function ClientSettings() {
   const clientId = useClientId();
+  const location = useLocation();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState("plan");
 
@@ -28,6 +30,26 @@ export default function ClientSettings() {
 
   const [status, setStatus] = useState({ message: "", type: "" });
   const [loading, setLoading] = useState(true);
+
+  const normalizeTab = useCallback((value) => {
+    const raw = (value || "")
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/^#/, "");
+
+    const tabMap = {
+      profile: "profile",
+      my_profile: "profile",
+      plan: "plan",
+      plans: "plan",
+      pricing: "plan",
+      features: "features",
+      prompt: "prompt",
+    };
+
+    return tabMap[raw] || null;
+  }, []);
 
   const DEFAULT_PROMPT =
     t("default_prompt") ||
@@ -69,6 +91,12 @@ export default function ClientSettings() {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
+
+  useEffect(() => {
+    const tabFromQuery = new URLSearchParams(location.search).get("tab");
+    const nextTab = normalizeTab(tabFromQuery) || normalizeTab(location.hash);
+    if (nextTab) setActiveTab(nextTab);
+  }, [location.hash, location.search, normalizeTab]);
 
   const handleChange = (e) => {
     const { name, type, checked, value } = e.target;

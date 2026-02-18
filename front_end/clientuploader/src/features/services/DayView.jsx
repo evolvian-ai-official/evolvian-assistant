@@ -1,10 +1,18 @@
 // DayView.jsx — 24h grid (Google-style light)
 
-export default function DayView({ appointments }) {
+export default function DayView({ appointments, currentDate }) {
   const hours = Array.from({ length: 24 }, (_, i) => i);
+  const targetDate = currentDate ? new Date(currentDate) : new Date();
 
-  const appointmentsByHour = appointments.reduce((acc, appt) => {
+  const appointmentsByHour = (appointments || []).reduce((acc, appt) => {
     const date = new Date(appt.scheduled_time);
+    if (
+      date.getDate() !== targetDate.getDate() ||
+      date.getMonth() !== targetDate.getMonth() ||
+      date.getFullYear() !== targetDate.getFullYear()
+    ) {
+      return acc;
+    }
     const hour = date.getHours();
     acc[hour] = acc[hour] || [];
     acc[hour].push(appt);
@@ -21,10 +29,13 @@ export default function DayView({ appointments }) {
 
           <div style={eventColumn}>
             {appointmentsByHour[hour]?.map((a) => (
-              <div key={a.id} style={eventCard}>
-                <strong>{a.user_name}</strong>
+              <div
+                key={a.id}
+                style={a.source === "google_busy" ? googleBusyCard : eventCard}
+              >
+                <strong>{a.source === "google_busy" ? "Ocupado (Google)" : a.user_name}</strong>
                 <div style={{ fontSize: "0.75rem" }}>
-                  {new Date(a.scheduled_time).toLocaleTimeString()}
+                  {new Date(a.scheduled_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </div>
               </div>
             ))}
@@ -71,4 +82,15 @@ const eventCard = {
   marginBottom: 4,
   fontSize: "0.84rem",
   overflowWrap: "anywhere",
+};
+
+const googleBusyCard = {
+  backgroundColor: "#FFE9E5",
+  border: "1px solid #E85D4A",
+  borderRadius: 8,
+  padding: "0.3rem 0.5rem",
+  marginBottom: 4,
+  fontSize: "0.84rem",
+  overflowWrap: "anywhere",
+  color: "#8A2E23",
 };

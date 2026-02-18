@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { useLanguage } from "../../contexts/LanguageContext";
 
 export default function FeatureList({ activeTab, plan }) {
@@ -7,10 +6,7 @@ export default function FeatureList({ activeTab, plan }) {
   if (activeTab !== "features") return null;
 
   // 🔹 Backend ya envía SOLO features activas como array de strings
-  const features = useMemo(() => {
-    if (!Array.isArray(plan?.plan_features)) return [];
-    return plan.plan_features;
-  }, [plan]);
+  const features = Array.isArray(plan?.plan_features) ? plan.plan_features : [];
 
   return (
     <div

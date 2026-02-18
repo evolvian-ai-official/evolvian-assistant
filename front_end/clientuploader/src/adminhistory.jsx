@@ -3,7 +3,6 @@ import { supabase } from "./supabaseClient";
 import axios from "axios";
 
 function AdminHistory() {
-  const [user, setUser] = useState(null);
   const [clientId, setClientId] = useState("");
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,10 +13,8 @@ function AdminHistory() {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         const { id, email } = session.user;
-        setUser(session.user);
-
         try {
-          const res = await axios.post(${import.meta.env.VITE_API_URL}/create_or_get_client", {
+          const res = await axios.post(`${import.meta.env.VITE_API_URL}/create_or_get_client`, {
             auth_user_id: id,
             email: email,
           });
@@ -101,4 +98,3 @@ function AdminHistory() {
 }
 
 export default AdminHistory;
-

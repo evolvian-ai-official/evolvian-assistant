@@ -3,6 +3,7 @@ import os
 import base64
 import time
 import socket
+from urllib.parse import urlencode
 from email.mime.text import MIMEText
 
 from fastapi import APIRouter, Request, HTTPException
@@ -42,6 +43,47 @@ if WORKSPACE_MODE:
     ]
 
 
+def _ui_email_setup_url(request: Request, extra_query: dict | None = None) -> str:
+    host = (request.url.hostname or "").lower()
+    is_local = host in {"localhost", "127.0.0.1"}
+    base = "http://localhost:4223/services/email" if is_local else "https://evolvianai.com/services/email"
+    if not extra_query:
+        return base
+    return f"{base}?{urlencode(extra_query)}"
+
+
+def _insert_channel_resilient(payload: dict):
+    try:
+        return supabase.table("channels").insert({**payload, "active": True}).execute()
+    except Exception as e_active:
+        if "active" not in str(e_active).lower():
+            raise
+    try:
+        return supabase.table("channels").insert({**payload, "is_active": True}).execute()
+    except Exception as e_is_active:
+        if "is_active" not in str(e_is_active).lower():
+            raise
+    return supabase.table("channels").insert(payload).execute()
+
+
+def _update_channel_resilient(channel_id: str, payload: dict):
+    try:
+        return supabase.table("channels").update({**payload, "active": True}).eq("id", channel_id).execute()
+    except Exception as e_active:
+        if "active" not in str(e_active).lower():
+            raise
+    try:
+        return supabase.table("channels").update({**payload, "is_active": True}).eq("id", channel_id).execute()
+    except Exception as e_is_active:
+        if "is_active" not in str(e_is_active).lower():
+            raise
+    return supabase.table("channels").update(payload).eq("id", channel_id).execute()
+
+
+def _oauth_redirect(request: Request, **query):
+    return RedirectResponse(url=_ui_email_setup_url(request, query), status_code=302)
+
+
 # ---------------------------------------------------------
 # 1️⃣ Generar URL de autorización
 #   - Guardamos 'state' vinculado al client_id (en channels como fila temporal)
@@ -73,17 +115,18 @@ async def authorize(client_id: str):
     # Guardamos el state atando client_id; usamos una fila temporal en channels
     # (reutilizamos columna gmail_access_token para almacenar el 'state')
     try:
-        supabase.table("channels").insert({
+        _insert_channel_resilient({
             "client_id": client_id,
             "type": "oauth_state",
             "provider": "gmail",
+            "value": f"oauth_state:{client_id}",
             "gmail_access_token": state,  # aquí guardamos el state
             "token_uri": "https://oauth2.googleapis.com/token",  # ← nuevo
             "scope": " ".join(SCOPES),                           # ← nuevo
-            "active": True,
-        }).execute()
+        })
     except Exception as e:
         print(f"⚠️ Error guardando state temporal: {e}")
+        raise HTTPException(status_code=500, detail="No se pudo iniciar la conexión con Gmail")
 
     return {"authorization_url": authorization_url}
 
@@ -101,11 +144,12 @@ async def oauth_callback(request: Request):
     query_params = dict(request.query_params)
     code = query_params.get("code")
     state = query_params.get("state")
+    oauth_state_row_id = None
 
     if not code:
-        raise HTTPException(status_code=400, detail="Código de autorización faltante")
+        return _oauth_redirect(request, gmail_error="missing_code")
     if not state:
-        raise HTTPException(status_code=400, detail="State faltante")
+        return _oauth_redirect(request, gmail_error="missing_state")
 
     try:
         print("⏱️ [1] Intercambiando código por tokens...")
@@ -137,7 +181,7 @@ async def oauth_callback(request: Request):
             .execute()
         )
         if not state_row or not getattr(state_row, "data", None) or not state_row.data.get("client_id"):
-            raise HTTPException(status_code=400, detail="state inválido o expirado")
+            return _oauth_redirect(request, gmail_error="state_expired")
 
         client_id = state_row.data["client_id"]
         oauth_state_row_id = state_row.data.get("id")
@@ -170,47 +214,39 @@ async def oauth_callback(request: Request):
             "gmail_expiry": credentials.expiry.isoformat() if credentials.expiry else None,
             "scope": " ".join(SCOPES),
             "token_uri": "https://oauth2.googleapis.com/token",
-            "active": True,
         }
 
         if existing:
             channel_id = existing[0]["id"]
-            supabase.table("channels").update(payload_common).eq("id", channel_id).execute()
+            _update_channel_resilient(channel_id, payload_common)
         else:
-            supabase.table("channels").insert({
+            _insert_channel_resilient({
                 "client_id": client_id,
                 "type": "email",
                 "provider": "gmail",
                 "value": email,
                 **payload_common,
-            }).execute()
+            })
 
         print(f"✅ Canal Gmail sincronizado correctamente ({email})")
 
+        total_time = time.time() - t0
+        print(f"🏁 Flujo Gmail OAuth completado en {total_time:.2f}s")
+        return _oauth_redirect(request, gmail_connected="true")
+
+    except HTTPException as e:
+        print(f"🔥 Error HTTP en flujo OAuth: {e.detail}")
+        return _oauth_redirect(request, gmail_error="oauth_failed")
+    except Exception as e:
+        print(f"🔥 Error en flujo OAuth: {e}")
+        return _oauth_redirect(request, gmail_error="oauth_failed")
+    finally:
         # [5] Limpieza del state temporal (solo el usado)
         try:
             if oauth_state_row_id:
                 supabase.table("channels").delete().eq("id", oauth_state_row_id).execute()
-            else:
-                supabase.table("channels").delete().eq("type", "oauth_state").eq("provider", "gmail").execute()
         except Exception:
             pass
-
-        total_time = time.time() - t0
-        print(f"🏁 Flujo Gmail OAuth completado en {total_time:.2f}s")
-
-        # Redirect de vuelta a la UI correcta
-        origin = request.headers.get("origin") or ""
-        if "localhost" in origin or "127.0.0.1" in origin:
-            redirect_url = "http://localhost:4223/services/email"
-        else:
-            redirect_url = "https://evolvianai.com/services/email"
-
-        return RedirectResponse(url=redirect_url, status_code=302)
-
-    except Exception as e:
-        print(f"🔥 Error en flujo OAuth: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------

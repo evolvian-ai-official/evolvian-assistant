@@ -9,6 +9,14 @@ import httpx
 
 router = APIRouter()
 
+PLAN_ORDER = {
+    "free": 1,
+    "starter": 2,
+    "premium": 3,
+    "white_label": 4,
+    "enterprise": 4,
+}
+
 
 _TRANSIENT_ERROR_MARKERS = (
     "server disconnected",
@@ -102,6 +110,37 @@ def count_bucket_documents(client_id: str) -> int:
     except Exception as e:
         logging.error(f"❌ Error contando documentos en bucket: {e}")
         return 0
+
+
+def _normalize_plan_id(plan_id: str) -> str:
+    normalized = (plan_id or "").strip().lower()
+    return "white_label" if normalized == "enterprise" else normalized
+
+
+def _recommended_external_channel_plan(current_plan_id: str, plans: list[dict]) -> dict | None:
+    current_normalized = _normalize_plan_id(current_plan_id)
+    current_order = PLAN_ORDER.get(current_normalized, 99)
+    candidates = []
+
+    for row in plans or []:
+        plan_id = _normalize_plan_id(row.get("id"))
+        supports_external = bool(row.get("supports_whatsapp")) or bool(row.get("supports_email"))
+        if not supports_external:
+            continue
+
+        order = PLAN_ORDER.get(plan_id, 99)
+        plan_name = row.get("name") or plan_id.replace("_", " ").title()
+        plan_item = {"id": plan_id, "name": plan_name, "order": order}
+
+        if order > current_order:
+            candidates.append(plan_item)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item["order"])
+    best = candidates[0]
+    return {"id": best["id"], "name": best["name"]}
 
 
 @router.get("/dashboard_summary")
@@ -307,6 +346,50 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
         all_channels = ["chat", "whatsapp", "email"]
         channels = {c: c in active_channels for c in all_channels}
 
+        external_channel_upgrade_plan = None
+        if not (plan_info.get("supports_whatsapp") or plan_info.get("supports_email")):
+            try:
+                plans_res = _run_timed(
+                    perf_ms,
+                    "plans_for_onboarding_query",
+                    lambda: _with_retries(
+                        lambda: (
+                            supabase.table("plans")
+                            .select("id, name, supports_email, supports_whatsapp")
+                            .execute()
+                        ),
+                        op_name="dashboard.plans_for_onboarding",
+                    ),
+                )
+                external_channel_upgrade_plan = _recommended_external_channel_plan(
+                    plan_info.get("id"),
+                    plans_res.data or [],
+                )
+            except Exception as plans_exc:
+                logging.warning(
+                    "⚠️ No se pudo calcular external_channel_upgrade_plan (non-blocking): %s",
+                    plans_exc,
+                )
+
+        # 7.1️⃣ Señales de onboarding (uso real del widget)
+        widget_messages_res = _run_timed(
+            perf_ms,
+            "widget_messages_count_query",
+            lambda: _with_retries(
+                lambda: (
+                    supabase.table("history")
+                    .select("id", count="exact")
+                    .eq("client_id", client_id)
+                    .eq("role", "user")
+                    .eq("channel", "widget")
+                    .limit(1)
+                    .execute()
+                ),
+                op_name="dashboard.widget_messages_count",
+            ),
+        )
+        widget_messages_count = getattr(widget_messages_res, "count", 0) or 0
+
         # 8️⃣ Historial de usuario (últimos 3)
         history_res = _run_timed(
             perf_ms,
@@ -363,6 +446,10 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
                 "plan": plan_info,
                 "usage": usage,
                 "channels": channels,
+                "onboarding_signals": {
+                    "widget_messages_count": widget_messages_count,
+                    "external_channel_upgrade_plan": external_channel_upgrade_plan,
+                },
                 "assistant_config": {
                     "assistant_name": config.get("assistant_name", "Evolvian"),
                     "language": config.get("language", "es"),

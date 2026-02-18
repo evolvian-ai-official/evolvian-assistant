@@ -4,7 +4,6 @@ import { supabase } from "../lib/supabaseClient";
 
 export default function ProtectedRoute({ children }) {
   const [loading, setLoading] = useState(true);
-  const [authenticated, setAuthenticated] = useState(false);
   const [shouldRedirect, setShouldRedirect] = useState(false);
 
   useEffect(() => {
@@ -13,7 +12,6 @@ export default function ProtectedRoute({ children }) {
       if (!session) {
         setShouldRedirect(true);
       }
-      setAuthenticated(!!session);
       setLoading(false);
     };
 

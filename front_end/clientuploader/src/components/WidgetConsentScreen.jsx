@@ -6,7 +6,6 @@ export default function WidgetConsentScreen({
   publicClientId,
   requireEmailConsent = false,
   requireTermsConsent = false,
-  showLegalLinks = false,
   clientSettings = {},
 }) {
   // ==========================
@@ -105,7 +104,8 @@ export default function WidgetConsentScreen({
 
       await res.json();
       setConsentGiven(true);
-    } catch (err) {
+    } catch (error) {
+      console.warn("Consent registration failed", error);
       setErrorMsg("Error saving your consent. Please try again.");
     } finally {
       setLoading(false);

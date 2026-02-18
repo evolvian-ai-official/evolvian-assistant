@@ -41,7 +41,7 @@ const withAlpha = (color, alpha) => {
 };
 
 export default function ChatWidget({ clientId: propClientId, usageLimit = 100 }) {
-  const languageContext = useLanguage ? useLanguage() : null;
+  const languageContext = useLanguage();
   const { t = (x) => x, lang = "es" } = languageContext || {};
 
   // =============================
@@ -111,7 +111,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [thinkingDots, setThinkingDots] = useState("");
-  const [usageCount, setUsageCount] = useState(0);
+  const [, setUsageCount] = useState(0);
   const [usageLimitReached, setUsageLimitReached] = useState(false);
   const messagesEndRef = useRef(null);
   const lastSendTriggerAtRef = useRef(0);

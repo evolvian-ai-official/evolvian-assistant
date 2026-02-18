@@ -184,7 +184,9 @@ export default function WelcomeModal({ onClose }) {
           setSettings(data);
           setSelectedLanguage(data?.language || lang || "en");
         }
-      } catch {}
+      } catch (error) {
+        console.warn("Unable to load welcome settings", error);
+      }
 
     };
 

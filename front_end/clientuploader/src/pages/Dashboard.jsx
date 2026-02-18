@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useClientId } from "../hooks/useClientId";
 import { supabase } from "../lib/supabaseClient";
 import { authFetch } from "../lib/authFetch";
+import { trackClientEvent, trackEvent } from "../lib/tracking";
 import { useLanguage } from "../contexts/LanguageContext";
 import WelcomeModal from "../components/WelcomeModal";
 import { toast } from "@/components/ui/use-toast";
@@ -22,8 +24,10 @@ export default function Dashboard() {
   const [showWelcome, setShowWelcome] = useState(false);
   const [reactivating, setReactivating] = useState(false);
   const [showReactivateModal, setShowReactivateModal] = useState(null);
+  const [hasAskedForHelp, setHasAskedForHelp] = useState(false);
   const clientId = useClientId();
-  const { t } = useLanguage();
+  const navigate = useNavigate();
+  const { t, lang } = useLanguage();
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -77,6 +81,263 @@ export default function Dashboard() {
     checkTermsAcceptance();
   }, [clientId]);
 
+  const {
+    plan = {},
+    usage = {},
+    channels = {},
+    onboarding_signals = {},
+    history_preview = [],
+    assistant_config = {},
+    upgrade_suggestion = null,
+    subscription_start,
+    subscription_end,
+    cancellation_status,
+  } = dashboardData || {};
+
+  const normalize = (str) => str.toLowerCase().replace(/\s+/g, "_");
+  const activeFeatures = plan?.plan_features?.map((f) => normalize(f)) || [];
+  const isSpanish = lang === "es";
+  const formatPlanName = (value, fallback = "Premium") => {
+    const raw = (value || "").toString().trim();
+    if (!raw) return fallback;
+    return raw
+      .replace(/_/g, " ")
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  };
+
+  useEffect(() => {
+    if (!clientId || typeof window === "undefined") {
+      setHasAskedForHelp(false);
+      return;
+    }
+    const helpKey = `onboarding_help_requested:${clientId}`;
+    setHasAskedForHelp(localStorage.getItem(helpKey) === "1");
+  }, [clientId]);
+
+  const onboardingCopy = isSpanish
+    ? {
+        title: "Checklist de onboarding",
+        subtitle: "Completa estos pasos para llevar tu asistente a producción.",
+        doneLabel: "Completado",
+        pendingLabel: "Pendiente",
+        completedState: "✅ Listo",
+        progressSuffix: "pasos completados",
+        allDone: "🚀 ¡Tu asistente ya está en producción!",
+        uploadTitle: "Sube tu primer documento",
+        uploadAction: "Ir a Subir documentos",
+        widgetMessageTitle: "Obtén tu primera conversación desde el widget web",
+        widgetMessageAction: "Configurar widget",
+        connectChannelTitle: "Conecta tu primer canal externo (WhatsApp/Email)",
+        connectChannelAction: "Conectar canal",
+        connectChannelUpgradeActionPrefix: "Mejorar a",
+        connectChannelUpsellPrefix: "Disponible en",
+        connectChannelUpsellSuffix: "para automatizar WhatsApp y Email.",
+        askHelpTitle: "Si necesitas ayuda, pregúntale a Evolvian",
+        askHelpAction: "Abrir ayuda de Evolvian",
+      }
+    : {
+        title: "Onboarding checklist",
+        subtitle: "Complete these steps to take your assistant live.",
+        doneLabel: "Completed",
+        pendingLabel: "Pending",
+        completedState: "✅ Done",
+        progressSuffix: "steps completed",
+        allDone: "🚀 Your assistant is live!",
+        uploadTitle: "Upload your first document",
+        uploadAction: "Go to Upload",
+        widgetMessageTitle: "Get first website widget conversation",
+        widgetMessageAction: "Set up widget",
+        connectChannelTitle: "Connect first external channel (WhatsApp/Email)",
+        connectChannelAction: "Connect channel",
+        connectChannelUpgradeActionPrefix: "Upgrade to",
+        connectChannelUpsellPrefix: "Available on",
+        connectChannelUpsellSuffix: "to automate WhatsApp and Email.",
+        askHelpTitle: "If you have questions, ask Evolvian for help",
+        askHelpAction: "Open Evolvian help",
+      };
+
+  const hasUpload = (usage?.documents_uploaded || 0) > 0;
+  const hasFirstMessage = (usage?.messages_used || 0) > 0;
+  const widgetMessagesCount = onboarding_signals?.widget_messages_count || 0;
+  const hasWidgetConversation = widgetMessagesCount > 0;
+  const hasWhatsappFeature = activeFeatures.includes("whatsapp_integration");
+  const hasEmailFeature = activeFeatures.includes("email_support");
+  const canConnectExternalChannels = hasWhatsappFeature || hasEmailFeature;
+  const externalChannelUpgradePlan = onboarding_signals?.external_channel_upgrade_plan || null;
+  const externalChannelUpgradePlanName = formatPlanName(
+    externalChannelUpgradePlan?.name || externalChannelUpgradePlan?.id,
+    "Premium"
+  );
+  const hasConnectedExternalChannel = Boolean(channels?.whatsapp || channels?.email);
+  const externalChannelPath = hasWhatsappFeature
+    ? "/services/whatsapp"
+    : hasEmailFeature
+    ? "/services/email"
+    : "/settings#plans";
+
+  const openSupportWidget = () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event("evolvian:open-support-widget"));
+    if (clientId) {
+      const helpKey = `onboarding_help_requested:${clientId}`;
+      localStorage.setItem(helpKey, "1");
+    }
+    setHasAskedForHelp(true);
+  };
+
+  const onboardingSteps = [
+    {
+      id: "upload",
+      title: onboardingCopy.uploadTitle,
+      done: hasUpload,
+      actionLabel: onboardingCopy.uploadAction,
+      action: () => navigate("/upload"),
+    },
+    {
+      id: "widget_message",
+      title: onboardingCopy.widgetMessageTitle,
+      done: hasWidgetConversation,
+      actionLabel: onboardingCopy.widgetMessageAction,
+      action: () => navigate("/services/chat"),
+    },
+    {
+      id: "connect_channel",
+      title: onboardingCopy.connectChannelTitle,
+      done: hasConnectedExternalChannel,
+      actionLabel: canConnectExternalChannels
+        ? onboardingCopy.connectChannelAction
+        : `${onboardingCopy.connectChannelUpgradeActionPrefix} ${externalChannelUpgradePlanName}`,
+      note: canConnectExternalChannels
+        ? ""
+        : `${onboardingCopy.connectChannelUpsellPrefix} ${externalChannelUpgradePlanName} ${onboardingCopy.connectChannelUpsellSuffix}`,
+      badge: canConnectExternalChannels ? "" : externalChannelUpgradePlanName,
+      isUpsell: !canConnectExternalChannels,
+      action: () => navigate(externalChannelPath),
+    },
+    {
+      id: "ask_help",
+      title: onboardingCopy.askHelpTitle,
+      done: hasAskedForHelp,
+      actionLabel: onboardingCopy.askHelpAction,
+      action: openSupportWidget,
+    },
+  ];
+
+  const completedSteps = onboardingSteps.filter((s) => s.done).length;
+  const totalSteps = onboardingSteps.length;
+  const onboardingProgressPct = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+  const onboardingDone = completedSteps === totalSteps;
+  const completedStepIds = onboardingSteps.filter((s) => s.done).map((s) => s.id);
+  const completedStepIdsKey = completedStepIds.join("|");
+
+  const sendEventToBackend = async ({
+    eventName,
+    eventCategory = "onboarding",
+    eventLabel = "",
+    eventValue = "",
+    eventKey = null,
+    metadata = {},
+  }) => {
+    if (!clientId) return;
+    try {
+      await authFetch(`${import.meta.env.VITE_API_URL}/client_event_log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          event_name: eventName,
+          event_category: eventCategory,
+          event_label: eventLabel,
+          event_value: eventValue,
+          event_key: eventKey,
+          metadata,
+        }),
+      });
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn("⚠️ Failed to persist onboarding event:", error);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!clientId) return;
+
+    const trackingKey = `onboarding_checklist_tracking:${clientId}`;
+    let tracked = {};
+
+    try {
+      tracked = JSON.parse(localStorage.getItem(trackingKey) || "{}") || {};
+    } catch {
+      tracked = {};
+    }
+
+    let updated = false;
+    for (const stepId of completedStepIds) {
+      if (tracked[stepId]) continue;
+      trackEvent({
+        name: "Onboarding_Step_Completed",
+        category: "onboarding",
+        label: stepId,
+        value: plan?.id || "",
+      });
+      void sendEventToBackend({
+        eventName: "Onboarding_Step_Completed",
+        eventCategory: "onboarding",
+        eventLabel: stepId,
+        eventValue: plan?.id || "",
+        eventKey: `onboarding_step_completed:${stepId}`,
+        metadata: { plan_id: plan?.id || "", step_id: stepId },
+      });
+      tracked[stepId] = new Date().toISOString();
+      updated = true;
+    }
+
+    if (onboardingDone && !tracked.__all_done__) {
+      trackEvent({
+        name: "Onboarding_Checklist_Completed",
+        category: "onboarding",
+        label: `${totalSteps}_steps`,
+        value: plan?.id || "",
+      });
+      void sendEventToBackend({
+        eventName: "Onboarding_Checklist_Completed",
+        eventCategory: "onboarding",
+        eventLabel: `${totalSteps}_steps`,
+        eventValue: plan?.id || "",
+        eventKey: `onboarding_checklist_completed:${totalSteps}`,
+        metadata: { plan_id: plan?.id || "", total_steps: totalSteps },
+      });
+      tracked.__all_done__ = new Date().toISOString();
+      updated = true;
+    }
+
+    if (updated) {
+      localStorage.setItem(trackingKey, JSON.stringify(tracked));
+    }
+  }, [clientId, completedStepIdsKey, onboardingDone, totalSteps, plan?.id]);
+
+  useEffect(() => {
+    if (!clientId || !hasFirstMessage) return;
+
+    void trackClientEvent({
+      clientId,
+      name: "Funnel_First_Message",
+      category: "funnel",
+      label: "any_channel",
+      value: plan?.id || "",
+      eventKey: "funnel_first_message",
+      metadata: {
+        messages_used: usage?.messages_used || 0,
+        plan_id: plan?.id || "",
+      },
+      dedupeLocal: true,
+    });
+  }, [clientId, hasFirstMessage, plan?.id, usage?.messages_used]);
+
   if (!user || !dashboardData) {
     return (
       <div className="ia-page">
@@ -87,20 +348,6 @@ export default function Dashboard() {
       </div>
     );
   }
-
-  const {
-    plan,
-    usage,
-    history_preview,
-    assistant_config,
-    upgrade_suggestion,
-    subscription_start,
-    subscription_end,
-    cancellation_status,
-  } = dashboardData;
-
-  const normalize = (str) => str.toLowerCase().replace(/\s+/g, "_");
-  const activeFeatures = plan?.plan_features?.map((f) => normalize(f)) || [];
 
   const chartData = [
     {
@@ -174,6 +421,143 @@ export default function Dashboard() {
             </div>
           </div>
         </header>
+
+        <section className="ia-card">
+          <h2 className="ia-card-title">{onboardingCopy.title}</h2>
+          <p className="ia-dashboard-subtext" style={{ marginTop: "-0.25rem", marginBottom: "0.9rem" }}>
+            {onboardingCopy.subtitle}
+          </p>
+
+          <div style={{ marginBottom: "1rem" }}>
+            <div
+              style={{
+                width: "100%",
+                height: "10px",
+                borderRadius: "999px",
+                background: "#EDEDED",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${onboardingProgressPct}%`,
+                  height: "100%",
+                  background: "#2EB39A",
+                  transition: "width 240ms ease",
+                }}
+              />
+            </div>
+            <p className="ia-dashboard-subtext" style={{ marginTop: "0.45rem" }}>
+              {completedSteps}/{totalSteps} {onboardingCopy.progressSuffix}
+            </p>
+          </div>
+
+          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: "0.65rem" }}>
+            {onboardingSteps.map((step) => (
+              <li
+                key={step.id}
+                style={{
+                  display: "flex",
+                  gap: "0.75rem",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "0.75rem",
+                  border:
+                    step.isUpsell && !step.done ? "1px solid #F6C453" : "1px solid #EDEDED",
+                  background:
+                    step.isUpsell && !step.done ? "linear-gradient(180deg, #FFFDF5 0%, #FFFFFF 100%)" : "#FFFFFF",
+                  borderRadius: "10px",
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontWeight: 600,
+                      color: "#274472",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.45rem",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span>{step.title}</span>
+                    {!!step.badge && (
+                      <span
+                        style={{
+                          fontSize: "0.72rem",
+                          lineHeight: 1,
+                          padding: "0.2rem 0.45rem",
+                          borderRadius: "999px",
+                          background: "#FFF2CC",
+                          border: "1px solid #F6C453",
+                          color: "#8A6400",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {step.badge}
+                      </span>
+                    )}
+                  </p>
+                  <p className="ia-dashboard-subtext" style={{ margin: "0.2rem 0 0" }}>
+                    {step.done ? onboardingCopy.doneLabel : onboardingCopy.pendingLabel}
+                  </p>
+                  {!!step.note && (
+                    <p className="ia-dashboard-subtext" style={{ margin: "0.2rem 0 0", color: "#7A5A00" }}>
+                      {step.note}
+                    </p>
+                  )}
+                </div>
+
+                {step.done ? (
+                  <span style={{ color: "#2EB39A", fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {onboardingCopy.completedState}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="ia-button ia-button-primary"
+                    onClick={() => {
+                      trackEvent({
+                        name: "Onboarding_Action_Click",
+                        category: "onboarding",
+                        label: step.id,
+                        value: plan?.id || "",
+                      });
+                      void sendEventToBackend({
+                        eventName: "Onboarding_Action_Click",
+                        eventCategory: "onboarding",
+                        eventLabel: step.id,
+                        eventValue: plan?.id || "",
+                        metadata: { plan_id: plan?.id || "", step_id: step.id },
+                      });
+                      step.action();
+                    }}
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    {step.actionLabel}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          {onboardingDone && (
+            <div
+              style={{
+                marginTop: "1rem",
+                padding: "0.75rem 0.9rem",
+                borderRadius: "10px",
+                border: "1px solid #A3D9B1",
+                background: "#ECFAF5",
+                color: "#1F7C67",
+                fontWeight: 700,
+              }}
+            >
+              {onboardingCopy.allDone}
+            </div>
+          )}
+        </section>
 
         <section className="ia-card">
           <h2 className="ia-card-title">{t("your_plan")}</h2>

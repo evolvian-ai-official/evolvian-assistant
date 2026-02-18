@@ -49,8 +49,11 @@ export default function WeekView({ appointments, currentDate }) {
               return (
                 <div key={i} style={cell}>
                   {events.map((e) => (
-                    <div key={e.id} style={eventCard}>
-                      {e.user_name}
+                    <div
+                      key={e.id}
+                      style={e.source === "google_busy" ? googleBusyCard : eventCard}
+                    >
+                      {e.source === "google_busy" ? "Ocupado (Google)" : e.user_name}
                     </div>
                   ))}
                 </div>
@@ -117,4 +120,14 @@ const eventCard = {
   padding: "0.2rem 0.4rem",
   fontSize: "0.75rem",
   overflowWrap: "anywhere",
+};
+
+const googleBusyCard = {
+  backgroundColor: "#FFE9E5",
+  border: "1px solid #E85D4A",
+  borderRadius: 6,
+  padding: "0.2rem 0.4rem",
+  fontSize: "0.75rem",
+  overflowWrap: "anywhere",
+  color: "#8A2E23",
 };

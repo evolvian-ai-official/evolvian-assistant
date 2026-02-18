@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../../contexts/LanguageContext";
 import "../../components/ui/internal-admin-responsive.css";
 
@@ -29,9 +29,48 @@ const fromOffsetMinutes = (offset) => {
   return { value: minutes / 60, unit: "hours" };
 };
 
+const EMAIL_VARIABLES = [
+  { label: "Empresa", token: "{{company_name}}" },
+  { label: "Usuario", token: "{{user_name}}" },
+  { label: "Fecha cita", token: "{{appointment_date}}" },
+  { label: "Hora cita", token: "{{appointment_time}}" },
+  { label: "Fecha actual", token: "{{current_date}}" },
+];
+
+const MAX_FOOTER_IMAGE_BYTES = 1024 * 1024;
+
+const insertTokenAtCursor = (currentValue, setValue, inputRef, token) => {
+  const nextValue = currentValue || "";
+  const node = inputRef?.current;
+  if (!node || typeof node.selectionStart !== "number") {
+    setValue(`${nextValue}${token}`);
+    return;
+  }
+
+  const start = node.selectionStart;
+  const end = node.selectionEnd;
+  const updated = `${nextValue.slice(0, start)}${token}${nextValue.slice(end)}`;
+  setValue(updated);
+
+  requestAnimationFrame(() => {
+    const caret = start + token.length;
+    node.focus();
+    node.setSelectionRange(caret, caret);
+  });
+};
+
+const appendFooterImageToBody = (htmlBody, imageUrl) => {
+  if (!imageUrl) return htmlBody;
+  const footerBlock = [
+    "<div style=\"margin-top:24px;text-align:center;\">",
+    `<img src="${imageUrl}" alt="" style="max-width:180px;height:auto;border-radius:10px;display:inline-block;" />`,
+    "</div>",
+  ].join("");
+  return `${htmlBody}\n${footerBlock}`;
+};
+
 export default function TemplatesUpdateDelete({
   isOpen,
-  mode = "edit",
   initialData = null,
   clientId,
   onClose,
@@ -41,6 +80,9 @@ export default function TemplatesUpdateDelete({
   const [templateName, setTemplateName] = useState("");
   const [label, setLabel] = useState("");
   const [body, setBody] = useState("");
+  const [includeFooterImage, setIncludeFooterImage] = useState(false);
+  const [footerImageFile, setFooterImageFile] = useState(null);
+  const [footerImageName, setFooterImageName] = useState("");
   const [reminders, setReminders] = useState([{ value: 1, unit: "hours" }]);
 
   const [loading, setLoading] = useState(false);
@@ -48,6 +90,8 @@ export default function TemplatesUpdateDelete({
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth < 768 : false
   );
+  const subjectInputRef = useRef(null);
+  const bodyTextareaRef = useRef(null);
 
   const isWhatsApp = initialData?.channel === "whatsapp";
 
@@ -73,6 +117,9 @@ export default function TemplatesUpdateDelete({
     if (initialData.type === "appointment_reminder" && Array.isArray(initialData.frequency)) {
       setReminders(initialData.frequency.map((f) => fromOffsetMinutes(f.offset_minutes)));
     }
+    setIncludeFooterImage(false);
+    setFooterImageFile(null);
+    setFooterImageName("");
   }, [initialData]);
 
   if (!isOpen || !initialData) return null;
@@ -86,6 +133,24 @@ export default function TemplatesUpdateDelete({
   };
 
   const removeReminder = (index) => setReminders(reminders.filter((_, i) => i !== index));
+
+  const handleFooterImageChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please select a valid image file.");
+      return;
+    }
+
+    if (file.size > MAX_FOOTER_IMAGE_BYTES) {
+      alert("Image too large. Max size is 1MB.");
+      return;
+    }
+
+    setFooterImageFile(file);
+    setFooterImageName(file.name);
+  };
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -106,7 +171,35 @@ export default function TemplatesUpdateDelete({
       };
 
       if (!isWhatsApp) {
-        payload.body = body;
+        if (includeFooterImage && !footerImageFile) {
+          throw new Error("Footer image option is enabled but no image is selected.");
+        }
+        let finalBody = body;
+        if (includeFooterImage && footerImageFile) {
+          const formData = new FormData();
+          formData.append("client_id", clientId || "");
+          formData.append("file", footerImageFile);
+
+          const uploadRes = await fetch(`${import.meta.env.VITE_API_URL}/message_templates/footer_image`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!uploadRes.ok) {
+            const text = await uploadRes.text();
+            throw new Error(text || "Footer image upload failed");
+          }
+
+          const uploadData = await uploadRes.json();
+          const footerImageUrl = uploadData?.url;
+          if (!footerImageUrl) {
+            throw new Error("Footer image URL not returned");
+          }
+
+          finalBody = appendFooterImageToBody(finalBody, footerImageUrl);
+        }
+
+        payload.body = finalBody;
         payload.template_name = templateName;
       }
 
@@ -189,19 +282,46 @@ export default function TemplatesUpdateDelete({
         {error && <div style={{ color: "#D9534F", marginBottom: "0.6rem" }}>{error}</div>}
 
         <div>
-          <div className="ia-form-label">{t("template_name")}</div>
+          <div className="ia-form-label">{isWhatsApp ? t("template_name") : "Subject"}</div>
           <input
+            ref={subjectInputRef}
             className="ia-form-input"
-            value={templateName}
-            onChange={(e) => setTemplateName(e.target.value)}
+            value={isWhatsApp ? templateName : label}
+            onChange={(e) => {
+              if (isWhatsApp) {
+                setTemplateName(e.target.value);
+              } else {
+                setLabel(e.target.value);
+              }
+            }}
             disabled={isWhatsApp}
           />
         </div>
 
-        <div>
-          <div className="ia-form-label">{t("label")}</div>
-          <input className="ia-form-input" value={label} onChange={(e) => setLabel(e.target.value)} />
-        </div>
+        {!isWhatsApp && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
+            {EMAIL_VARIABLES.map((variable) => (
+              <button
+                key={`edit-subject-${variable.token}`}
+                type="button"
+                className="ia-button ia-button-ghost"
+                onClick={() =>
+                  insertTokenAtCursor(label, setLabel, subjectInputRef, variable.token)
+                }
+                style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
+              >
+                {variable.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {isWhatsApp && (
+          <div>
+            <div className="ia-form-label">{t("label")}</div>
+            <input className="ia-form-input" value={label} onChange={(e) => setLabel(e.target.value)} />
+          </div>
+        )}
 
         <div>
           <div className="ia-form-label">{t("message_body")}</div>
@@ -211,6 +331,7 @@ export default function TemplatesUpdateDelete({
           )}
 
           <textarea
+            ref={bodyTextareaRef}
             className="ia-form-input"
             style={{
               minHeight: "120px",
@@ -225,6 +346,52 @@ export default function TemplatesUpdateDelete({
             readOnly={isWhatsApp}
           />
         </div>
+
+        {!isWhatsApp && (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.35rem" }}>
+              {EMAIL_VARIABLES.map((variable) => (
+                <button
+                  key={`edit-body-${variable.token}`}
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  onClick={() =>
+                    insertTokenAtCursor(body, setBody, bodyTextareaRef, variable.token)
+                  }
+                  style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
+                >
+                  {variable.label}
+                </button>
+              ))}
+            </div>
+
+            <label className="ia-form-label" style={{ marginTop: "0.7rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={includeFooterImage}
+                onChange={(e) => {
+                  setIncludeFooterImage(e.target.checked);
+                  if (!e.target.checked) {
+                    setFooterImageFile(null);
+                    setFooterImageName("");
+                  }
+                }}
+              />
+              Add company image in footer (optional)
+            </label>
+
+            {includeFooterImage && (
+              <div style={{ marginTop: "0.3rem" }}>
+                <input type="file" accept="image/*" onChange={handleFooterImageChange} />
+                {footerImageName && (
+                  <div style={{ fontSize: "0.78rem", color: "#5f6b7a", marginTop: "0.25rem" }}>
+                    Selected: {footerImageName}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
 
         {initialData.type === "appointment_reminder" && (
           <>

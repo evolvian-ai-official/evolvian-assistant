@@ -42,6 +42,10 @@ export default function GoogleCalendarSettings() {
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState(null);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleConnectedEmail, setGoogleConnectedEmail] = useState("");
+  const [loadingGoogleStatus, setLoadingGoogleStatus] = useState(false);
+  const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
 
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const parseBool = (value, fallback = true) => {
@@ -298,6 +302,58 @@ export default function GoogleCalendarSettings() {
     Boolean(lastSavedSnapshot) &&
     JSON.stringify(buildSnapshot()) !== JSON.stringify(lastSavedSnapshot);
 
+  const backendUrl =
+    import.meta.env.VITE_API_URL ||
+    (window.location.hostname === "localhost"
+      ? "http://localhost:8001"
+      : "https://evolvian-assistant.onrender.com");
+
+  const fetchGoogleConnectionStatus = async () => {
+    if (!clientId) return;
+    try {
+      setLoadingGoogleStatus(true);
+      const res = await authFetch(`${backendUrl}/api/auth/google_calendar?client_id=${clientId}`);
+      if (!res.ok) throw new Error("status_failed");
+      const data = await res.json();
+      setGoogleConnected(Boolean(data?.connected));
+      setGoogleConnectedEmail(data?.connected_email || "");
+    } catch {
+      setGoogleConnected(false);
+      setGoogleConnectedEmail("");
+    } finally {
+      setLoadingGoogleStatus(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchGoogleConnectionStatus();
+  }, [clientId]);
+
+  const handleConnectGoogleCalendar = () => {
+    if (!clientId) return;
+    window.location.href = `${backendUrl}/api/auth/google_calendar/init?client_id=${encodeURIComponent(clientId)}`;
+  };
+
+  const handleDisconnectGoogleCalendar = async () => {
+    if (!clientId) return;
+    try {
+      setDisconnectingGoogle(true);
+      const res = await authFetch(
+        `${backendUrl}/api/auth/google_calendar/disconnect?client_id=${encodeURIComponent(clientId)}`,
+        { method: "POST" }
+      );
+      if (!res.ok) throw new Error("disconnect_failed");
+      setGoogleConnected(false);
+      setGoogleConnectedEmail("");
+      toast({ title: "Google Calendar", description: "Sincronización desconectada." });
+    } catch {
+      toast({ title: t("error"), description: t("google_calendar_disconnect_failed"), variant: "destructive" });
+    } finally {
+      setDisconnectingGoogle(false);
+      fetchGoogleConnectionStatus();
+    }
+  };
+
   return (
     <div id="evo-calendar-settings" className="ia-page" style={pageStyle}>
       <div className="ia-shell ia-services-shell" style={{ maxWidth: 1200 }}>
@@ -505,6 +561,51 @@ export default function GoogleCalendarSettings() {
                   style={checkboxStyle}
                 />
               </div>
+            </section>
+
+            {/* Google -> Evolvian sync block */}
+            <section style={sectionStyle}>
+              <h3 style={sectionTitle}>🔄 Sincronizar con Google Calendar</h3>
+              <p style={sectionHint}>
+                Modo unidireccional: <strong>Google → Evolvian</strong>. Evolvian solo usa Google para detectar
+                espacios ocupados y bloquear esos horarios al agendar.
+              </p>
+              <p style={sectionHint}>
+                <strong>No se crean ni se modifican eventos en Google Calendar desde Evolvian.</strong>
+              </p>
+
+              {loadingGoogleStatus ? (
+                <div style={connectedBox}>
+                  <span style={{ color: "#7A7A7A" }}>Verificando conexión con Google Calendar...</span>
+                </div>
+              ) : (
+                <div style={connectedBox}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <strong style={{ color: "#274472" }}>
+                      {googleConnected ? "Conectado" : "No conectado"}
+                    </strong>
+                    <span style={{ color: "#4A90E2", fontSize: "0.88rem" }}>
+                      {googleConnected
+                        ? `Cuenta: ${googleConnectedEmail || "Google Calendar activo"}`
+                        : "Conecta Google para bloquear horarios ocupados automáticamente."}
+                    </span>
+                  </div>
+
+                  {googleConnected ? (
+                    <button
+                      onClick={handleDisconnectGoogleCalendar}
+                      disabled={disconnectingGoogle}
+                      style={dangerGhostButton(disconnectingGoogle)}
+                    >
+                      {disconnectingGoogle ? "Desconectando..." : "Desconectar Google"}
+                    </button>
+                  ) : (
+                    <button onClick={handleConnectGoogleCalendar} style={primaryButton(false)}>
+                      Conectar Google Calendar
+                    </button>
+                  )}
+                </div>
+              )}
             </section>
 
             {/* Timezone (read-only, source of truth: My Profile) */}

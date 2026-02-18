@@ -1,12 +1,15 @@
 // src/features/services/ChatSetup.jsx
 // Chat setup — Guía completa con bloques visuales para GIFs (Branding Evolvian Premium Light)
 import { useInitializeUser } from "../../hooks/useInitializeUser";
+import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useState, useEffect } from "react";
+import { trackClientEvent } from "../../lib/tracking";
 import WidgetCustomizer from "./WidgetCustomizer"; // 👈 importa tu otro componente
 
 export default function ChatSetup() {
   const { publicClientId, loading } = useInitializeUser();
+  const clientId = useClientId();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState("install");
   const [isMobile, setIsMobile] = useState(
@@ -35,9 +38,22 @@ export default function ChatSetup() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const handleCopy = (text) => {
+  const handleCopy = (text, installType = null) => {
     navigator.clipboard.writeText(text);
     alert(t("copied_to_clipboard"));
+
+    if (installType && clientId) {
+      void trackClientEvent({
+        clientId,
+        name: "Funnel_Widget_Installed",
+        category: "funnel",
+        label: installType,
+        value: "chat_widget",
+        eventKey: "funnel_widget_installed",
+        metadata: { install_type: installType },
+        dedupeLocal: true,
+      });
+    }
   };
 
   const domain = window.location.hostname.includes("localhost")
@@ -168,7 +184,7 @@ export default function ChatSetup() {
                 </ol>
                 <pre style={codeStyle}>{scriptCode}</pre>
                 <button
-                  onClick={() => handleCopy(scriptCode)}
+                  onClick={() => handleCopy(scriptCode, "script")}
                   style={{ ...actionButtonStyle, width: isMobile ? "100%" : "auto" }}
                 >
                   {t("copy_script_button") || "Copy script"}
@@ -186,7 +202,7 @@ export default function ChatSetup() {
                 </ol>
                 <pre style={codeStyle}>{iframeCode}</pre>
                 <button
-                  onClick={() => handleCopy(iframeCode)}
+                  onClick={() => handleCopy(iframeCode, "iframe")}
                   style={{ ...actionButtonStyle, width: isMobile ? "100%" : "auto" }}
                 >
                   {t("copy_iframe") || "Copy iframe"}

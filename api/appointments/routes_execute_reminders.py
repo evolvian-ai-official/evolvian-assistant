@@ -79,20 +79,127 @@ def format_scheduled_time(
 
 
 def render_template(body: str, appointment: dict, locale_code: str) -> str:
+    scheduled_time_label = ""
+    appointment_date = ""
+    appointment_time = ""
     scheduled_time = appointment.get("scheduled_time")
+    client_id = appointment.get("client_id")
+    safe_client_id = client_id or ""
+
     if scheduled_time:
-        scheduled_time = format_scheduled_time(
+        scheduled_time_label = format_scheduled_time(
             scheduled_time,
-            appointment.get("client_id"),
+            safe_client_id,
             locale_code,
         )
+        try:
+            dt_utc = datetime.fromisoformat(str(scheduled_time).replace("Z", "+00:00"))
+            dt_local = dt_utc.astimezone(get_client_timezone(safe_client_id))
+            appointment_date = format_datetime(
+                dt_local,
+                "EEEE dd 'de' MMMM yyyy",
+                locale=locale_code,
+            )
+            appointment_time = format_datetime(
+                dt_local,
+                "hh:mm a",
+                locale=locale_code,
+            )
+        except Exception:
+            appointment_date = ""
+            appointment_time = ""
 
     return (
         body
         .replace("{{user_name}}", appointment.get("user_name", "") or "")
-        .replace("{{scheduled_time}}", scheduled_time or "")
+        .replace("{{company_name}}", get_client_company_name(safe_client_id))
+        .replace("{{scheduled_time}}", scheduled_time_label or "")
+        .replace("{{appointment_date}}", appointment_date or "")
+        .replace("{{appointment_time}}", appointment_time or "")
+        .replace(
+            "{{current_date}}",
+            format_datetime(datetime.now(get_client_timezone(safe_client_id)), "EEEE dd 'de' MMMM yyyy", locale=locale_code),
+        )
         .replace("{{appointment_type}}", appointment.get("appointment_type", "") or "")
     )
+
+
+def get_client_company_name(client_id: str) -> str:
+    default_name = "su empresa"
+
+    if not client_id:
+        return default_name
+
+    try:
+        profile_res = (
+            supabase
+            .table("client_profile")
+            .select("company_name")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if profile_res.data:
+            company_name = (profile_res.data[0].get("company_name") or "").strip()
+            if company_name:
+                return company_name
+    except Exception as e:
+        logger.warning(
+            "⚠️ Failed loading company_name from client_profile | client_id=%s | error=%s",
+            client_id,
+            e,
+        )
+
+    try:
+        client_res = (
+            supabase
+            .table("clients")
+            .select("name")
+            .eq("id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if client_res.data:
+            client_name = (client_res.data[0].get("name") or "").strip()
+            if client_name:
+                return client_name
+    except Exception as e:
+        logger.warning(
+            "⚠️ Failed loading client_name from clients table | client_id=%s | error=%s",
+            client_id,
+            e,
+        )
+
+    return default_name
+
+
+def build_reminder_parameters(
+    expected_params: int,
+    *,
+    user_name: str,
+    company_name: str,
+    appointment_details: str,
+    appointment_type: str,
+) -> list[str]:
+    safe_user = (user_name or "Cliente").strip() or "Cliente"
+    safe_company = (company_name or "su empresa").strip() or "su empresa"
+    safe_details = (appointment_details or "Cita programada").strip() or "Cita programada"
+    safe_type = (appointment_type or "Cita").strip() or "Cita"
+
+    if expected_params <= 0:
+        return []
+    if expected_params == 1:
+        return [safe_details]
+    if expected_params == 2:
+        return [safe_user, safe_details]
+    if expected_params == 3:
+        return [safe_user, safe_company, safe_details]
+
+    base = [safe_user, safe_company, safe_details, safe_type]
+    if expected_params <= len(base):
+        return base[:expected_params]
+
+    return base + ["Información de cita"] * (expected_params - len(base))
 
 
 # =====================================================
@@ -236,10 +343,13 @@ async def execute_pending_reminders():
                     if not appointment_details:
                         appointment_details = "Cita programada"
 
-                    parameters = [
-                        user_name,
-                        appointment_details,
-                    ]
+                    parameters = build_reminder_parameters(
+                        expected_params,
+                        user_name=user_name,
+                        company_name=get_client_company_name(client_id),
+                        appointment_details=appointment_details,
+                        appointment_type=raw_type,
+                    )
 
                     if expected_params != len(parameters):
                         raise Exception(
@@ -253,13 +363,18 @@ async def execute_pending_reminders():
                         parameters,
                     )
 
-                    send_ok = await send_whatsapp_template_for_client(
+                    send_result = await send_whatsapp_template_for_client(
                         client_id=client_id,
                         to_number=phone,
                         template_name=template_name,
                         language_code=language_code,
                         parameters=parameters,
                     )
+                    send_ok = bool(send_result and send_result.get("success"))
+                    if not send_ok:
+                        raise Exception(
+                            f"Meta template send failed: {(send_result or {}).get('error', 'unknown error')}"
+                        )
 
                 # =====================================================
                 # TEXT FALLBACK

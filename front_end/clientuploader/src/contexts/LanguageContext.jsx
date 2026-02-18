@@ -47,6 +47,7 @@ export function LanguageProvider({ children }) {
           localStorage.setItem("lang", backendLang);
         }
       } catch (error) {
+        console.warn("⚠️ Falling back to local language setting:", error);
         // If there is no active session or backend is unavailable, keep local fallback.
         if (isMounted) {
           setLang(storedLang);

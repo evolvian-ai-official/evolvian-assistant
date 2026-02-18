@@ -22,6 +22,8 @@ const isValidEmail = (email) =>
 const isValidWhatsApp = (phone) =>
   /^\+[1-9]\d{9,14}$/.test(phone); // E.164 (Meta)
 
+const isChannelEnabled = (channel) => Boolean(channel?.is_active ?? channel?.active);
+
 /* =========================
    Component
    ========================= */
@@ -34,7 +36,7 @@ export default function CreateAppointment({ disabled = false }) {
   );
 
   const [showModal, setShowModal] = useState(false);
-  const [appointments] = useState([]);
+  const [_appointments] = useState([]);
   const [appointmentsRefreshTick, setAppointmentsRefreshTick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -61,13 +63,20 @@ export default function CreateAppointment({ disabled = false }) {
 
   /* 🧠 Templates */
   const [templates, setTemplates] = useState([]);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [_templatesLoading, setTemplatesLoading] = useState(false);
   const [calendarRules, setCalendarRules] = useState(null);
   const [rulesLoading, setRulesLoading] = useState(false);
+  const [googleBusyLoading, setGoogleBusyLoading] = useState(false);
+  const [googleBusyRanges, setGoogleBusyRanges] = useState([]);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
   const [availableTimes, setAvailableTimes] = useState([]);
   const [availableDates, setAvailableDates] = useState([]);
+  const [channelsLoading, setChannelsLoading] = useState(false);
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [gmailEnabled, setGmailEnabled] = useState(false);
+  const [gmailAddress, setGmailAddress] = useState("");
+  const [whatsAppMetaConnected, setWhatsAppMetaConnected] = useState(false);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -123,6 +132,85 @@ export default function CreateAppointment({ disabled = false }) {
     fetchCalendarRules();
   }, [showModal, clientId]);
 
+  useEffect(() => {
+    if (!showModal || !clientId || !calendarRules) return;
+
+    const fetchGoogleBusyRanges = async () => {
+      setGoogleBusyLoading(true);
+      try {
+        const fromDate = toDateInputValue(new Date());
+        const to = new Date();
+        to.setDate(to.getDate() + Number(calendarRules?.max_days_ahead || 365));
+        const toDate = toDateInputValue(to);
+
+        const res = await authFetch(
+          `${API_BASE_URL}/calendar/google_busy_slots?client_id=${clientId}&from_date=${fromDate}&to_date=${toDate}`
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = await res.json();
+        setGoogleBusyRanges(Array.isArray(payload?.busy_ranges) ? payload.busy_ranges : []);
+      } catch (err) {
+        console.error("Failed loading Google busy ranges", err);
+        setGoogleBusyRanges([]);
+      } finally {
+        setGoogleBusyLoading(false);
+      }
+    };
+
+    fetchGoogleBusyRanges();
+  }, [showModal, clientId, calendarRules, appointmentsRefreshTick]);
+
+  useEffect(() => {
+    if (!showModal || !clientId) return;
+    let mounted = true;
+
+    const readChannels = async (type, provider) => {
+      try {
+        const res = await authFetch(
+          `${API_BASE_URL}/channels?client_id=${clientId}&type=${type}&provider=${provider}`
+        );
+        if (res.status === 404) return [];
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const fetchChannelStatus = async () => {
+      setChannelsLoading(true);
+      const [gmailRows, whatsRows] = await Promise.all([
+        readChannels("email", "gmail"),
+        readChannels("whatsapp", "meta"),
+      ]);
+
+      if (!mounted) return;
+
+      const gmailPreferred = gmailRows.find((row) => isChannelEnabled(row)) || gmailRows[0];
+      setGmailConnected(gmailRows.length > 0);
+      setGmailEnabled(gmailRows.some((row) => isChannelEnabled(row)));
+      setGmailAddress(gmailPreferred?.value || "");
+
+      const hasActiveMeta = whatsRows.some(
+        (row) => isChannelEnabled(row) && (row?.wa_phone_id || "").trim() !== ""
+      );
+      setWhatsAppMetaConnected(hasActiveMeta);
+      setChannelsLoading(false);
+    };
+
+    fetchChannelStatus();
+    return () => {
+      mounted = false;
+    };
+  }, [showModal, clientId]);
+
+  useEffect(() => {
+    if (!whatsAppMetaConnected) {
+      setReminderWhatsApp(false);
+    }
+  }, [whatsAppMetaConnected]);
+
   const normalizeSelectedDays = (rawDays) => {
     const dayMap = {
       mon: 0, monday: 0, lun: 0, lunes: 0,
@@ -172,6 +260,16 @@ export default function CreateAppointment({ disabled = false }) {
     }
   };
 
+  const isBlockedByGoogle = (slotDate, slotDurationMinutes) => {
+    const slotEnd = new Date(slotDate.getTime() + slotDurationMinutes * 60 * 1000);
+    return (googleBusyRanges || []).some((range) => {
+      const busyStart = new Date(range.start);
+      const busyEnd = new Date(range.end);
+      if (Number.isNaN(busyStart.getTime()) || Number.isNaN(busyEnd.getTime())) return false;
+      return slotDate < busyEnd && slotEnd > busyStart;
+    });
+  };
+
   const computeAvailableTimes = (dateStr, rules) => {
     if (!dateStr || !rules) return [];
     const selected = new Date(`${dateStr}T00:00:00`);
@@ -211,6 +309,7 @@ export default function CreateAppointment({ disabled = false }) {
       const mm = String(mins % 60).padStart(2, "0");
       const slotDate = new Date(`${dateStr}T${hh}:${mm}:00`);
       if (slotDate < minNoticeDate) continue;
+      if (isBlockedByGoogle(slotDate, slot)) continue;
       slots.push(`${hh}:${mm}`);
     }
     return slots;
@@ -264,7 +363,7 @@ export default function CreateAppointment({ disabled = false }) {
       setSelectedTime("");
       setForm((prev) => ({ ...prev, scheduled_time: "" }));
     }
-  }, [showModal, calendarRules]);
+  }, [showModal, calendarRules, googleBusyRanges]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -280,9 +379,9 @@ export default function CreateAppointment({ disabled = false }) {
       setSelectedTime("");
       setForm((prev) => ({ ...prev, scheduled_time: "" }));
     }
-  }, [showModal, selectedDate, calendarRules]);
+  }, [showModal, selectedDate, calendarRules, googleBusyRanges]);
 
-  const emailTemplates = templates.filter((t) => t.channel === "email");
+  const _emailTemplates = templates.filter((t) => t.channel === "email");
   const whatsappTemplates = templates.filter((t) => t.channel === "whatsapp");
 
   /* =========================
@@ -343,6 +442,7 @@ export default function CreateAppointment({ disabled = false }) {
     setSelectedTime("");
     setAvailableTimes([]);
     setAvailableDates([]);
+    setGoogleBusyRanges([]);
   };
 
   /* =========================
@@ -487,6 +587,11 @@ export default function CreateAppointment({ disabled = false }) {
             {form.user_email && !emailValid && (
               <p style={reminderHint}>{t("invalid_email_format")}</p>
             )}
+            {!form.user_email && (
+              <p style={reminderHint}>
+                Si no agregas correo del cliente, no se enviará confirmación por email.
+              </p>
+            )}
 
             <input
               style={inputStyle}
@@ -504,10 +609,10 @@ export default function CreateAppointment({ disabled = false }) {
               style={inputStyle}
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              disabled={rulesLoading}
+              disabled={rulesLoading || googleBusyLoading}
             >
               <option value="">
-                {rulesLoading ? "Cargando fechas..." : "Selecciona una fecha disponible"}
+                {rulesLoading || googleBusyLoading ? "Cargando fechas..." : "Selecciona una fecha disponible"}
               </option>
               {availableDates.map((date) => (
                 <option key={date.value} value={date.value}>
@@ -526,12 +631,12 @@ export default function CreateAppointment({ disabled = false }) {
                   scheduled_time: selectedDate && time ? `${selectedDate}T${time}` : "",
                 }));
               }}
-              disabled={!selectedDate || rulesLoading}
+              disabled={!selectedDate || rulesLoading || googleBusyLoading}
             >
               <option value="">
                 {!selectedDate
                   ? "Selecciona una fecha"
-                  : rulesLoading
+                  : rulesLoading || googleBusyLoading
                   ? "Cargando horarios..."
                   : "Selecciona una hora"}
               </option>
@@ -541,9 +646,17 @@ export default function CreateAppointment({ disabled = false }) {
                 </option>
               ))}
             </select>
+            {googleBusyLoading && (
+              <p style={reminderHint}>Sincronizando horarios ocupados desde Google Calendar...</p>
+            )}
+            {!googleBusyLoading && googleBusyRanges.length > 0 && (
+              <p style={reminderHint}>
+                Se ocultaron automáticamente los horarios ocupados en Google Calendar.
+              </p>
+            )}
             {selectedDate && !rulesLoading && availableTimes.length === 0 && (
               <p style={reminderHint}>
-                No hay horarios disponibles para esa fecha según tu configuración de Calendar Setup.
+                No hay horarios disponibles para esa fecha según tu Calendar Setup y Google Calendar.
               </p>
             )}
             {!rulesLoading && availableDates.length === 0 && (
@@ -557,6 +670,55 @@ export default function CreateAppointment({ disabled = false }) {
             <p style={timezoneNoticeStyle}>
               ⏱️ Selecciona una fecha y hora disponibles según tu <strong>Calendar Setup</strong>. {getFriendlyRulesText(calendarRules)}
             </p>
+
+            <div style={integrationPanel}>
+              {channelsLoading ? (
+                <p style={reminderHint}>Verificando conexiones de Email y WhatsApp...</p>
+              ) : (
+                <>
+                  {!gmailConnected || !gmailEnabled ? (
+                    <div style={warningPanel}>
+                      <p style={panelTitle}>📧 Email sin Gmail activo</p>
+                      <p style={panelText}>
+                        Esta cita caerá con el correo de Evolvian reply/no-reply
+                        (<strong>noreply@notifications.evolvianai.com</strong>).
+                      </p>
+                      <button
+                        type="button"
+                        style={linkButton}
+                        onClick={() => (window.location.href = "/services/email")}
+                      >
+                        Configurar Email
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={okPanel}>
+                      <p style={panelTitle}>✅ Email activo</p>
+                      <p style={panelText}>
+                        Las citas por correo se enviarán desde tu Gmail conectado:{" "}
+                        <strong>{gmailAddress || "Gmail conectado"}</strong>.
+                      </p>
+                    </div>
+                  )}
+
+                  {!whatsAppMetaConnected && (
+                    <div style={dangerPanel}>
+                      <p style={panelTitle}>💬 WhatsApp no disponible</p>
+                      <p style={panelText}>
+                        No puedes mandar citas por WhatsApp porque no tienes enlazado Evolvian con Meta.
+                      </p>
+                      <button
+                        type="button"
+                        style={linkButton}
+                        onClick={() => (window.location.href = "/services/whatsapp")}
+                      >
+                        Conectar WhatsApp
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
 
             {/* 🔔 REMINDERS */}
@@ -605,7 +767,8 @@ export default function CreateAppointment({ disabled = false }) {
                         checked={reminderWhatsApp}
                         disabled={
                           !phoneValid ||
-                          whatsappTemplates.length === 0
+                          whatsappTemplates.length === 0 ||
+                          !whatsAppMetaConnected
                         }
                         onChange={(e) =>
                           setReminderWhatsApp(e.target.checked)
@@ -637,6 +800,11 @@ export default function CreateAppointment({ disabled = false }) {
                           ))}
                         </select>
                       )}
+                    {!whatsAppMetaConnected && (
+                      <p style={reminderHint}>
+                        Para usar recordatorios por WhatsApp, primero conecta Evolvian con Meta en WhatsApp Setup.
+                      </p>
+                    )}
                   </div>
 
                   {/* Email 
@@ -838,6 +1006,61 @@ const reminderHint = {
   fontSize: "0.8rem",
   color: "#7A7A7A",
   marginTop: "0.25rem",
+};
+
+const integrationPanel = {
+  marginTop: "0.9rem",
+  display: "grid",
+  gap: "0.65rem",
+};
+
+const panelBase = {
+  borderRadius: 10,
+  border: "1px solid #EDEDED",
+  padding: "0.7rem 0.8rem",
+};
+
+const warningPanel = {
+  ...panelBase,
+  backgroundColor: "#fff8ed",
+  borderColor: "#ffd8a8",
+};
+
+const okPanel = {
+  ...panelBase,
+  backgroundColor: "#edf9f5",
+  borderColor: "#bde9df",
+};
+
+const dangerPanel = {
+  ...panelBase,
+  backgroundColor: "#fff0f2",
+  borderColor: "#fecdd3",
+};
+
+const panelTitle = {
+  margin: 0,
+  fontWeight: 700,
+  color: "#274472",
+  fontSize: "0.9rem",
+};
+
+const panelText = {
+  margin: "0.35rem 0 0",
+  color: "#4b5563",
+  fontSize: "0.85rem",
+  lineHeight: 1.4,
+};
+
+const linkButton = {
+  marginTop: "0.55rem",
+  backgroundColor: "#2EB39A",
+  color: "#fff",
+  border: "none",
+  borderRadius: 8,
+  padding: "0.45rem 0.75rem",
+  cursor: "pointer",
+  fontSize: "0.82rem",
 };
 
 const modalActions = {

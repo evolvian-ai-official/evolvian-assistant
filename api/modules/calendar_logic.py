@@ -248,7 +248,9 @@ def save_appointment_if_valid(client_id: str, scheduled_time_str: str, user_emai
         send_confirmation_email(
             to_email=user_email,
             date_str=date_str,
-            hour_str=hour_str
+            hour_str=hour_str,
+            client_id=client_id,
+            user_name=user_name,
         )
 
         return f"✅ ¡Cita agendada para {scheduled_time_local.strftime('%Y-%m-%d %H:%M')}!"

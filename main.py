@@ -55,11 +55,13 @@ from api.user_flags import router as user_flags_router
 from api.terms_api import router as terms_router
 from api.clear_new_user_flag import router as clear_new_user_flag_router
 from api.client_profile_api import router as client_profile_router
+from api.client_event_log_api import router as client_event_log_router
 from api.accept_terms_api import router as accept_terms_router
 from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
+from api.public.plans import router as public_plans_router
 from api.routes import reset  # Cron
 from api.routes import embed
 from api.channels import router as channels_router
@@ -307,10 +309,10 @@ routers = [
     upload_router, history_router, client_router, ask_router, twilio_router,
     initialize_user_router, client_settings_router, link_whatsapp_router,
     chat_widget_router, check_email_router, dashboard_summary_router,
-    user_flags_router, terms_router,
+    user_flags_router, terms_router, client_event_log_router,
     clear_new_user_flag_router, client_profile_router, accept_terms_router,
     list_files_router, list_chunks_router, delete_chunks_router,
-    embed_router, stripe_router, checkout_router,
+    embed_router, public_plans_router, stripe_router, checkout_router,
     stripe_cancel_router, stripe_change_plan_router,
     reactivate_subscription_router, channels_router, register_consent_router, check_consent_router,
     blog_router,
@@ -338,6 +340,7 @@ if get_client_by_email_router: app.include_router(get_client_by_email_router)
 if register_email_channel: app.include_router(register_email_channel.router)
 
 # Gmail
+app.include_router(disconnect_gmail.router)
 if gmail_webhook: app.include_router(gmail_webhook.router)
 if gmail_oauth: app.include_router(gmail_oauth.router)
 if gmail_poll: app.include_router(gmail_poll.router)

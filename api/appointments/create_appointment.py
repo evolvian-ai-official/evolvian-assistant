@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta, timezone
@@ -7,6 +7,8 @@ from typing import Optional, Dict
 import uuid
 import logging
 import json
+import os
+import requests
 from babel.dates import format_datetime
 
 from api.config.config import supabase
@@ -14,6 +16,7 @@ from api.modules.whatsapp.whatsapp_sender import (
     send_whatsapp_template_for_client,
 )
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
+from api.authz import authorize_client_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,6 +41,15 @@ WEEKDAY_MAP = {
     "sat": 5, "saturday": 5, "sab": 5, "sabado": 5, "sábado": 5,
     "sun": 6, "sunday": 6, "dom": 6, "domingo": 6,
 }
+
+LANGUAGE_TO_LOCALE = {
+    "es": "es_MX",
+    "en": "en_US",
+    "pt": "pt_BR",
+}
+
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy"
 
 
 def is_calendar_active_for_client(client_id: str) -> bool:
@@ -123,6 +135,185 @@ def _load_calendar_rules(client_id: str) -> dict:
     }
 
 
+def _parse_expires_at(raw_value: Optional[str]) -> Optional[datetime]:
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _refresh_google_access_token(client_id: str, refresh_token: str) -> str:
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+    google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if not google_client_id or not google_client_secret:
+        raise RuntimeError("Missing Google OAuth credentials")
+
+    response = requests.post(
+        GOOGLE_TOKEN_URL,
+        data={
+            "client_id": google_client_id,
+            "client_secret": google_client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        timeout=10,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Token refresh failed with status {response.status_code}")
+
+    payload = response.json()
+    new_token = payload.get("access_token")
+    if not new_token:
+        raise RuntimeError("Token refresh response missing access_token")
+
+    expires_in = int(payload.get("expires_in") or 3600)
+    expires_at = (datetime.utcnow() + timedelta(seconds=max(60, expires_in - 30))).isoformat()
+    supabase.table("calendar_integrations").update(
+        {"access_token": new_token, "expires_at": expires_at}
+    ).eq("client_id", client_id).eq("is_active", True).execute()
+    return new_token
+
+
+def _get_active_google_integration(client_id: str) -> Optional[dict]:
+    res = (
+        supabase
+        .table("calendar_integrations")
+        .select("access_token, refresh_token, calendar_id, expires_at")
+        .eq("client_id", client_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    return (res.data or [None])[0]
+
+
+def _resolve_google_access_token(client_id: str, integration: dict) -> str:
+    access_token = integration.get("access_token")
+    refresh_token = integration.get("refresh_token")
+    expires_at = _parse_expires_at(integration.get("expires_at"))
+    refresh_threshold = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+    if access_token and expires_at and expires_at <= refresh_threshold and refresh_token:
+        access_token = _refresh_google_access_token(client_id, refresh_token)
+    elif not access_token and refresh_token:
+        access_token = _refresh_google_access_token(client_id, refresh_token)
+
+    if not access_token:
+        raise RuntimeError("Missing Google access token")
+    return access_token
+
+
+def _is_google_slot_busy(client_id: str, start_utc: datetime, end_utc: datetime) -> bool:
+    integration = _get_active_google_integration(client_id)
+    if not integration:
+        return False
+
+    calendar_id = integration.get("calendar_id") or "primary"
+    access_token = _resolve_google_access_token(client_id, integration)
+
+    def _freebusy_request(token: str):
+        return requests.post(
+            GOOGLE_FREEBUSY_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "timeMin": start_utc.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "timeMax": end_utc.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "timeZone": "UTC",
+                "items": [{"id": calendar_id}],
+            },
+            timeout=10,
+        )
+
+    response = _freebusy_request(access_token)
+    if response.status_code == 401 and integration.get("refresh_token"):
+        access_token = _refresh_google_access_token(client_id, integration["refresh_token"])
+        response = _freebusy_request(access_token)
+
+    if response.status_code >= 400:
+        raise RuntimeError(f"Google freeBusy failed with status {response.status_code}")
+
+    payload = response.json()
+    calendars = payload.get("calendars") or {}
+    calendar_data = calendars.get(calendar_id)
+    if calendar_data is None and len(calendars) == 1:
+        calendar_data = next(iter(calendars.values()))
+    busy_ranges = (calendar_data or {}).get("busy") or []
+    return bool(busy_ranges)
+
+
+def _get_google_busy_ranges(client_id: str, start_utc: datetime, end_utc: datetime) -> list[dict]:
+    integration = _get_active_google_integration(client_id)
+    if not integration:
+        return []
+
+    calendar_id = integration.get("calendar_id") or "primary"
+    access_token = _resolve_google_access_token(client_id, integration)
+
+    def _freebusy_request(token: str):
+        return requests.post(
+            GOOGLE_FREEBUSY_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "timeMin": start_utc.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "timeMax": end_utc.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "timeZone": "UTC",
+                "items": [{"id": calendar_id}],
+            },
+            timeout=10,
+        )
+
+    response = _freebusy_request(access_token)
+    if response.status_code == 401 and integration.get("refresh_token"):
+        access_token = _refresh_google_access_token(client_id, integration["refresh_token"])
+        response = _freebusy_request(access_token)
+
+    if response.status_code >= 400:
+        raise RuntimeError(f"Google freeBusy failed with status {response.status_code}")
+
+    payload = response.json()
+    calendars = payload.get("calendars") or {}
+    calendar_data = calendars.get(calendar_id)
+    if calendar_data is None and len(calendars) == 1:
+        calendar_data = next(iter(calendars.values()))
+    raw_busy = (calendar_data or {}).get("busy") or []
+
+    normalized = []
+    for item in raw_busy:
+        raw_start = item.get("start")
+        raw_end = item.get("end")
+        if not raw_start or not raw_end:
+            continue
+        try:
+            busy_start = datetime.fromisoformat(str(raw_start).replace("Z", "+00:00"))
+            busy_end = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00"))
+            if busy_start.tzinfo is None:
+                busy_start = busy_start.replace(tzinfo=timezone.utc)
+            if busy_end.tzinfo is None:
+                busy_end = busy_end.replace(tzinfo=timezone.utc)
+            normalized.append(
+                {
+                    "start": busy_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "end": busy_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                }
+            )
+        except Exception:
+            continue
+
+    normalized.sort(key=lambda x: x["start"])
+    return normalized
+
+
 # =====================================================
 # Timezone helper (solo agregado, no cambia lógica)
 # =====================================================
@@ -155,6 +346,105 @@ def get_client_timezone(client_id: str) -> ZoneInfo:
     except Exception as e:
         logger.error(f"❌ Failed to get timezone: {e}")
         return ZoneInfo("UTC")
+
+
+def get_client_company_name(client_id: str) -> str:
+    default_name = "su empresa"
+
+    if not client_id:
+        return default_name
+
+    try:
+        profile_res = (
+            supabase
+            .table("client_profile")
+            .select("company_name")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if profile_res.data:
+            company_name = (profile_res.data[0].get("company_name") or "").strip()
+            if company_name:
+                return company_name
+    except Exception as e:
+        logger.warning("⚠️ Failed loading client_profile.company_name | client_id=%s | error=%s", client_id, e)
+
+    try:
+        client_res = (
+            supabase
+            .table("clients")
+            .select("name")
+            .eq("id", client_id)
+            .limit(1)
+            .execute()
+        )
+        if client_res.data:
+            client_name = (client_res.data[0].get("name") or "").strip()
+            if client_name:
+                return client_name
+    except Exception as e:
+        logger.warning("⚠️ Failed loading clients.name | client_id=%s | error=%s", client_id, e)
+
+    return default_name
+
+
+def get_client_locale(client_id: str) -> str:
+    if not client_id:
+        return "es_MX"
+    try:
+        settings_res = (
+            supabase
+            .table("client_settings")
+            .select("language")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        language = ((settings_res.data or [{}])[0].get("language") or "es").lower()
+        return LANGUAGE_TO_LOCALE.get(language, "es_MX")
+    except Exception as e:
+        logger.warning("⚠️ Failed loading client locale | client_id=%s | error=%s", client_id, e)
+        return "es_MX"
+
+
+def render_email_template_text(template_text: Optional[str], replacements: Dict[str, str]) -> Optional[str]:
+    if not template_text:
+        return template_text
+
+    rendered = template_text
+    for key, value in replacements.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", value or "")
+    return rendered
+
+
+def build_confirmation_parameters(
+    expected_params: int,
+    *,
+    user_name: str,
+    company_name: str,
+    formatted_date: str,
+    appointment_type: str,
+) -> list[str]:
+    safe_user = (user_name or "Cliente").strip() or "Cliente"
+    safe_company = (company_name or "su empresa").strip() or "su empresa"
+    safe_date = (formatted_date or "Cita programada").strip() or "Cita programada"
+    safe_type = (appointment_type or "Cita").strip() or "Cita"
+
+    if expected_params <= 0:
+        return []
+    if expected_params == 1:
+        return [safe_date]
+    if expected_params == 2:
+        return [safe_user, safe_date]
+    if expected_params == 3:
+        return [safe_user, safe_company, safe_date]
+
+    base = [safe_user, safe_company, safe_date, safe_type]
+    if expected_params <= len(base):
+        return base[:expected_params]
+
+    return base + ["Información de cita"] * (expected_params - len(base))
 
 
 # =========================
@@ -215,7 +505,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
     meta_res = (
         supabase
         .table("meta_approved_templates")
-        .select("template_name, language")
+        .select("template_name, language, parameter_count")
         .eq("id", meta_template_id)
         .eq("is_active", True)
         .single()
@@ -229,6 +519,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
 
     template_name = meta.get("template_name")
     language_code = meta.get("language") or "es_MX"
+    expected_params = int(meta.get("parameter_count") or 2)
 
     if not template_name:
         logger.warning("⚠️ Meta template missing template_name")
@@ -258,16 +549,21 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.error(f"❌ Failed formatting date with Babel: {e}")
         formatted_date = appointment.get("scheduled_time")
 
+    parameters = build_confirmation_parameters(
+        expected_params,
+        user_name=appointment.get("user_name") or "Cliente",
+        company_name=get_client_company_name(str(client_id)),
+        formatted_date=formatted_date or "Cita programada",
+        appointment_type=appointment.get("appointment_type") or "",
+    )
+
     # 4️⃣ Send template (NO cambiado)
     result = await send_whatsapp_template_for_client(
         client_id=client_id,
         to_number=phone,
         template_name=template_name,
         language_code=language_code,
-        parameters=[
-            appointment.get("user_name") or "Cliente",
-            formatted_date or "Cita programada",
-        ],
+        parameters=parameters,
     )
 
     if not result["success"]:
@@ -299,6 +595,7 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
         client_id = str(appointment.get("client_id"))
         client_tz = get_client_timezone(client_id) if client_id else ZoneInfo("UTC")
         scheduled_local = scheduled_utc.astimezone(client_tz)
+        locale_code = get_client_locale(client_id) if client_id else "es_MX"
 
         date_str = scheduled_local.strftime("%Y-%m-%d")
         hour_str = scheduled_local.strftime("%H:%M")
@@ -310,31 +607,66 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
             tpl_res = (
                 supabase
                 .table("message_templates")
-                .select("body, label")
+                .select("id, body, label")
                 .eq("client_id", client_id)
                 .eq("type", "appointment_confirmation")
                 .eq("channel", "email")
                 .eq("is_active", True)
-                .limit(1)
+                .limit(20)
                 .execute()
             )
             templates = tpl_res.data or []
-            if templates and templates[0].get("body"):
-                template = templates[0]
-                html_body = (
-                    template.get("body", "")
-                    .replace("{{user_name}}", appointment.get("user_name", "") or "Cliente")
-                    .replace(
-                        "{{scheduled_time}}",
-                        format_datetime(
-                            scheduled_local,
-                            "EEEE dd 'de' MMMM yyyy, hh:mm a",
-                            locale="es_MX",
-                        ),
-                    )
-                    .replace("{{appointment_type}}", appointment.get("appointment_type", "") or "")
+            template = next(
+                (
+                    row for row in templates
+                    if isinstance(row.get("body"), str) and row.get("body", "").strip()
+                ),
+                None,
+            )
+            if template:
+                company_name = get_client_company_name(client_id)
+                scheduled_label = format_datetime(
+                    scheduled_local,
+                    "EEEE dd 'de' MMMM yyyy, hh:mm a",
+                    locale=locale_code,
                 )
-                subject = (template.get("label") or "").strip() or None
+                appointment_date = format_datetime(
+                    scheduled_local,
+                    "EEEE dd 'de' MMMM yyyy",
+                    locale=locale_code,
+                )
+                appointment_time = format_datetime(
+                    scheduled_local,
+                    "hh:mm a",
+                    locale=locale_code,
+                )
+                today_date = format_datetime(
+                    datetime.now(client_tz),
+                    "EEEE dd 'de' MMMM yyyy",
+                    locale=locale_code,
+                )
+
+                replacements = {
+                    "company_name": company_name or "",
+                    "user_name": appointment.get("user_name", "") or "Cliente",
+                    "user_email": appointment.get("user_email", "") or "",
+                    "appointment_type": appointment.get("appointment_type", "") or "",
+                    "scheduled_time": scheduled_label,
+                    "appointment_date": appointment_date,
+                    "appointment_time": appointment_time,
+                    "current_date": today_date,
+                }
+
+                html_body = render_email_template_text(template.get("body", ""), replacements)
+                raw_subject = (template.get("label") or "").strip() or None
+                rendered_subject = render_email_template_text(raw_subject, replacements)
+                subject = (rendered_subject or "").replace("\r", " ").replace("\n", " ").strip() or None
+            elif templates:
+                logger.warning(
+                    "⚠️ appointment_confirmation template(s) found but none has body | client_id=%s | count=%s",
+                    client_id,
+                    len(templates),
+                )
 
         send_confirmation_email(
             email,
@@ -342,10 +674,59 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
             hour_str,
             html_body=html_body,
             subject=subject,
+            client_id=client_id,
+            user_name=appointment.get("user_name"),
+            appointment_type=appointment.get("appointment_type"),
         )
         logger.info("✅ Appointment email confirmation sent to %s", email)
     except Exception as e:
         logger.error("❌ Failed sending appointment email confirmation: %s", e)
+
+
+# =========================
+# Google busy ranges (UI)
+# =========================
+@router.get("/calendar/google_busy_slots", tags=["Appointments"])
+def get_google_busy_slots(
+    request: Request,
+    client_id: str = Query(...),
+    from_date: str = Query(..., description="YYYY-MM-DD"),
+    to_date: str = Query(..., description="YYYY-MM-DD"),
+):
+    try:
+        authorize_client_request(request, client_id)
+
+        try:
+            start_day = datetime.strptime(from_date, "%Y-%m-%d")
+            end_day = datetime.strptime(to_date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="from_date/to_date must be YYYY-MM-DD")
+
+        if end_day < start_day:
+            raise HTTPException(status_code=400, detail="to_date must be greater or equal to from_date")
+
+        if (end_day - start_day).days > 366:
+            raise HTTPException(status_code=400, detail="Date range cannot exceed 366 days")
+
+        client_tz = get_client_timezone(client_id)
+        start_local = start_day.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=client_tz)
+        end_local = end_day.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=client_tz)
+        start_utc = start_local.astimezone(timezone.utc)
+        end_utc = end_local.astimezone(timezone.utc)
+
+        busy_ranges = _get_google_busy_ranges(client_id, start_utc, end_utc)
+        return JSONResponse(
+            content={
+                "success": True,
+                "busy_ranges": busy_ranges,
+                "timezone": getattr(client_tz, "key", str(client_tz)),
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("❌ Failed to fetch Google busy ranges")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =========================
@@ -605,6 +986,37 @@ async def create_appointment(payload: CreateAppointmentPayload):
                 "user_phone": overlap_existing.get("user_phone"),
             },
             "message": "This time is no longer available.",
+        }
+
+    # =====================================================
+    # 📥 Google -> Evolvian (unidirectional busy guard)
+    # =====================================================
+    try:
+        google_busy = _is_google_slot_busy(
+            str(payload.client_id),
+            scheduled_utc,
+            scheduled_utc + slot_delta,
+        )
+    except Exception as e:
+        logger.error(
+            "❌ Google busy check failed | client_id=%s | error=%s",
+            str(payload.client_id),
+            e,
+        )
+        return {
+            "success": False,
+            "invalid_time": True,
+            "google_sync_check_failed": True,
+            "message": "Could not verify Google Calendar availability. Please try again.",
+        }
+
+    if google_busy:
+        return {
+            "success": False,
+            "overlap_conflict": True,
+            "google_busy": True,
+            "existing_appointment": {},
+            "message": "This time is busy in Google Calendar.",
         }
 
     if existing_id_to_replace:

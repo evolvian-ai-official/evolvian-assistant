@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useClientId } from "@/hooks/useClientId";
 import { Button } from "@/components/ui/button";
 import { Loader2, CalendarCheck, LinkIcon } from "lucide-react";
-import { toast } from "@/components/ui/use-toast";
 
 export default function GoogleCalendarConnect() {
   const clientId = useClientId();

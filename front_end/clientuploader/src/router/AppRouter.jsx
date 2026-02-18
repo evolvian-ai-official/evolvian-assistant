@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "../pages/Login";
 import Register from "../pages/Register";
 import Confirm from "../pages/Confirm";
@@ -28,18 +28,6 @@ import PrivacyPolicy from "../pages/PrivacyPolicy";
 import Templates from "../features/services/Templates";
 
 export default function AppRouter() {
-  const location = useLocation();
-
-  const publicRoutes = [
-    "/", "/login", "/register", "/confirm",
-    "/forgot-password", "/reset-password", "/verify-mfa",
-    "/welcome", "/chat-widget", "/widget", "/widget-preview",
-    "/terms", "/PrivacyPolicy"
-  ];
-
-  const isPublicRoute = publicRoutes.includes(location.pathname);
-  // (lo dejo intacto aunque no se use)
-
   return (
     <Routes>
       {/* Rutas públicas */}

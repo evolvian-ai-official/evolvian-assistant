@@ -26,6 +26,13 @@ export default function InternalSupportWidget() {
     return () => mediaQuery.removeListener(onChange);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onOpenSupport = () => setIsOpen(true);
+    window.addEventListener("evolvian:open-support-widget", onOpenSupport);
+    return () => window.removeEventListener("evolvian:open-support-widget", onOpenSupport);
+  }, []);
+
   return (
     <>
       <button

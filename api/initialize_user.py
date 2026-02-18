@@ -29,6 +29,46 @@ def generate_unique_public_client_id(length=12):
             print(f"⚠️ Intento {attempt+1}: public_client_id {candidate} ya existe")
     raise Exception("❌ No se pudo generar un public_client_id único después de varios intentos.")
 
+
+def log_signup_event_once(client_id: str, auth_user_id: str, email: str):
+    event_key = "funnel_signup_completed"
+    existing = (
+        supabase.table("history")
+        .select("id")
+        .eq("client_id", client_id)
+        .eq("source_type", "analytics_event")
+        .eq("source_id", event_key)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return
+
+    now = datetime.utcnow().isoformat()
+    supabase.table("history").insert({
+        "client_id": client_id,
+        "role": "system",
+        "content": "Funnel_Signup_Completed",
+        "channel": "system",
+        "source_type": "analytics_event",
+        "provider": "internal",
+        "status": "tracked",
+        "source_id": event_key,
+        "metadata": {
+            "event_name": "Funnel_Signup_Completed",
+            "event_category": "funnel",
+            "event_label": "register",
+            "event_value": "signup",
+            "frontend_source": "clientuploader",
+            "metadata": {
+                "auth_user_id": auth_user_id,
+                "email": email,
+            },
+        },
+        "session_id": "__analytics__",
+        "created_at": now,
+    }).execute()
+
 @router.post("/initialize_user")
 def initialize_user(payload: InitUserPayload):
     try:
@@ -100,6 +140,12 @@ def initialize_user(payload: InitUserPayload):
             if not is_new_user:
                 supabase.table("users").update({"is_new_user": True}).eq("id", payload.auth_user_id).execute()
             is_new_user = True
+
+        # 📈 Evento de embudo (signup) idempotente por cliente
+        try:
+            log_signup_event_once(client_id, payload.auth_user_id, payload.email)
+        except Exception as event_err:
+            print(f"⚠️ No se pudo registrar Funnel_Signup_Completed: {event_err}")
 
         # Crear fila en client_usage si no existe
         usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).limit(1).execute()

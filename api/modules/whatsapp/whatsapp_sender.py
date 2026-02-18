@@ -136,7 +136,7 @@ async def send_meta_template(
     to_number: str,
     template_name: str,
     language_code: str,
-    parameters: List[str],
+    parameters: Optional[List[str]] = None,
     phone_number_id: str,
     access_token: str,
 ) -> dict:
@@ -161,7 +161,10 @@ async def send_meta_template(
     # -------------------------------
     # Hard validations
     # -------------------------------
-    if not parameters or not isinstance(parameters, list):
+    if parameters is None:
+        parameters = []
+
+    if not isinstance(parameters, list):
         return {
             "success": False,
             "meta_message_id": None,
@@ -181,23 +184,27 @@ async def send_meta_template(
 
     meta_url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
 
+    template_payload = {
+        "name": template_name,
+        "language": {"code": language_code},
+    }
+
+    if parameters:
+        template_payload["components"] = [
+            {
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": str(p)}
+                    for p in parameters
+                ],
+            }
+        ]
+
     payload = {
         "messaging_product": "whatsapp",
         "to": to_number,
         "type": "template",
-        "template": {
-            "name": template_name,
-            "language": {"code": language_code},
-            "components": [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {"type": "text", "text": str(p)}
-                        for p in parameters
-                    ],
-                }
-            ],
-        },
+        "template": template_payload,
     }
 
     headers = {
@@ -265,7 +272,7 @@ async def send_whatsapp_template_for_client(
     client_id: str,
     to_number: str,
     template_name: str,
-    parameters: List[str],
+    parameters: Optional[List[str]] = None,
     language_code: str = "es_MX",
 ) -> dict:
     """

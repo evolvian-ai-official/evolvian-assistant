@@ -1,119 +1,14 @@
 .plans-section {
-  margin-top: 2rem;
+  margin-top: 1.25rem;
   text-align: center;
-  color: #ededed;
+  color: #274472;
 }
 
 .plans-title {
-  color: #a3d9b1;
+  color: #274472;
   font-size: 1.8rem;
-  font-weight: 600;
-  margin-bottom: 2rem;
-}
-
-.plan-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 1.5rem;
-  justify-content: center;
-}
-
-.plan-card {
-  background-color: #1b2a41;
-  border: 1px solid #274472;
-  border-radius: 12px;
-  padding: 1.6rem;
-  transition: all 0.3s ease;
-}
-
-.plan-card:hover {
-  transform: translateY(-3px);
-  border-color: #4a90e2;
-}
-
-.plan-card.current {
-  border: 2px solid #a3d9b1;
-  background: #223652;
-}
-
-.plan-card.highlighted {
-  border: 2px solid #4a90e2;
-  background: #243659;
-}
-
-.plan-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.8rem;
-}
-
-.plan-header h3 {
-  color: #a3d9b1;
-  font-size: 1.3rem;
-}
-
-.price {
-  color: #fff;
   font-weight: 700;
-  font-size: 1.2rem;
-}
-
-.badge {
-  background: #f5a623;
-  color: #000;
-  font-size: 0.8rem;
-  padding: 2px 8px;
-  border-radius: 6px;
-  margin-left: 6px;
-}
-
-.plan-desc {
-  color: #ccc;
   margin-bottom: 1rem;
-  font-size: 0.95rem;
-}
-
-.plan-card ul {
-  text-align: left;
-  list-style: none;
-  padding-left: 0;
-  margin-bottom: 1.4rem;
-}
-
-.plan-card li {
-  margin: 0.4rem 0;
-  color: #a3d9b1;
-  font-weight: 500;
-}
-
-.btn {
-  width: 100%;
-  border-radius: 8px;
-  padding: 10px;
-  font-weight: 600;
-  border: none;
-  cursor: pointer;
-  transition: 0.2s;
-}
-
-.btn.current {
-  background: #a3d9b1;
-  color: #000;
-}
-
-.btn.upgrade {
-  background: #4a90e2;
-  color: white;
-}
-
-.btn.downgrade {
-  background: #f5a623;
-  color: black;
-}
-
-.btn:hover:not(:disabled) {
-  opacity: 0.9;
 }
 
 .cancel-banner {
@@ -122,7 +17,8 @@
   color: #a35d00;
   padding: 12px;
   border-radius: 8px;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
+  text-align: left;
 }
 
 .reactivate-btn {
@@ -135,55 +31,204 @@
   cursor: pointer;
 }
 
+.plans-compare {
+  margin-top: 1rem;
+  background: #ffffff;
+  border: 1px solid #d9e3f0;
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 10px 24px rgba(39, 68, 114, 0.08);
+}
+
+.plans-compare-title {
+  text-align: left;
+  color: #274472;
+  margin: 0 0 0.8rem 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.plans-compare-wrapper {
+  overflow-x: auto;
+}
+
+.plans-compare-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+.plans-compare-table th,
+.plans-compare-table td {
+  border: 1px solid #e6edf6;
+  padding: 0.7rem 0.55rem;
+  font-size: 0.9rem;
+  vertical-align: top;
+}
+
+.plans-compare-table thead th {
+  background: #f7fbff;
+  color: #274472;
+  font-weight: 700;
+}
+
+.plans-compare-table tbody td {
+  color: #3b5c84;
+}
+
+.plans-compare-table tbody tr td:first-child {
+  text-align: left;
+  color: #274472;
+  font-weight: 700;
+  width: 26%;
+  background: #fbfdff;
+}
+
+.plans-compare-table tbody tr td:not(:first-child),
+.plans-compare-table thead tr th:not(:first-child) {
+  text-align: center;
+  width: 18.5%;
+}
+
+.compare-plan-head {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+
+.compare-plan-name-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #1f3659;
+  flex-wrap: wrap;
+}
+
+.compare-plan-price {
+  color: #1f3659;
+  font-size: 1.04rem;
+  font-weight: 800;
+}
+
+.compare-plan-desc {
+  margin: 0;
+  color: #5f7597;
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.compare-plan-cta {
+  margin-top: 0.2rem;
+}
+
+.compare-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  background: #ffe3a4;
+  color: #7a5500;
+  border: 1px solid #f5c35a;
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.is-current-col {
+  background: rgba(163, 217, 177, 0.22);
+}
+
+.is-premium-col {
+  background: rgba(74, 144, 226, 0.12);
+}
+
+.btn {
+  width: 100%;
+  border-radius: 9px;
+  padding: 9px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: 0.2s;
+  font-size: 0.82rem;
+}
+
+.btn.current {
+  background: #a3d9b1;
+  color: #17364f;
+}
+
+.btn.upgrade {
+  background: #4a90e2;
+  color: #fff;
+}
+
+.btn.downgrade {
+  background: #f4c95d;
+  color: #17364f;
+}
+
+.btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.btn:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
 .plan-footer {
   text-align: center;
 }
 
 .contact-text {
-  font-size: 0.9rem;
-  color: #f5a623;
-  margin-bottom: 6px;
+  font-size: 0.78rem;
+  color: #274472;
+  margin-bottom: 4px;
 }
 
 .contact-link {
-  color: #a3d9b1;
+  color: #2c7c68;
   text-decoration: underline;
-  font-size: 0.9rem;
+  font-size: 0.79rem;
+  font-weight: 700;
 }
 
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 28, 46, 0.55);
-  backdrop-filter: blur(6px); /* 🔹 Efecto blur elegante */
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(15, 28, 46, 0.3);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
-  transition: all 0.25s ease-in-out;
+  transition: all 0.2s ease;
 }
 
 .confirm-window {
-  background: #1b2a41;
-  border: 2px solid #274472;
-  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid #d9e3f0;
+  border-radius: 16px;
   display: flex;
-  max-width: 780px; /* 🔹 Más grande */
+  max-width: 780px;
   width: 95%;
-  color: #fff;
+  color: #274472;
   overflow: hidden;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 34px rgba(39, 68, 114, 0.2);
   animation: fadeIn 0.25s ease-in-out;
 }
 
 .confirm-left {
-  background: #0f1c2e;
+  background: #f3f8ff;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
-  min-width: 180px; /* 🔹 Más espacioso */
+  padding: 28px;
+  min-width: 180px;
 }
 
 .confirm-logo {
@@ -194,73 +239,73 @@
 
 .confirm-right {
   flex: 1;
-  padding: 36px 40px; /* 🔹 Mejores márgenes internos */
+  padding: 30px 34px;
   display: flex;
   flex-direction: column;
   justify-content: center;
 }
 
 .confirm-right h3 {
-  font-size: 1.3rem;
-  margin-bottom: 12px;
+  font-size: 1.18rem;
+  margin-bottom: 10px;
+  color: #1f3659;
 }
 
 .confirm-right p {
   line-height: 1.6;
+  color: #4c678d;
 }
 
 .feature-list {
-  margin: 12px 0 20px 20px;
+  margin: 10px 0 18px 0;
   list-style: none;
   padding-left: 0;
+  text-align: left;
 }
 
 .feature-list li {
   margin: 6px 0;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  color: #274472;
 }
 
 .confirm-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 20px;
+  margin-top: 14px;
 }
 
 .btn.confirm {
   background: #2eb39a;
   color: #fff;
-  padding: 10px 24px;
+  padding: 10px 20px;
   border-radius: 8px;
-  font-weight: 600;
-  transition: background 0.2s ease;
 }
 
 .btn.confirm:hover {
-  background: #34c9ae;
+  background: #28a18b;
 }
 
 .btn.cancel {
-  background: #4b5563;
-  color: #fff;
-  padding: 10px 24px;
+  background: #dde6f3;
+  color: #274472;
+  padding: 10px 20px;
   border-radius: 8px;
-  font-weight: 500;
-  transition: background 0.2s ease;
 }
 
 .btn.cancel:hover {
-  background: #6b7280;
+  background: #d0dced;
 }
 
 .terms-text {
-  font-size: 0.85rem;
-  margin-top: 12px;
-  opacity: 0.9;
+  font-size: 0.84rem;
+  margin-top: 8px;
+  color: #5f7597;
 }
 
 .terms-text a {
-  color: #a3d9b1;
+  color: #2c7c68;
   text-decoration: underline;
 }
 
@@ -292,24 +337,16 @@
 
 @media (max-width: 640px) {
   .plans-title {
-    font-size: 1.45rem;
-    margin-bottom: 1.2rem;
+    font-size: 1.4rem;
+    margin-bottom: 0.8rem;
   }
 
-  .plan-grid {
-    gap: 0.9rem;
+  .plans-compare {
+    padding: 0.7rem;
   }
 
-  .plan-card {
-    padding: 1rem;
-  }
-
-  .plan-header h3 {
-    font-size: 1.05rem;
-  }
-
-  .price {
-    font-size: 1rem;
+  .plans-compare-title {
+    font-size: 0.9rem;
   }
 
   .confirm-actions {

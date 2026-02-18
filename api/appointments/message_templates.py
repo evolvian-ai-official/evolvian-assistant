@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+import os
+import re
+import unicodedata
+import requests
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, List
 import uuid
@@ -12,6 +16,16 @@ router = APIRouter(
     prefix="/message_templates",
     tags=["Message Templates"]
 )
+
+BUCKET_NAME = "evolvian-documents"
+MAX_FOOTER_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+def sanitize_filename(filename: str) -> str:
+    name = unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode()
+    name = re.sub(r"[^\w.\-]", "_", name)
+    return name.lower()
+
 
 # =====================================================
 # MODELS
@@ -58,6 +72,67 @@ class UpdateTemplatePayload(BaseModel):
     body: Optional[str] = Field(None, min_length=5)
     frequency: Optional[List[ReminderRule]] = None
     is_active: Optional[bool] = None
+
+
+# =====================================================
+# FOOTER IMAGE UPLOAD
+# =====================================================
+@router.post("/footer_image")
+async def upload_footer_image(
+    client_id: uuid.UUID = Form(...),
+    file: UploadFile = File(...),
+):
+    try:
+        content_type = (file.content_type or "").lower()
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Only image files are allowed")
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        if len(content) > MAX_FOOTER_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (max 2MB)")
+
+        supabase_url = os.getenv("SUPABASE_URL")
+        service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_url or not service_key:
+            raise HTTPException(status_code=500, detail="Storage is not configured")
+
+        safe_name = sanitize_filename(file.filename or "footer.png")
+        storage_path = f"{client_id}/email_footer/{uuid.uuid4()}_{safe_name}"
+
+        upload_url = f"{supabase_url}/storage/v1/object/{BUCKET_NAME}/{storage_path}?upsert=true"
+        upload_headers = {
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": content_type or "application/octet-stream",
+        }
+
+        upload_res = requests.put(upload_url, headers=upload_headers, data=content, timeout=20)
+        if upload_res.status_code >= 400:
+            logger.error("Footer image upload failed: %s", upload_res.text)
+            raise HTTPException(status_code=500, detail="Failed to upload footer image")
+
+        signed = supabase.storage.from_(BUCKET_NAME).create_signed_url(
+            storage_path,
+            expires_in=60 * 60 * 24 * 365 * 5,  # 5 years
+        )
+        signed_url = signed.get("signedURL") if isinstance(signed, dict) else None
+
+        if not signed_url:
+            public_url = f"{supabase_url}/storage/v1/object/public/{BUCKET_NAME}/{storage_path}"
+            signed_url = public_url
+
+        return {
+            "success": True,
+            "url": signed_url,
+            "storage_path": storage_path,
+        }
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error uploading footer image")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =====================================================

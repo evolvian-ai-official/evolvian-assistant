@@ -5,6 +5,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import UpdateCancelAppointmentModal from "../services/update_cancel_appointment";
+import { authFetch } from "../../lib/authFetch";
 
 import DayView from "../services/DayView";
 import WeekView from "../services/WeekView";
@@ -25,6 +26,7 @@ export default function ShowAppointments({ refreshKey = 0 }) {
   );
 
   const [appointments, setAppointments] = useState([]);
+  const [googleBusyRanges, setGoogleBusyRanges] = useState([]);
   const [loading, setLoading] = useState(true);
 
   /* 🗓 View Mode */
@@ -46,6 +48,31 @@ export default function ShowAppointments({ refreshKey = 0 }) {
   /* 🧩 Modal state */
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(null);
+
+  const toDateInputValue = (date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+
+  const getVisibleRange = () => {
+    if (viewMode === "day") {
+      return { from: new Date(currentDate), to: new Date(currentDate) };
+    }
+
+    if (viewMode === "week") {
+      const start = new Date(currentDate);
+      start.setDate(start.getDate() - start.getDay());
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      return { from: start, to: end };
+    }
+
+    const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+    return { from: monthStart, to: monthEnd };
+  };
 
   /* =========================
      Fetch appointments
@@ -74,6 +101,33 @@ export default function ShowAppointments({ refreshKey = 0 }) {
   useEffect(() => {
     fetchAppointments();
   }, [clientId, refreshKey]);
+
+  useEffect(() => {
+    if (!clientId || viewMode === "list") {
+      setGoogleBusyRanges([]);
+      return;
+    }
+
+    const fetchGoogleBusyRanges = async () => {
+      try {
+        const visibleRange = getVisibleRange();
+        const fromDate = toDateInputValue(visibleRange.from);
+        const toDate = toDateInputValue(visibleRange.to);
+
+        const res = await authFetch(
+          `${API_BASE_URL}/calendar/google_busy_slots?client_id=${clientId}&from_date=${fromDate}&to_date=${toDate}`
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = await res.json();
+        setGoogleBusyRanges(Array.isArray(payload?.busy_ranges) ? payload.busy_ranges : []);
+      } catch (err) {
+        console.error("Failed loading Google busy ranges", err);
+        setGoogleBusyRanges([]);
+      }
+    };
+
+    fetchGoogleBusyRanges();
+  }, [clientId, viewMode, currentDate]);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -192,6 +246,54 @@ export default function ShowAppointments({ refreshKey = 0 }) {
     };
   }, [appointments]);
 
+  const googleBusyEvents = useMemo(() => {
+    const events = [];
+    const stepMs = 30 * 60 * 1000;
+
+    (googleBusyRanges || []).forEach((range, rangeIndex) => {
+      const rangeStart = new Date(range.start);
+      const rangeEnd = new Date(range.end);
+      if (Number.isNaN(rangeStart.getTime()) || Number.isNaN(rangeEnd.getTime()) || rangeEnd <= rangeStart) {
+        return;
+      }
+
+      let cursor = new Date(rangeStart.getTime());
+      let guard = 0;
+      while (cursor < rangeEnd && guard < 3000) {
+        events.push({
+          id: `google-busy-${rangeIndex}-${cursor.toISOString()}`,
+          source: "google_busy",
+          user_name: "Ocupado (Google)",
+          scheduled_time: cursor.toISOString(),
+          status: "confirmed",
+          appointment_type: "google_busy",
+          channel: "google",
+        });
+        cursor = new Date(cursor.getTime() + stepMs);
+        guard += 1;
+      }
+
+      if (guard === 0) {
+        events.push({
+          id: `google-busy-${rangeIndex}-${rangeStart.toISOString()}`,
+          source: "google_busy",
+          user_name: "Ocupado (Google)",
+          scheduled_time: rangeStart.toISOString(),
+          status: "confirmed",
+          appointment_type: "google_busy",
+          channel: "google",
+        });
+      }
+    });
+
+    return events;
+  }, [googleBusyRanges]);
+
+  const calendarAppointments = useMemo(
+    () => [...filteredAppointments, ...googleBusyEvents],
+    [filteredAppointments, googleBusyEvents]
+  );
+
   /* =========================
      UI
      ========================= */
@@ -276,21 +378,21 @@ export default function ShowAppointments({ refreshKey = 0 }) {
       {/* 📅 Calendar Views */}
       {!loading && viewMode === "day" && (
         <DayView
-          appointments={filteredAppointments}
+          appointments={calendarAppointments}
           currentDate={currentDate}
         />
       )}
 
       {!loading && viewMode === "week" && (
         <WeekView
-          appointments={filteredAppointments}
+          appointments={calendarAppointments}
           currentDate={currentDate}
         />
       )}
 
       {!loading && viewMode === "month" && (
         <MonthView
-          appointments={filteredAppointments}
+          appointments={calendarAppointments}
           currentDate={currentDate}
         />
       )}

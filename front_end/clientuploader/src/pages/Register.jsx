@@ -47,12 +47,6 @@ export default function Register() {
         return;
       }
 
-      if (!data.session) {
-        toast.success(t("account_created_check_email"));
-        setTimeout(() => navigate("/login"), 3000);
-        return;
-      }
-
       const initRes = await fetch(`${import.meta.env.VITE_API_URL}/initialize_user`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -64,6 +58,12 @@ export default function Register() {
 
       if (!initRes.ok) {
         toast.error(t("error_initializing_account"));
+        return;
+      }
+
+      if (!data.session) {
+        toast.success(t("account_created_check_email"));
+        setTimeout(() => navigate("/login"), 3000);
         return;
       }
 

@@ -50,8 +50,12 @@ export default function MonthView({ appointments, currentDate }) {
                 <div style={dateLabel}>{date.getDate()}</div>
 
                 {dayEvents.map((e) => (
-                  <div key={e.id} style={eventBadge}>
-                    {new Date(e.scheduled_time).getHours()}:00 {e.user_name}
+                  <div
+                    key={e.id}
+                    style={e.source === "google_busy" ? googleBusyBadge : eventBadge}
+                  >
+                    {new Date(e.scheduled_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{" "}
+                    {e.source === "google_busy" ? "Ocupado (Google)" : e.user_name}
                   </div>
                 ))}
               </div>
@@ -121,4 +125,15 @@ const eventBadge = {
   padding: "0.2rem 0.3rem",
   marginBottom: 2,
   overflowWrap: "anywhere",
+};
+
+const googleBusyBadge = {
+  fontSize: "0.7rem",
+  backgroundColor: "#FFE9E5",
+  border: "1px solid #E85D4A",
+  borderRadius: 6,
+  padding: "0.2rem 0.3rem",
+  marginBottom: 2,
+  overflowWrap: "anywhere",
+  color: "#8A2E23",
 };

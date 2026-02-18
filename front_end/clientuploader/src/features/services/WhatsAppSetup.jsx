@@ -3,6 +3,7 @@ import { supabase } from "../../lib/supabaseClient";
 import axios from "axios";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { trackClientEvent } from "../../lib/tracking";
 import "../../components/ui/internal-admin-responsive.css";
 
 const API = import.meta.env.VITE_API_URL;
@@ -106,6 +107,19 @@ export default function WhatsAppSetup() {
       setIsLocked(true);
       setWaToken("");
       setStatus({ message: t("wa_success"), type: "success" });
+
+      if (clientId) {
+        void trackClientEvent({
+          clientId,
+          name: "Funnel_Channel_Connected",
+          category: "funnel",
+          label: "whatsapp",
+          value: provider,
+          eventKey: "funnel_channel_connected:whatsapp",
+          metadata: { channel: "whatsapp", provider },
+          dedupeLocal: true,
+        });
+      }
     } catch (err) {
       console.error(err);
       setStatus({ message: t("wa_error_linking"), type: "error" });
