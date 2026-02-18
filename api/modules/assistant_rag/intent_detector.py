@@ -22,7 +22,7 @@ SPANISH_KEYWORDS = [
     "horarios disponibles", "disponibilidad para agendar",
     # palabras sueltas (se validan con guardas abajo)
     "agendar", "cita", "sesion", "reagendar", "cambiar mi cita", "modificar mi cita",
-    "confirmar cita", "horario", "horarios", "disponible", "disponibilidad",
+    "confirmar cita", "horario", "horarios", "disponibilidad",
 ]
 
 ENGLISH_KEYWORDS = [
@@ -34,7 +34,7 @@ ENGLISH_KEYWORDS = [
     "reschedule appointment", "reschedule meeting", "change my appointment",
     "confirm appointment", "book a session", "available schedule",
     # palabras sueltas (validadas con guardas)
-    "schedule", "appointment", "meeting", "available", "availability", "book", "slot", "slots",
+    "schedule", "appointment", "meeting", "availability", "book", "slot", "slots",
 ]
 
 # --- Guardas anti falsos positivos (contextos no transaccionales) ---
@@ -46,6 +46,18 @@ NEGATIVE_SPANISH = [
 NEGATIVE_ENGLISH = [
     "political agenda", "event agenda", "my agenda", "weekly agenda",
     "office hours", "business hours", "class schedule", "school schedule",
+]
+
+COMMERCIAL_KEYWORDS = [
+    "plan", "planes", "pricing", "price", "prices", "subscription", "billing",
+    "precio", "precios", "suscripcion", "suscripción", "facturacion", "facturación",
+    "cost", "coste", "cuanto", "cuánto", "upgrade", "downgrade",
+]
+
+SCHEDULE_ACTION_KEYWORDS = [
+    "agendar", "reservar", "reagendar", "cita", "citas", "sesion", "sesión",
+    "book", "schedule", "appointment", "reschedule", "slot", "slots",
+    "horario", "horarios", "disponibilidad", "availability",
 ]
 
 # --- Patrones útiles ---
@@ -65,6 +77,10 @@ def _contains_any(haystack: str, needles: list[str]) -> bool:
 
 def _looks_like_schedule_intent(msg_norm: str) -> bool:
     if not msg_norm:
+        return False
+
+    # Si es claramente comercial (planes/precios) sin acción de agenda, NO calendar.
+    if _contains_any(msg_norm, COMMERCIAL_KEYWORDS) and not _contains_any(msg_norm, SCHEDULE_ACTION_KEYWORDS):
         return False
 
     # 🚀 1. Detección dura: priorizar intención de agendar aunque existan saludos

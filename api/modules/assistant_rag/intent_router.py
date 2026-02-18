@@ -46,8 +46,8 @@ PHONE_RE = re.compile(r"\+?\d[\d\s\-().]{7,}")
 NAME_LINE_RE = re.compile(r"^[A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:[\s\-'][A-Za-zÁÉÍÓÚÑáéíóúñ]+)+$")
 
 AGENDA_KEYWORDS = {
-    "agendar", "agenda", "cita", "sesión", "sesion", "reservar", "disponible",
-    "horario", "book", "schedule", "appointment", "available", "slot", "slots"
+    "agendar", "agenda", "cita", "sesión", "sesion", "reservar",
+    "horario", "book", "schedule", "appointment", "slot", "slots"
 }
 
 # ============================================================
@@ -169,6 +169,21 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
     RESET = "\033[0m"
 
     text = (message or "").lower().strip()
+
+    PRICING_HINTS = {
+        "plan", "planes", "pricing", "price", "prices", "subscription", "billing",
+        "precio", "precios", "suscripción", "suscripcion", "coste", "cost", "cuanto", "cuánto",
+    }
+    SCHEDULING_HINTS = {
+        "agendar", "reservar", "reagendar", "cita", "citas", "sesion", "sesión",
+        "book", "schedule", "appointment", "reschedule", "slot", "slots",
+        "horario", "horarios", "disponibilidad", "availability",
+    }
+
+    # Priorizar preguntas comerciales simples (planes/precios) para evitar falsos positivos.
+    if any(k in text for k in PRICING_HINTS) and not any(k in text for k in SCHEDULING_HINTS):
+        upsert_state(client_id, session_id, {"intent": None})
+        return "rag"
 
     GREETINGS = {"hola", "buenas", "hey", "hi", "hello"}
     GENERIC_INFO = {
