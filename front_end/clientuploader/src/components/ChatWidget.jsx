@@ -70,7 +70,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [calendarError, setCalendarError] = useState("");
   const [calendarTimezone, setCalendarTimezone] = useState("");
   const [calendarEnabled, setCalendarEnabled] = useState(true);
-  const [showAgendaButton, setShowAgendaButton] = useState(true);
+  const [showAgendaButton, setShowAgendaButton] = useState(false);
   const [selectedCalendarSlot, setSelectedCalendarSlot] = useState(null);
   const [bookingName, setBookingName] = useState("");
   const [bookingEmail, setBookingEmail] = useState("");
@@ -98,13 +98,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     const handleViewMessage = (event) => {
       const payload = event?.data;
       if (!payload || payload.type !== "EVOLVIAN_WIDGET_VIEW") return;
-      if (payload.view === "calendar" && calendarEnabled) setActivePanel("calendar");
+      if (payload.view === "calendar" && calendarEnabled && showAgendaButton) setActivePanel("calendar");
       if (payload.view === "chat") setActivePanel("chat");
     };
 
     window.addEventListener("message", handleViewMessage);
     return () => window.removeEventListener("message", handleViewMessage);
-  }, [calendarEnabled]);
+  }, [calendarEnabled, showAgendaButton]);
 
   // =============================
   // 🧠 Generar sessionId persistente
@@ -394,7 +394,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         const data = await res.json();
         if (!res.ok) throw new Error(data?.detail || "No se pudo cargar visibilidad de agenda");
 
-        const showAgenda = Boolean(data?.show_agenda_in_chat_widget ?? true);
+        const showAgenda = Boolean(data?.show_agenda_in_chat_widget ?? false);
         const status = String(data?.calendar_status || "inactive").toLowerCase();
         setShowAgendaButton(showAgenda);
         setCalendarEnabled(status === "active");
@@ -403,8 +403,11 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
           setActivePanel("chat");
         }
       } catch {
-        // Fail-open for visibility: keep button visible to avoid regressions caused by transient API failures.
-        setShowAgendaButton(true);
+        // Fail-closed for visibility: keep agenda hidden unless explicitly enabled.
+        setShowAgendaButton(false);
+        if (activePanel === "calendar") {
+          setActivePanel("chat");
+        }
       }
     };
 

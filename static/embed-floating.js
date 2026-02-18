@@ -23,7 +23,9 @@
   console.log("✅ Evolvian Floating cargado con clientId:", clientId);
 
  const baseOrigin = "https://evolvian-assistant.onrender.com/static";
+  const apiOrigin = baseOrigin.replace(/\/static$/, "");
 //const baseOrigin = "http://localhost:8001/static";
+  let showScheduleFlag = false;
   // 🟦 Botón flotante
   let isOpen = false;
   const button = document.createElement("button");
@@ -116,6 +118,23 @@
     display: "none",
   });
 
+  async function loadScheduleVisibility() {
+    try {
+      const res = await fetch(
+        `${apiOrigin}/widget/calendar/visibility?public_client_id=${encodeURIComponent(clientId)}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || "No se pudo cargar visibilidad");
+      const isVisible = Boolean(data?.show_agenda_in_chat_widget ?? false);
+      const calendarStatus = String(data?.calendar_status || "inactive").toLowerCase();
+      showScheduleFlag = isVisible && calendarStatus === "active";
+    } catch {
+      showScheduleFlag = false;
+    }
+  }
+
+  loadScheduleVisibility();
+
   function postWidgetView(view) {
     try {
       iframe.contentWindow?.postMessage(
@@ -144,7 +163,7 @@
     isOpen = !isOpen;
     if (isOpen) {
       iframe.style.display = "block";
-      scheduleFlag.style.display = "block";
+      scheduleFlag.style.display = showScheduleFlag ? "block" : "none";
       setTimeout(() => {
         iframe.style.transform = "translateY(0)";
         iframe.style.opacity = "1";
@@ -159,6 +178,7 @@
   });
 
   scheduleFlag.addEventListener("click", () => {
+    if (!showScheduleFlag) return;
     if (!isOpen) {
       isOpen = true;
       iframe.style.display = "block";

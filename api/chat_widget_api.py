@@ -198,7 +198,7 @@ def _get_widget_calendar_config(client_id: str) -> dict:
         "allow_same_day": True,
         "max_days_ahead": 365,
         "timezone": "UTC",
-        "show_agenda_in_chat_widget": True,
+        "show_agenda_in_chat_widget": False,
         "ai_scheduling_chat_enabled": True,
         "ai_scheduling_whatsapp_enabled": True,
     }
@@ -344,7 +344,7 @@ def get_widget_calendar_availability(
                 "counts_by_day": {},
                 "message": "Calendar is inactive for this client.",
             }
-        if not config.get("show_agenda_in_chat_widget", True):
+        if not config.get("show_agenda_in_chat_widget", False):
             return {
                 "available": False,
                 "timezone": config["timezone"],
@@ -477,7 +477,7 @@ def get_widget_calendar_visibility(public_client_id: str = Query(...)):
         client_id = get_client_id_from_public_client_id(public_client_id)
         config = _get_widget_calendar_config(client_id)
         return {
-            "show_agenda_in_chat_widget": bool(config.get("show_agenda_in_chat_widget", True)),
+            "show_agenda_in_chat_widget": bool(config.get("show_agenda_in_chat_widget", False)),
             "calendar_status": config.get("calendar_status") or "inactive",
             "ai_scheduling_chat_enabled": bool(config.get("ai_scheduling_chat_enabled", True)),
             "timezone": config.get("timezone") or "UTC",

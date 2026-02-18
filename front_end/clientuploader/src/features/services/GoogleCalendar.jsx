@@ -34,7 +34,7 @@ export default function GoogleCalendarSettings() {
   const [bufferTime, setBufferTime] = useState(15);
   const [allowSameDay, setAllowSameDay] = useState(true);
   const [timezone, setTimezone] = useState("America/Mexico_City");
-  const [showAgendaInChatWidget, setShowAgendaInChatWidget] = useState(true);
+  const [showAgendaInChatWidget, setShowAgendaInChatWidget] = useState(false);
   const [aiSchedulingChatEnabled, setAiSchedulingChatEnabled] = useState(true);
   const [aiSchedulingWhatsappEnabled, setAiSchedulingWhatsappEnabled] = useState(true);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -97,7 +97,7 @@ export default function GoogleCalendarSettings() {
         buffer_minutes: Number(source.buffer_minutes ?? 15),
         allow_same_day: parseBool(source.allow_same_day, true),
         timezone: source.timezone ?? "America/Mexico_City",
-        show_agenda_in_chat_widget: parseBool(source.show_agenda_in_chat_widget, true),
+        show_agenda_in_chat_widget: parseBool(source.show_agenda_in_chat_widget, false),
         ai_scheduling_chat_enabled: parseBool(source.ai_scheduling_chat_enabled, true),
         ai_scheduling_whatsapp_enabled: parseBool(source.ai_scheduling_whatsapp_enabled, true),
       };
@@ -114,7 +114,7 @@ export default function GoogleCalendarSettings() {
       buffer_minutes: Number(bufferTime),
       allow_same_day: parseBool(allowSameDay, true),
       timezone,
-      show_agenda_in_chat_widget: parseBool(showAgendaInChatWidget, true),
+      show_agenda_in_chat_widget: parseBool(showAgendaInChatWidget, false),
       ai_scheduling_chat_enabled: parseBool(aiSchedulingChatEnabled, true),
       ai_scheduling_whatsapp_enabled: parseBool(aiSchedulingWhatsappEnabled, true),
     };
@@ -130,7 +130,7 @@ export default function GoogleCalendarSettings() {
     setBufferTime(Number(source.buffer_minutes ?? 15));
     setAllowSameDay(parseBool(source.allow_same_day, true));
     setTimezone(source.timezone ?? "America/Mexico_City");
-    setShowAgendaInChatWidget(parseBool(source.show_agenda_in_chat_widget, true));
+    setShowAgendaInChatWidget(parseBool(source.show_agenda_in_chat_widget, false));
     setAiSchedulingChatEnabled(parseBool(source.ai_scheduling_chat_enabled, true));
     setAiSchedulingWhatsappEnabled(parseBool(source.ai_scheduling_whatsapp_enabled, true));
     setLastSavedSnapshot(buildSnapshot(source));
@@ -251,7 +251,7 @@ export default function GoogleCalendarSettings() {
         buffer_minutes: Number(bufferTime),
         allow_same_day: parseBool(allowSameDay, true),
         timezone,
-        show_agenda_in_chat_widget: parseBool(showAgendaInChatWidget, true),
+        show_agenda_in_chat_widget: parseBool(showAgendaInChatWidget, false),
         ai_scheduling_chat_enabled: parseBool(aiSchedulingChatEnabled, true),
         ai_scheduling_whatsapp_enabled: parseBool(aiSchedulingWhatsappEnabled, true),
       };

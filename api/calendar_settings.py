@@ -33,7 +33,7 @@ class CalendarSettingsPayload(BaseModel):
     buffer_minutes: int = 15
     allow_same_day: bool = True
     timezone: str = "America/Mexico_City"
-    show_agenda_in_chat_widget: bool = True
+    show_agenda_in_chat_widget: bool = False
     ai_scheduling_chat_enabled: bool = True
     ai_scheduling_whatsapp_enabled: bool = True
 
