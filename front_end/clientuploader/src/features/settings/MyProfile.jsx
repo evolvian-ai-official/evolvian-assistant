@@ -3,6 +3,7 @@ import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import countries from "../../assets/countries.json";
 import { authFetch, getAuthHeaders } from "../../lib/authFetch";
+import "../../components/ui/internal-admin-responsive.css";
 
 /* =========================
    Static Dropdown Options
@@ -288,8 +289,8 @@ export default function MyProfile() {
 
   if (loading) {
     return (
-      <div style={loadingStyle}>
-        <div style={spinner}></div>
+      <div className="ia-loader" style={loadingStyle}>
+        <div className="ia-spinner" style={spinner}></div>
         <p>{t("loading_profile") || "Loading profile..."}</p>
       </div>
     );
@@ -300,7 +301,7 @@ export default function MyProfile() {
   ========================= */
 
   return (
-    <form onSubmit={handleSubmit} style={container}>
+    <form onSubmit={handleSubmit} style={container} className="ia-stack-md">
       <h3 style={sectionTitle}>{t("my_profile")}</h3>
 
       <div style={card}>
@@ -437,24 +438,25 @@ function Select({ label, options, ...props }) {
 const container = {
   display: "flex",
   flexDirection: "column",
-  gap: "1.5rem",
+  gap: "1rem",
 };
 
 const sectionTitle = {
-  fontSize: "1.2rem",
+  fontSize: "clamp(1rem, 0.95rem + 0.3vw, 1.2rem)",
   fontWeight: "600",
   color: "#274472",
+  margin: 0,
 };
 
 const card = {
   backgroundColor: "#ffffff",
   border: "1px solid #ededed",
   borderRadius: "12px",
-  padding: "1.5rem",
+  padding: "clamp(0.9rem, 0.8rem + 0.7vw, 1.5rem)",
   boxShadow: "0 4px 16px rgba(39,68,114,0.05)",
   display: "flex",
   flexDirection: "column",
-  gap: "1rem",
+  gap: "0.8rem",
 };
 
 const inputGroup = {
@@ -470,10 +472,13 @@ const labelStyle = {
 };
 
 const inputStyle = {
-  padding: "8px 10px",
-  borderRadius: "6px",
+  padding: "10px 12px",
+  borderRadius: "10px",
   border: "1px solid #ededed",
   outline: "none",
+  fontSize: "0.94rem",
+  color: "#274472",
+  backgroundColor: "#FFFFFF",
 };
 
 const saveButton = {
@@ -482,9 +487,11 @@ const saveButton = {
   color: "white",
   padding: "10px 16px",
   border: "none",
-  borderRadius: "6px",
+  borderRadius: "10px",
   cursor: "pointer",
   fontWeight: "bold",
+  width: "100%",
+  maxWidth: 260,
 };
 
 const loadingStyle = {
@@ -492,14 +499,10 @@ const loadingStyle = {
   flexDirection: "column",
   alignItems: "center",
   gap: "1rem",
-  padding: "2rem",
+  padding: "1rem",
 };
 
 const spinner = {
   width: 36,
   height: 36,
-  border: "4px solid #ededed",
-  borderTop: "4px solid #4a90e2",
-  borderRadius: "50%",
-  animation: "spin 1s linear infinite",
 };

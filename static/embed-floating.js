@@ -46,6 +46,7 @@
     alignItems: "center",
     justifyContent: "center",
     background: "white",
+    transition: "opacity 180ms ease, transform 200ms ease, box-shadow 180ms ease",
   });
 
   // 🔹 Logo Evolvian (estado cerrado)
@@ -59,26 +60,41 @@
     borderRadius: "50%",
   });
 
-  // 🔹 Ícono de cierre (estado abierto)
-  const closeIcon = document.createElement("span");
-  closeIcon.innerText = "×";
-  Object.assign(closeIcon.style, {
-    fontSize: "32px",
-    color: "white",
-    background: "#4a90e2",
-    width: "100%",
-    height: "100%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  });
-
   // Estado inicial → logo
   button.appendChild(logo);
 
+  // 🔹 Botón de cierre (dockeado al widget cuando está abierto)
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Cerrar asistente");
+  closeButton.textContent = "×";
+  Object.assign(closeButton.style, {
+    position: "fixed",
+    zIndex: "10001",
+    width: "42px",
+    height: "42px",
+    borderRadius: "14px",
+    border: "1px solid rgba(31, 62, 105, 0.18)",
+    background: "linear-gradient(155deg, rgba(255,255,255,0.96) 0%, rgba(241,247,255,0.92) 100%)",
+    color: "#1f3e69",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxShadow: "0 12px 28px rgba(21, 45, 79, 0.26)",
+    cursor: "pointer",
+    backdropFilter: "blur(10px)",
+    fontSize: "24px",
+    lineHeight: "1",
+    fontWeight: "500",
+    opacity: "0",
+    transform: "scale(0.85)",
+    pointerEvents: "none",
+    transition: "opacity 180ms ease, transform 180ms ease, box-shadow 180ms ease",
+  });
+
   // 🟦 Iframe oculto (ventana flotante, tamaño fijo)
   // Bump this when widget UI changes to force fresh widget shell on client sites.
-  const widgetBuildVersion = "2026-02-17-01";
+  const widgetBuildVersion = "2026-02-18-02";
   const iframe = document.createElement("iframe");
   iframe.src = `${baseOrigin}/widget.html?public_client_id=${encodeURIComponent(clientId)}&v=${encodeURIComponent(widgetBuildVersion)}`;
   Object.assign(iframe.style, {
@@ -118,6 +134,47 @@
     display: "none",
   });
 
+  function applyLauncherVisibility() {
+    if (isOpen) {
+      button.style.opacity = "0";
+      button.style.transform = "scale(0.82)";
+      button.style.pointerEvents = "none";
+    } else {
+      button.style.opacity = "1";
+      button.style.transform = "scale(1)";
+      button.style.pointerEvents = "auto";
+    }
+  }
+
+  function applyCloseButtonPosition() {
+    const isMobile = window.matchMedia("(max-width: 640px)").matches;
+    if (isMobile) {
+      closeButton.style.top = "16px";
+      closeButton.style.right = "16px";
+      closeButton.style.bottom = "auto";
+      closeButton.style.width = "40px";
+      closeButton.style.height = "40px";
+    } else {
+      closeButton.style.top = "auto";
+      closeButton.style.right = "8px";
+      closeButton.style.bottom = "618px";
+      closeButton.style.width = "42px";
+      closeButton.style.height = "42px";
+    }
+  }
+
+  function applyCloseButtonVisibility() {
+    if (isOpen) {
+      closeButton.style.opacity = "1";
+      closeButton.style.transform = "scale(1)";
+      closeButton.style.pointerEvents = "auto";
+    } else {
+      closeButton.style.opacity = "0";
+      closeButton.style.transform = "scale(0.85)";
+      closeButton.style.pointerEvents = "none";
+    }
+  }
+
   async function loadScheduleVisibility() {
     try {
       const res = await fetch(
@@ -154,14 +211,15 @@
     setTimeout(() => {
       iframe.style.display = "none";
     }, 300);
-    button.innerHTML = "";
-    button.appendChild(logo);
+    applyLauncherVisibility();
+    applyCloseButtonVisibility();
   }
 
   // 🟦 Toggle mostrar/ocultar
   button.addEventListener("click", () => {
     isOpen = !isOpen;
     if (isOpen) {
+      applyCloseButtonPosition();
       iframe.style.display = "block";
       scheduleFlag.style.display = showScheduleFlag ? "block" : "none";
       setTimeout(() => {
@@ -172,23 +230,23 @@
     } else {
       closeWidget();
     }
-
-    button.innerHTML = "";
-    button.appendChild(isOpen ? closeIcon : logo);
+    applyLauncherVisibility();
+    applyCloseButtonVisibility();
   });
 
   scheduleFlag.addEventListener("click", () => {
     if (!showScheduleFlag) return;
     if (!isOpen) {
       isOpen = true;
+      applyCloseButtonPosition();
       iframe.style.display = "block";
       scheduleFlag.style.display = "block";
       setTimeout(() => {
         iframe.style.transform = "translateY(0)";
         iframe.style.opacity = "1";
       }, 10);
-      button.innerHTML = "";
-      button.appendChild(closeIcon);
+      applyLauncherVisibility();
+      applyCloseButtonVisibility();
     }
     postWidgetView("calendar");
   });
@@ -206,8 +264,20 @@
     if (isOpen) closeWidget();
   });
 
+  window.addEventListener("resize", () => {
+    applyCloseButtonPosition();
+  });
+
+  closeButton.addEventListener("click", () => {
+    if (isOpen) closeWidget();
+  });
+
   // 🟦 Insertar en el DOM
+  applyCloseButtonPosition();
+  applyLauncherVisibility();
+  applyCloseButtonVisibility();
   document.body.appendChild(button);
   document.body.appendChild(iframe);
   document.body.appendChild(scheduleFlag);
+  document.body.appendChild(closeButton);
 })();

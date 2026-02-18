@@ -1,20 +1,24 @@
 import { useLanguage } from "../../contexts/LanguageContext";
+import "../../components/ui/internal-admin-responsive.css";
 
 export default function ServicesDashboard() {
   const { t } = useLanguage();
 
   return (
-    <div style={{ padding: "2rem" }}>
-      <h2 style={{ color: "#274472" }}>🧰 {t("services_available_title")}</h2>
-      <ul style={{ marginTop: "1rem", fontSize: "1.1rem" }}>
-        <li>🧠 Chat Assistant</li>
-        <li>✉️ Email</li>
-        <li>💬 WhatsApp</li>
-        <li>🗓️ Appointments</li>
-      </ul>
-      <p style={{ marginTop: "1rem", color: "#666" }}>
-        {t("services_use_sidebar")}
-      </p>
+    <div className="ia-page">
+      <div className="ia-shell ia-services-shell">
+        <section className="ia-card" style={{ marginBottom: 0 }}>
+          <h2 className="ia-services-title">🧰 {t("services_available_title")}</h2>
+          <p className="ia-services-subtitle">{t("services_use_sidebar")}</p>
+
+          <div className="ia-services-grid">
+            <div className="ia-service-item">🧠 Chat Assistant</div>
+            <div className="ia-service-item">✉️ Email</div>
+            <div className="ia-service-item">💬 WhatsApp</div>
+            <div className="ia-service-item">🗓️ Appointments</div>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

@@ -206,7 +206,8 @@ async def process_gmail_message(email_address: str, history_id: str | None):
         fake_request._body = json.dumps({
             "from_email": email_address,
             "subject": subject,
-            "message": snippet
+            "message": snippet,
+            "provider": "gmail",
         }).encode("utf-8")
 
         try:
@@ -248,19 +249,7 @@ async def process_gmail_message(email_address: str, history_id: str | None):
         except Exception as e:
             print(f"⚠️ Error marcando mensaje leído: {e}")
 
-        # 🔟 Guardar historial Evolvian
-        try:
-            supabase.table("history").insert({
-                "client_id": client_id,
-                "question": snippet,
-                "answer": answer,
-                "created_at": datetime.utcnow().isoformat(),
-                "channel": "email"
-            }).execute()
-        except Exception as e:
-            print(f"⚠️ Error insertando en history: {e}")
-
-        # 11️⃣ Registrar como procesado
+        # 🔟 Registrar como procesado
         try:
             supabase.table("gmail_processed").insert({
                 "client_id": client_id,

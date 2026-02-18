@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 import traceback
 
 # === Dependencias del proyecto ===
-from api.modules.assistant_rag.supabase_client import supabase
+from api.modules.assistant_rag.supabase_client import supabase, save_history
 from api.modules.assistant_rag.rag_pipeline import ask_question
 
 # ============================================================
@@ -320,7 +320,13 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
 # ============================================================
 # 🎯 Orquestador principal (router + handlers)
 # ============================================================
-async def process_user_message(client_id: str, session_id: str, message: str, channel: str = "chat"):
+async def process_user_message(
+    client_id: str,
+    session_id: str,
+    message: str,
+    channel: str = "chat",
+    provider: str = "internal",
+):
     """
     Entrada principal de intents:
     - Detecta idioma
@@ -335,19 +341,62 @@ async def process_user_message(client_id: str, session_id: str, message: str, ch
 
     # route_message can return a direct user-facing blocked message.
     if route not in {"calendar", "rag"}:
+        save_history(
+            client_id,
+            session_id,
+            "user",
+            message,
+            channel=channel,
+            provider=provider,
+            source_type="appointment",
+        )
+        save_history(
+            client_id,
+            session_id,
+            "assistant",
+            str(route),
+            channel=channel,
+            provider=provider,
+            source_type="appointment",
+        )
         return route
 
     # 📅 Flujo de calendario
     if route == "calendar":
         print("📅 Routing → calendar")
         if _calendar_handler:
-            return await _calendar_handler(client_id, message, session_id, channel, lang)
+            answer = await _calendar_handler(client_id, message, session_id, channel, lang)
+            save_history(
+                client_id,
+                session_id,
+                "user",
+                message,
+                channel=channel,
+                provider=provider,
+                source_type="appointment",
+            )
+            save_history(
+                client_id,
+                session_id,
+                "assistant",
+                str(answer),
+                channel=channel,
+                provider=provider,
+                source_type="appointment",
+            )
+            return answer
         return "🗓️ It seems you’d like to schedule an appointment, but this feature isn’t available yet."
 
     # 💬 Flujo RAG
     print("💬 Routing → RAG")
     base_message = [{"role": "user", "content": message}]
-    answer = ask_question(base_message, client_id, session_id=session_id)
+    answer = ask_question(
+        base_message,
+        client_id,
+        session_id=session_id,
+        channel=channel,
+        provider=provider,
+    )
     if lang == "es" and answer and not answer.strip().endswith("."):
         answer += "."
     return answer

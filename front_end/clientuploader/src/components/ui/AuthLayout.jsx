@@ -1,8 +1,22 @@
-// src/components/ui/AuthLayout.jsx
-export default function AuthLayout({ children }) {
+import "./auth-layout.css";
+
+export default function AuthLayout({
+  children,
+  mediaSrc = null,
+  mediaAlt = "Evolvian illustration",
+}) {
+  const hasMedia = Boolean(mediaSrc);
+
   return (
-    <div className="min-h-screen w-screen bg-[#0f1c2e] flex items-center justify-center px-4">
-      {children}
+    <div className="auth-page">
+      <div className={hasMedia ? "auth-frame" : "auth-frame auth-frame--single"}>
+        {hasMedia && (
+          <div className="auth-frame-media">
+            <img src={mediaSrc} alt={mediaAlt} />
+          </div>
+        )}
+        <div className="auth-frame-panel">{children}</div>
+      </div>
     </div>
   );
 }

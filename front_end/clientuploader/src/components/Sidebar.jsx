@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabaseClient";
 import { authFetch } from "../lib/authFetch";
 import { useLanguage } from "../contexts/LanguageContext";
 
-export default function Sidebar() {
+export default function Sidebar({ mobile = false, onNavigate }) {
   const navigate = useNavigate();
   const clientId = useClientId();
   const { t } = useLanguage();
@@ -65,6 +65,7 @@ export default function Sidebar() {
   }, [clientId]);
 
   const handleLogout = async () => {
+    onNavigate?.();
     const persistedLang = localStorage.getItem("lang");
     await supabase.auth.signOut();
     localStorage.removeItem("client_id");
@@ -81,7 +82,7 @@ export default function Sidebar() {
   const isEnabled = (feature) => features.includes(feature);
 
   return (
-    <aside style={asideStyle}>
+    <aside style={mobile ? asideStyleMobile : asideStyle}>
       <div>
         <div style={logoContainer}>
           <div
@@ -112,6 +113,7 @@ export default function Sidebar() {
             hovered={hovered}
             setHovered={setHovered}
             id="dashboard"
+            onNavigate={onNavigate}
           />
           <HoverLink
             label={`${t("upload")}`}
@@ -119,6 +121,7 @@ export default function Sidebar() {
             hovered={hovered}
             setHovered={setHovered}
             id="upload"
+            onNavigate={onNavigate}
           />
           <HoverLink
             label={`${t("history")}`}
@@ -126,6 +129,7 @@ export default function Sidebar() {
             hovered={hovered}
             setHovered={setHovered}
             id="history"
+            onNavigate={onNavigate}
           />
 
           {[
@@ -162,6 +166,9 @@ export default function Sidebar() {
                   }}
                   onMouseEnter={() => setHovered(id)}
                   onMouseLeave={() => setHovered(null)}
+                  onClick={() => {
+                    if (enabled) onNavigate?.();
+                  }}
                 >
                   {label}
                 </Link>
@@ -181,6 +188,7 @@ export default function Sidebar() {
             hovered={hovered}
             setHovered={setHovered}
             id="settings"
+            onNavigate={onNavigate}
           />
         </nav>
       </div>
@@ -194,13 +202,14 @@ export default function Sidebar() {
   );
 }
 
-function HoverLink({ to, label, hovered, setHovered, id }) {
+function HoverLink({ to, label, hovered, setHovered, id, onNavigate }) {
   return (
     <div style={navItemBlock}>
       <Link
         to={to}
         onMouseEnter={() => setHovered(id)}
         onMouseLeave={() => setHovered(null)}
+        onClick={() => onNavigate?.()}
         style={{
           ...linkStyle,
           backgroundColor: hovered === id ? "#EAF3FC" : "transparent",
@@ -225,11 +234,26 @@ const asideStyle = {
   background: "#FFFFFF",
   color: "#274472",
   padding: "2rem 1.5rem",
-  minHeight: "100vh",
+  minHeight: "100%",
+  height: "100%",
   display: "flex",
   flexDirection: "column",
   justifyContent: "space-between",
   borderRight: "1px solid #EDEDED",
+  flexShrink: 0,
+};
+
+const asideStyleMobile = {
+  width: "100%",
+  height: "100%",
+  minHeight: "100%",
+  background: "#FFFFFF",
+  color: "#274472",
+  padding: "1.25rem 1rem",
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "space-between",
+  overflowY: "auto",
 };
 
 const logoContainer = {

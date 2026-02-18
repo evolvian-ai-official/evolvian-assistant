@@ -25,9 +25,13 @@ export default function ChatWidgetPage() {
     <div
       style={{
         margin: 0,
-        padding: 0,
+        boxSizing: "border-box",
         width: "100vw",
-        height: "100vh",
+        height: "100dvh",
+        paddingTop: "calc(env(safe-area-inset-top, 0px) + 0.5rem)",
+        paddingRight: "calc(env(safe-area-inset-right, 0px) + 0.5rem)",
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)",
+        paddingLeft: "calc(env(safe-area-inset-left, 0px) + 0.5rem)",
         backgroundColor: "#ededed",
         fontFamily: "system-ui, sans-serif",
         display: "flex",
@@ -37,11 +41,11 @@ export default function ChatWidgetPage() {
     >
       <div
         style={{
-          width: "360px",
-          height: "520px",
+          width: "min(100%, 420px)",
+          height: "min(100%, 680px)",
           backgroundColor: "#ffffff",
-          border: "2px solid #4a90e2",
-          borderRadius: "16px",
+          border: "1px solid #4a90e2",
+          borderRadius: "clamp(12px, 2.5vw, 16px)",
           boxShadow: "0 6px 24px rgba(0,0,0,0.15)",
           overflow: "hidden",
         }}

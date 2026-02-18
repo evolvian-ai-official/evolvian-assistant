@@ -6,6 +6,7 @@ import { toast } from "../../components/ui/use-toast";
 import { authFetch } from "../../lib/authFetch";
 import { useLanguage } from "../../contexts/LanguageContext";
 import CreateAppointment from "./CreateAppointments";
+import "../../components/ui/internal-admin-responsive.css";
 
 
 export default function GoogleCalendarSettings() {
@@ -298,8 +299,8 @@ export default function GoogleCalendarSettings() {
     JSON.stringify(buildSnapshot()) !== JSON.stringify(lastSavedSnapshot);
 
   return (
-    <div id="evo-calendar-settings" style={pageStyle}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+    <div id="evo-calendar-settings" className="ia-page" style={pageStyle}>
+      <div className="ia-shell ia-services-shell" style={{ maxWidth: 1200 }}>
         {/* Header */}
         <div style={headerRow}>
           <img src="/logo-evolvian.svg" alt="Evolvian Logo" style={{ width: 56, height: 56, borderRadius: "50%" }} />
@@ -556,7 +557,7 @@ export default function GoogleCalendarSettings() {
               <button
                 onClick={handleSave}
                 disabled={saving || loadingSettings}
-                style={saveButton}
+                style={{ ...saveButton, width: isMobile ? "100%" : "auto" }}
               >
                 {saving ? t("saving") : t("save_settings")}
               </button>
@@ -598,15 +599,34 @@ function RuleSelect({ label, value, onChange, options }) {
 
 
 /* Estilos */
-const pageStyle = { padding: "2rem 3rem", backgroundColor: "#FFFFFF", color: "#274472", fontFamily: "system-ui, sans-serif", minHeight: "100vh" };
-const headerRow = { display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1rem" };
-const titleStyle = { fontSize: "1.8rem", fontWeight: "bold", color: "#F5A623", margin: 0 };
-const subtitleStyle = { color: "#4A90E2", fontSize: "1rem", margin: 0 };
+const pageStyle = {
+  padding: "clamp(0.85rem, 0.7rem + 0.8vw, 1.4rem)",
+  backgroundColor: "#FFFFFF",
+  color: "#274472",
+  fontFamily: "system-ui, sans-serif",
+  minHeight: "100%",
+};
+const headerRow = {
+  display: "flex",
+  alignItems: "flex-start",
+  gap: "1rem",
+  marginBottom: "1rem",
+  flexWrap: "wrap",
+};
+const titleStyle = { fontSize: "clamp(1.35rem, 1.1rem + 1vw, 1.8rem)", fontWeight: "bold", color: "#F5A623", margin: 0 };
+const subtitleStyle = { color: "#4A90E2", fontSize: "clamp(0.92rem, 0.86rem + 0.3vw, 1rem)", margin: 0 };
 
 const toggleContainer = (isMobile) => ({ display: "flex", justifyContent: "center", gap: isMobile ? "0.5rem" : "0.75rem", margin: "1rem 0 1.5rem", flexWrap: "wrap" });
 const toggleButton = { border: "1px solid #EDEDED", borderRadius: 10, padding: "0.6rem 1.2rem", fontWeight: "bold", cursor: "pointer", transition: "all 0.2s ease", fontSize: "0.95rem" };
 
-const sectionStyle = { border: "1px solid #EDEDED", borderRadius: 14, backgroundColor: "#FFFFFF", padding: "1.5rem 2rem", marginBottom: "1.25rem", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" };
+const sectionStyle = {
+  border: "1px solid #EDEDED",
+  borderRadius: 14,
+  backgroundColor: "#FFFFFF",
+  padding: "clamp(0.9rem, 0.8rem + 0.8vw, 1.5rem)",
+  marginBottom: "1.1rem",
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+};
 const sectionTitle = { fontSize: "1.2rem", color: "#274472", fontWeight: "bold", margin: 0, marginBottom: 6 };
 const sectionHint = { color: "#7A7A7A", fontSize: "0.9rem", margin: "4px 0 12px" };
 const readonlyTimezone = { border: "1px solid #EDEDED", borderRadius: 8, padding: "0.6rem 0.8rem", fontSize: "0.9rem", color: "#274472", backgroundColor: "#F9FAFB" };
@@ -620,7 +640,7 @@ const dayButton = { border: "1px solid #EDEDED", borderRadius: 8, padding: "0.5r
 
 const timeRangeRow = { display: "flex", alignItems: "center", gap: "1rem", marginTop: "1rem", flexWrap: "wrap" };
 const labelStyle = { color: "#274472", fontSize: "0.9rem", fontWeight: 600 };
-const timeInput = { border: "1px solid #EDEDED", borderRadius: 8, padding: "0.4rem 0.8rem", fontSize: "0.9rem", color: "#274472" };
+const timeInput = { border: "1px solid #EDEDED", borderRadius: 8, padding: "0.4rem 0.8rem", fontSize: "0.9rem", color: "#274472", width: "min(100%, 180px)" };
 
 const rulesGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem", marginTop: "1rem" };
 const ruleBox = { display: "flex", flexDirection: "column", gap: "0.3rem" };
@@ -630,7 +650,7 @@ const selectStyle = { border: "1px solid #EDEDED", borderRadius: 8, padding: "0.
 const toggleRow = { display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "1rem" };
 const checkboxStyle = { width: 18, height: 18, accentColor: "#4A90E2", cursor: "pointer" };
 
-const saveButton = { backgroundColor: "#2EB39A", color: "#FFFFFF", border: "none", borderRadius: 10, padding: "0.8rem 1.6rem", fontWeight: "bold", fontSize: "0.95rem", cursor: "pointer" };
+const saveButton = { backgroundColor: "#2EB39A", color: "#FFFFFF", border: "none", borderRadius: 10, padding: "0.8rem 1.6rem", fontWeight: "bold", fontSize: "0.95rem", cursor: "pointer", minHeight: 42 };
 const dirtyWarningBox = { border: "1px solid #FFD8A8", borderRadius: 12, backgroundColor: "#FFF8ED", padding: "0.9rem 1rem", marginBottom: "1rem" };
 const skeletonTitle = { height: 16, width: 180, borderRadius: 8, backgroundColor: "#DCE8F8", animation: "evoSkeletonPulse 1.1s ease-in-out infinite", marginBottom: 12 };
 const skeletonRow = { display: "flex", gap: 12, marginBottom: 10 };

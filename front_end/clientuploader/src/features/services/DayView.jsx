@@ -39,25 +39,28 @@ const container = {
   border: "1px solid #EDEDED",
   borderRadius: 12,
   overflow: "hidden",
+  backgroundColor: "#FFFFFF",
 };
 
 const row = {
   display: "flex",
   borderBottom: "1px solid #F0F0F0",
-  minHeight: 60,
+  minHeight: "clamp(52px, 8vw, 60px)",
 };
 
 const hourColumn = {
-  width: 80,
+  width: "clamp(58px, 16vw, 80px)",
   padding: "0.5rem",
   fontSize: "0.8rem",
   color: "#999",
   borderRight: "1px solid #F0F0F0",
+  flex: "0 0 auto",
 };
 
 const eventColumn = {
   flex: 1,
   padding: "0.4rem",
+  minWidth: 0,
 };
 
 const eventCard = {
@@ -66,4 +69,6 @@ const eventCard = {
   borderRadius: 8,
   padding: "0.3rem 0.5rem",
   marginBottom: 4,
+  fontSize: "0.84rem",
+  overflowWrap: "anywhere",
 };

@@ -52,6 +52,7 @@ async def twilio_webhook(
             session_id=session_id,
             message=pregunta,
             channel="whatsapp",
+            provider="twilio",
         )
         print(f"🤖 Respuesta generada: {respuesta}")
         if not respuesta:

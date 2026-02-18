@@ -264,6 +264,60 @@
   text-decoration: underline;
 }
 
+@media (max-width: 900px) {
+  .confirm-overlay {
+    padding: 1rem;
+  }
+
+  .confirm-window {
+    flex-direction: column;
+    width: 100%;
+    max-height: 88dvh;
+    overflow-y: auto;
+  }
+
+  .confirm-left {
+    min-width: 0;
+    padding: 14px;
+  }
+
+  .confirm-logo {
+    width: 62px;
+  }
+
+  .confirm-right {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .plans-title {
+    font-size: 1.45rem;
+    margin-bottom: 1.2rem;
+  }
+
+  .plan-grid {
+    gap: 0.9rem;
+  }
+
+  .plan-card {
+    padding: 1rem;
+  }
+
+  .plan-header h3 {
+    font-size: 1.05rem;
+  }
+
+  .price {
+    font-size: 1rem;
+  }
+
+  .confirm-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

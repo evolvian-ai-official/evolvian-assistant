@@ -61,6 +61,7 @@ async def chat_email(request: Request):
         from_email = body["from_email"]
         message = body["message"].strip()
         subject = body.get("subject", "")
+        provider = (body.get("provider") or "gmail").strip().lower()
         session_id = str(uuid.uuid4())
         channel = "email"
 
@@ -104,7 +105,7 @@ async def chat_email(request: Request):
                 "es": "Has alcanzado el límite de esta conversación. Contáctanos por correo o WhatsApp. 💬"
             }
             msg = limit_messages.get(user_lang, limit_messages["en"])
-            save_history(client_id, session_id, "assistant", msg, channel)
+            save_history(client_id, session_id, "assistant", msg, channel, provider=provider)
             return {"answer": msg, "session_id": session_id, "limit_reached": True}
 
         # Historial reciente
@@ -127,12 +128,14 @@ async def chat_email(request: Request):
 
         # 🔥 Ejecutar pipeline RAG
         logging.info(f"📜 Contenido: {message}")
-        answer = ask_question(history_messages, client_id, session_id=session_id)
+        answer = ask_question(
+            history_messages,
+            client_id,
+            session_id=session_id,
+            channel=channel,
+            provider=provider,
+        )
         logging.info(f"✅ Respuesta generada correctamente desde el RAG.")
-
-        # 💾 Guardar historial
-        save_history(client_id, session_id, "user", message, channel)
-        save_history(client_id, session_id, "assistant", answer, channel)
 
         # Responder
         return {

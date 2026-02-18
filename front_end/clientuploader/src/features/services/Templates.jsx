@@ -1,9 +1,9 @@
-// src/features/templates/Templates.jsx
 import { useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import CreateTemplateModal from "./CreateTemplateModal";
 import TemplatesList from "./TemplatesList";
+import "../../components/ui/internal-admin-responsive.css";
 
 export default function Templates() {
   const clientId = useClientId();
@@ -12,63 +12,42 @@ export default function Templates() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   return (
-    <div style={{ padding: "2rem 3rem" }}>
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <div>
-          <h1 style={{ color: "#F5A623", fontSize: "1.8rem" }}>
-            📝 {t("templates_title")}
-          </h1>
-          <p style={{ color: "#4A90E2", marginTop: "0.5rem" }}>
-            {t("templates_subtitle")}
-          </p>
-        </div>
+    <div className="ia-page">
+      <div className="ia-shell ia-services-shell">
+        <section className="ia-card" style={{ marginBottom: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "0.75rem",
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <h1 className="ia-header-title">📝 {t("templates_title")}</h1>
+              <p className="ia-header-subtitle">{t("templates_subtitle")}</p>
+            </div>
 
-        <button
-          onClick={() => setShowModal(true)}
-          style={primaryButton}
-        >
-          ➕ {t("create_template_button")}
-        </button>
+            <button onClick={() => setShowModal(true)} className="ia-button ia-button-warning">
+              ➕ {t("create_template_button")}
+            </button>
+          </div>
+
+          <TemplatesList clientId={clientId} refreshKey={refreshKey} />
+
+          {showModal && (
+            <CreateTemplateModal
+              clientId={clientId}
+              onClose={() => setShowModal(false)}
+              onCreated={() => {
+                setShowModal(false);
+                setRefreshKey((k) => k + 1);
+              }}
+            />
+          )}
+        </section>
       </div>
-
-      {/* ✅ ALL templates */}
-      <TemplatesList
-        clientId={clientId}
-        refreshKey={refreshKey}
-      />
-
-      {/* Modal */}
-      {showModal && (
-        <CreateTemplateModal
-          clientId={clientId}
-          onClose={() => setShowModal(false)}
-          onCreated={() => {
-            setShowModal(false);
-            setRefreshKey((k) => k + 1); // 🔁 refetch limpio
-          }}
-        />
-      )}
     </div>
   );
 }
-
-/* ======================================================
-   Styles
-====================================================== */
-
-const primaryButton = {
-  backgroundColor: "#F5A623",
-  color: "#fff",
-  border: "none",
-  borderRadius: "8px",
-  padding: "0.5rem 1rem",
-  fontWeight: "bold",
-  cursor: "pointer",
-};

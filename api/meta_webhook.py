@@ -81,6 +81,7 @@ async def receive_whatsapp_message(request: Request):
             session_id=session_id,
             message=text,
             channel="whatsapp",
+            provider="meta",
         )
         print(f"💬 Respuesta generada por RAG: {response}")
 

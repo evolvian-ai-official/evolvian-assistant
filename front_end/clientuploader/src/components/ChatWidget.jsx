@@ -7,6 +7,32 @@ const ASSETS_BASE_URL =
   import.meta.env.VITE_WIDGET_ASSETS_URL ||
   "https://evolvian-assistant.onrender.com/static";
 
+const withAlpha = (color, alpha) => {
+  if (!color) return `rgba(17, 24, 39, ${alpha})`;
+
+  const rgbMatch = color.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (rgbMatch) {
+    return `rgba(${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}, ${alpha})`;
+  }
+
+  const hex = color.replace("#", "").trim();
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    const r = parseInt(hex[0] + hex[0], 16);
+    const g = parseInt(hex[1] + hex[1], 16);
+    const b = parseInt(hex[2] + hex[2], 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  return color;
+};
+
 export default function ChatWidget({ clientId: propClientId, usageLimit = 100 }) {
   const languageContext = useLanguage ? useLanguage() : null;
   const { t = (x) => x, lang = "es" } = languageContext || {};
@@ -49,6 +75,26 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     widgetHeight: 420,
     widgetRadius: 16,
   });
+  const [isMobileLayout, setIsMobileLayout] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 640px)").matches
+      : false
+  );
+  const aura = useMemo(
+    () => ({
+      wrapperBg: `radial-gradient(130% 120% at 0% 0%, ${withAlpha(theme.buttonColor, 0.15)} 0%, ${withAlpha(theme.backgroundColor, 0.98)} 44%, ${theme.backgroundColor} 100%)`,
+      panelShadow: `0 18px 42px ${withAlpha(theme.headerTextColor, 0.18)}`,
+      border: withAlpha(theme.headerTextColor, 0.08),
+      softBorder: withAlpha(theme.headerTextColor, 0.12),
+      headerBg: `linear-gradient(135deg, ${withAlpha(theme.headerColor, 0.96)} 0%, ${withAlpha(theme.buttonColor, 0.14)} 100%)`,
+      messagesBg: `linear-gradient(180deg, ${withAlpha(theme.backgroundColor, 0.84)} 0%, ${withAlpha(theme.buttonColor, 0.05)} 100%)`,
+      inputBg: withAlpha(theme.backgroundColor, 0.82),
+      inputBorder: withAlpha(theme.headerTextColor, 0.16),
+      mutedText: withAlpha(theme.headerTextColor, 0.58),
+      buttonShadow: `0 10px 24px ${withAlpha(theme.buttonColor, 0.28)}`,
+    }),
+    [theme]
+  );
 
   // =============================
   // 💬 Mensajería
@@ -105,6 +151,21 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     window.addEventListener("message", handleViewMessage);
     return () => window.removeEventListener("message", handleViewMessage);
   }, [calendarEnabled, showAgendaButton]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mediaQuery = window.matchMedia("(max-width: 640px)");
+    const onChange = (event) => setIsMobileLayout(event.matches);
+
+    setIsMobileLayout(mediaQuery.matches);
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", onChange);
+      return () => mediaQuery.removeEventListener("change", onChange);
+    }
+
+    mediaQuery.addListener(onChange);
+    return () => mediaQuery.removeListener(onChange);
+  }, []);
 
   // =============================
   // 🧠 Generar sessionId persistente
@@ -518,6 +579,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       </div>
     );
   }
+  const effectiveWidgetRadius = isMobileLayout ? 12 : theme.widgetRadius;
 
   // =============================
   // 💬 RENDER PRINCIPAL
@@ -527,10 +589,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       style={{
         ...styles.wrapper,
         position: "relative",
-        backgroundColor: theme.backgroundColor,
-        minHeight: `${theme.widgetHeight}px`,
-        borderRadius: `${theme.widgetRadius}px`,
+        background: aura.wrapperBg,
+        minHeight: isMobileLayout ? "100%" : `${theme.widgetHeight}px`,
+        borderRadius: `${effectiveWidgetRadius}px`,
         fontFamily: theme.fontFamily,
+        border: `1px solid ${aura.border}`,
+        boxShadow: aura.panelShadow,
+        backdropFilter: "blur(12px)",
       }}
     >
       {/* 🧠 Tooltip */}
@@ -542,9 +607,10 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             fontSize: "0.8rem",
             textAlign: "center",
             padding: "0.4rem 0.8rem",
-            borderTopLeftRadius: `${theme.widgetRadius}px`,
-            borderTopRightRadius: `${theme.widgetRadius}px`,
-            borderBottom: "1px solid #eee",
+            borderTopLeftRadius: `${effectiveWidgetRadius}px`,
+            borderTopRightRadius: `${effectiveWidgetRadius}px`,
+            borderBottom: `1px solid ${aura.softBorder}`,
+            backdropFilter: "blur(6px)",
           }}
         >
           {tooltipText}
@@ -552,8 +618,16 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       )}
 
       {/* Header */}
-      <div style={{ ...styles.header, backgroundColor: theme.headerColor }}>
-        <div style={styles.headerLeft}>
+      <div
+        style={{
+          ...styles.header,
+          ...(isMobileLayout ? styles.headerMobile : null),
+          background: aura.headerBg,
+          borderBottom: `1px solid ${aura.softBorder}`,
+          backdropFilter: "blur(10px)",
+        }}
+      >
+        <div style={{ ...styles.headerLeft, ...(isMobileLayout ? styles.headerLeftMobile : null) }}>
           {showLogo && (
             <img
               src={`${ASSETS_BASE_URL}/logo-evolvian.svg`}
@@ -562,16 +636,30 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               onError={(e) => (e.currentTarget.style.display = "none")}
             />
           )}
-          <strong style={{ fontSize: "1rem", color: theme.headerTextColor }}>
+          <strong
+            style={{
+              fontSize: isMobileLayout ? "0.95rem" : "1rem",
+              color: theme.headerTextColor,
+            }}
+          >
             {assistantName}
           </strong>
         </div>
-        <div style={styles.headerActions}>
+        <div style={{ ...styles.headerActions, ...(isMobileLayout ? styles.headerActionsMobile : null) }}>
           <button
             style={{
               ...styles.headerActionBtn,
-              backgroundColor: activePanel === "chat" ? theme.buttonColor : "#ffffff",
-              color: activePanel === "chat" ? theme.buttonTextColor : "#4a90e2",
+              ...(isMobileLayout ? styles.headerActionBtnMobile : null),
+              background:
+                activePanel === "chat"
+                  ? `linear-gradient(135deg, ${withAlpha(theme.buttonColor, 0.92)} 0%, ${theme.buttonColor} 100%)`
+                  : withAlpha(theme.backgroundColor, 0.72),
+              color:
+                activePanel === "chat"
+                  ? theme.buttonTextColor
+                  : withAlpha(theme.headerTextColor, 0.88),
+              border: `1px solid ${activePanel === "chat" ? withAlpha(theme.buttonColor, 0.56) : aura.softBorder}`,
+              boxShadow: activePanel === "chat" ? aura.buttonShadow : "none",
             }}
             onClick={() => setActivePanel("chat")}
           >
@@ -581,8 +669,17 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             <button
               style={{
                 ...styles.headerActionBtn,
-                backgroundColor: activePanel === "calendar" ? theme.buttonColor : "#ffffff",
-                color: activePanel === "calendar" ? theme.buttonTextColor : "#4a90e2",
+                ...(isMobileLayout ? styles.headerActionBtnMobile : null),
+                background:
+                  activePanel === "calendar"
+                    ? `linear-gradient(135deg, ${withAlpha(theme.buttonColor, 0.92)} 0%, ${theme.buttonColor} 100%)`
+                    : withAlpha(theme.backgroundColor, 0.72),
+                color:
+                  activePanel === "calendar"
+                    ? theme.buttonTextColor
+                    : withAlpha(theme.headerTextColor, 0.88),
+                border: `1px solid ${activePanel === "calendar" ? withAlpha(theme.buttonColor, 0.56) : aura.softBorder}`,
+                boxShadow: activePanel === "calendar" ? aura.buttonShadow : "none",
               }}
               onClick={() => setActivePanel("calendar")}
             >
@@ -593,7 +690,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       </div>
 
       {activePanel === "chat" ? (
-        <div style={{ ...styles.messages }}>
+        <div
+          style={{
+            ...styles.messages,
+            ...(isMobileLayout ? styles.messagesMobile : null),
+            background: aura.messagesBg,
+          }}
+        >
           {messages.map((msg, idx) => (
             <div
               key={idx}
@@ -606,14 +709,20 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               <div
                 style={{
                   ...styles.message,
-                  backgroundColor:
-                    msg.from === "user" ? theme.userMessageColor : theme.botMessageColor,
-                  color: "#1b2a41",
+                  ...(isMobileLayout ? styles.messageMobile : null),
+                  background:
+                    msg.from === "user"
+                      ? `linear-gradient(145deg, ${withAlpha(theme.userMessageColor, 0.96)} 0%, ${withAlpha(theme.buttonColor, 0.18)} 100%)`
+                      : `linear-gradient(145deg, ${withAlpha(theme.botMessageColor, 0.97)} 0%, ${withAlpha(theme.backgroundColor, 0.9)} 100%)`,
+                  color: theme.headerTextColor,
+                  border: `1px solid ${msg.from === "user" ? withAlpha(theme.buttonColor, 0.24) : aura.softBorder}`,
+                  boxShadow: `0 8px 20px ${withAlpha(theme.headerTextColor, 0.08)}`,
+                  backdropFilter: "blur(8px)",
                 }}
               >
                 {msg.text}
               </div>
-              <span style={styles.timestamp}>{msg.timestamp}</span>
+              <span style={{ ...styles.timestamp, color: aura.mutedText }}>{msg.timestamp}</span>
             </div>
           ))}
           {usageLimitReached && (
@@ -624,8 +733,8 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
           <div ref={messagesEndRef} />
         </div>
       ) : (
-        <div style={styles.calendarPanel}>
-          <div style={styles.calendarModeBar}>
+        <div style={{ ...styles.calendarPanel, ...(isMobileLayout ? styles.calendarPanelMobile : null) }}>
+          <div style={{ ...styles.calendarModeBar, ...(isMobileLayout ? styles.calendarModeBarMobile : null) }}>
             <button
               style={styles.calendarModeBtn(calendarViewMode === "day")}
               onClick={() => setCalendarViewMode("day")}
@@ -646,9 +755,17 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             </button>
           </div>
 
-          <div style={styles.calendarNavBar}>
+          <div style={{ ...styles.calendarNavBar, ...(isMobileLayout ? styles.calendarNavBarMobile : null) }}>
             <button style={styles.calendarNavBtn} onClick={goCalendarPrev}>←</button>
-            <strong style={{ fontSize: "0.9rem", textTransform: "capitalize" }}>{calendarTitle}</strong>
+            <strong
+              style={{
+                fontSize: isMobileLayout ? "0.82rem" : "0.9rem",
+                textTransform: "capitalize",
+                textAlign: "center",
+              }}
+            >
+              {calendarTitle}
+            </strong>
             <button style={styles.calendarNavBtn} onClick={goCalendarNext}>→</button>
           </div>
 
@@ -670,6 +787,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               }}
               selectedSlot={selectedCalendarSlot}
               onSelectSlot={(slot) => setSelectedCalendarSlot(slot)}
+              isMobile={isMobileLayout}
             />
           )}
           {selectedCalendarSlot && (
@@ -842,15 +960,30 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       {/* ============================= */}
       {/* 💬 INPUT + BOTÓN + FOOTER    */}
       {/* ============================= */}
-      <div style={styles.bottomContainer}>
+      <div
+        style={{
+          ...styles.bottomContainer,
+          ...(isMobileLayout ? styles.bottomContainerMobile : null),
+          background: aura.inputBg,
+          borderTop: `1px solid ${aura.softBorder}`,
+          backdropFilter: "blur(10px)",
+        }}
+      >
         {activePanel === "chat" && (
-          <div style={styles.inputContainer}>
+          <div style={{ ...styles.inputContainer, ...(isMobileLayout ? styles.inputContainerMobile : null) }}>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={t("type_message") || "Type a message..."}
-              style={styles.textarea}
+              style={{
+                ...styles.textarea,
+                ...(isMobileLayout ? styles.textareaMobile : null),
+                background: withAlpha(theme.backgroundColor, 0.9),
+                border: `1px solid ${aura.inputBorder}`,
+                boxShadow: `inset 0 1px 0 ${withAlpha(theme.backgroundColor, 0.65)}`,
+                color: theme.headerTextColor,
+              }}
               rows={2}
               disabled={usageLimitReached}
             />
@@ -859,9 +992,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               onClick={sendMessage}
               style={{
                 ...styles.button,
-                backgroundColor: usageLimitReached ? "#ccc" : theme.buttonColor,
+                ...(isMobileLayout ? styles.buttonMobile : null),
+                background: usageLimitReached
+                  ? "#ccc"
+                  : `linear-gradient(135deg, ${withAlpha(theme.buttonColor, 0.9)} 0%, ${theme.buttonColor} 100%)`,
                 color: theme.buttonTextColor,
                 opacity: sending ? 0.7 : 1,
+                boxShadow: usageLimitReached ? "none" : aura.buttonShadow,
               }}
               disabled={sending || usageLimitReached}
             >
@@ -875,15 +1012,27 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         )}
 
         {showPoweredBy && (
-          <div style={{ ...styles.footer, color: theme.footerTextColor }}>
+          <div
+            style={{
+              ...styles.footer,
+              color: theme.footerTextColor,
+              borderTop: `1px solid ${aura.softBorder}`,
+              background: withAlpha(theme.backgroundColor, 0.72),
+            }}
+          >
             Powered by <strong>Evolvian</strong> — evolvianai.com
           </div>
         )}
 
         {showLegalLinks && (termsUrl || privacyUrl) && (
-          <div style={styles.legalContainer}>
+          <div style={{ ...styles.legalContainer, color: aura.mutedText }}>
             {termsUrl && (
-              <a href={termsUrl} target="_blank" rel="noopener noreferrer" style={styles.legalLink}>
+              <a
+                href={termsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...styles.legalLink, color: aura.mutedText }}
+              >
                 {t("terms") || "Terms & Conditions"}
               </a>
             )}
@@ -891,7 +1040,12 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             {privacyUrl && (
               <>
                 <span style={{ margin: "0 4px", color: "#aaa" }}>|</span>
-                <a href={privacyUrl} target="_blank" rel="noopener noreferrer" style={styles.legalLink}>
+                <a
+                  href={privacyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ ...styles.legalLink, color: aura.mutedText }}
+                >
                   {t("privacy") || "Privacy Policy"}
                 </a>
               </>
@@ -931,7 +1085,18 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   );
 }
 
-function CalendarVisualView({ mode, currentDate, minDate, maxDate, slots, countsByDay, onSelectDate, selectedSlot, onSelectSlot }) {
+function CalendarVisualView({
+  mode,
+  currentDate,
+  minDate,
+  maxDate,
+  slots,
+  countsByDay,
+  onSelectDate,
+  selectedSlot,
+  onSelectSlot,
+  isMobile = false,
+}) {
   const slotsForDay = (dateObj) => {
     const key = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}-${String(dateObj.getDate()).padStart(2, "0")}`;
     return (slots || []).filter((slot) => slot.date === key);
@@ -996,8 +1161,8 @@ function CalendarVisualView({ mode, currentDate, minDate, maxDate, slots, counts
       return d;
     });
 
-    return (
-      <div style={styles.weekGrid}>
+    const weekGrid = (
+      <div style={{ ...styles.weekGrid, ...(isMobile ? styles.weekGridMobile : null) }}>
         {days.map((day) => {
           const disabled = day < minDate || day > maxDate;
           const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
@@ -1006,7 +1171,12 @@ function CalendarVisualView({ mode, currentDate, minDate, maxDate, slots, counts
             <button
               key={day.toISOString()}
               type="button"
-              style={{ ...styles.weekCell, opacity: disabled ? 0.35 : 1, cursor: disabled ? "default" : "pointer" }}
+              style={{
+                ...styles.weekCell,
+                ...(isMobile ? styles.weekCellMobile : null),
+                opacity: disabled ? 0.35 : 1,
+                cursor: disabled ? "default" : "pointer",
+              }}
               onClick={() => {
                 if (!disabled) onSelectDate?.(day);
               }}
@@ -1019,6 +1189,12 @@ function CalendarVisualView({ mode, currentDate, minDate, maxDate, slots, counts
         })}
       </div>
     );
+
+    if (isMobile) {
+      return <div style={styles.weekGridScroll}>{weekGrid}</div>;
+    }
+
+    return weekGrid;
   }
 
   const year = currentDate.getFullYear();
@@ -1032,7 +1208,7 @@ function CalendarVisualView({ mode, currentDate, minDate, maxDate, slots, counts
   for (let d = 1; d <= daysInMonth; d += 1) cells.push(new Date(year, month, d));
 
   return (
-    <div style={styles.monthGrid}>
+    <div style={{ ...styles.monthGrid, ...(isMobile ? styles.monthGridMobile : null) }}>
       {["D", "L", "M", "M", "J", "V", "S"].map((label, idx) => (
         <div key={`${label}-${idx}`} style={styles.monthHeaderCell}>{label}</div>
       ))}
@@ -1045,7 +1221,12 @@ function CalendarVisualView({ mode, currentDate, minDate, maxDate, slots, counts
           <button
             key={day.toISOString()}
             type="button"
-            style={{ ...styles.monthCell, opacity: disabled ? 0.35 : 1, cursor: disabled ? "default" : "pointer" }}
+            style={{
+              ...styles.monthCell,
+              ...(isMobile ? styles.monthCellMobile : null),
+              opacity: disabled ? 0.35 : 1,
+              cursor: disabled ? "default" : "pointer",
+            }}
             onClick={() => {
               if (!disabled) onSelectDate?.(day);
             }}
@@ -1078,15 +1259,30 @@ const styles = {
     padding: "0 1rem",
     gap: "0.6rem",
   },
+  headerMobile: {
+    minHeight: "56px",
+    height: "auto",
+    padding: "0.5rem 0.7rem",
+    gap: "0.5rem",
+    flexWrap: "wrap",
+  },
   headerLeft: {
     display: "flex",
     alignItems: "center",
     gap: "0.4rem",
   },
+  headerLeftMobile: {
+    minWidth: 0,
+    flex: 1,
+  },
   headerActions: {
     marginLeft: "auto",
     display: "flex",
     gap: "0.35rem",
+  },
+  headerActionsMobile: {
+    marginLeft: 0,
+    width: "100%",
   },
   headerActionBtn: {
     border: "1px solid #d8e7f8",
@@ -1096,6 +1292,10 @@ const styles = {
     fontWeight: "600",
     cursor: "pointer",
   },
+  headerActionBtnMobile: {
+    flex: 1,
+    textAlign: "center",
+  },
   messages: {
     flex: 1,
     overflowY: "auto",
@@ -1103,6 +1303,10 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: "0.75rem",
+  },
+  messagesMobile: {
+    padding: "0.75rem",
+    gap: "0.65rem",
   },
   calendarPanel: {
     flex: 1,
@@ -1112,9 +1316,15 @@ const styles = {
     gap: "0.6rem",
     overflow: "hidden",
   },
+  calendarPanelMobile: {
+    padding: "0.65rem",
+  },
   calendarModeBar: {
     display: "flex",
     gap: "0.5rem",
+  },
+  calendarModeBarMobile: {
+    flexWrap: "wrap",
   },
   calendarModeBtn: (active) => ({
     border: "1px solid #dce5ef",
@@ -1131,6 +1341,9 @@ const styles = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: "0.8rem",
+  },
+  calendarNavBarMobile: {
+    gap: "0.45rem",
   },
   calendarNavBtn: {
     border: "1px solid #dce5ef",
@@ -1217,6 +1430,13 @@ const styles = {
     gridTemplateColumns: "repeat(7, 1fr)",
     gap: "0.4rem",
   },
+  weekGridScroll: {
+    overflowX: "auto",
+    paddingBottom: "0.2rem",
+  },
+  weekGridMobile: {
+    gridTemplateColumns: "repeat(7, minmax(62px, 1fr))",
+  },
   weekCell: {
     border: "1px solid #edf1f7",
     borderRadius: 10,
@@ -1227,6 +1447,9 @@ const styles = {
     justifyContent: "center",
     color: "#274472",
     backgroundColor: "#ffffff",
+  },
+  weekCellMobile: {
+    minHeight: 56,
   },
   weekDay: {
     fontSize: "0.7rem",
@@ -1247,6 +1470,10 @@ const styles = {
     border: "1px solid #edf1f7",
     borderRadius: 10,
     padding: "0.35rem",
+  },
+  monthGridMobile: {
+    gap: "0.2rem",
+    padding: "0.25rem",
   },
   monthHeaderCell: {
     textAlign: "center",
@@ -1269,6 +1496,11 @@ const styles = {
     color: "#274472",
     background: "#ffffff",
     padding: "0 0.25rem",
+  },
+  monthCellMobile: {
+    minHeight: 30,
+    fontSize: "0.72rem",
+    padding: "0 0.2rem",
   },
   monthCount: {
     fontSize: "0.65rem",
@@ -1388,10 +1620,18 @@ const styles = {
     flexShrink: 0,
     borderTop: "1px solid #f0f0f0",
   },
+  bottomContainerMobile: {
+    paddingBottom: "env(safe-area-inset-bottom, 0px)",
+  },
   inputContainer: {
     display: "flex",
     gap: "0.5rem",
     padding: "0.8rem",
+  },
+  inputContainerMobile: {
+    flexDirection: "column",
+    gap: "0.45rem",
+    padding: "0.7rem",
   },
   textarea: {
     flex: 1,
@@ -1405,6 +1645,10 @@ const styles = {
     backgroundColor: "#fff",
     fontFamily: "'Inter', sans-serif",
   },
+  textareaMobile: {
+    minHeight: "72px",
+    fontSize: "0.9rem",
+  },
   button: {
     border: "none",
     padding: "0.6rem 1rem",
@@ -1414,6 +1658,9 @@ const styles = {
     cursor: "pointer",
     transition: "background 0.2s",
   },
+  buttonMobile: {
+    width: "100%",
+  },
   message: {
     padding: "0.75rem 1rem",
     borderRadius: "18px",
@@ -1422,6 +1669,10 @@ const styles = {
     whiteSpace: "pre-line",
     fontSize: "0.95rem",
     boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+  },
+  messageMobile: {
+    maxWidth: "88%",
+    fontSize: "0.9rem",
   },
   timestamp: {
     fontSize: "0.7rem",

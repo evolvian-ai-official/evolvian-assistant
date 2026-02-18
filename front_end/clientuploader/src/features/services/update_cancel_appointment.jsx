@@ -1,7 +1,7 @@
 // src/features/services/update_cancel_appointment.jsx
 // Evolvian Light — Cancel Appointment Modal (Future: Edit / Reschedule)
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 
@@ -84,6 +84,16 @@ export default function UpdateCancelAppointmentModal({
   const { t } = useLanguage();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   if (!open) return null;
 
@@ -124,8 +134,14 @@ export default function UpdateCancelAppointmentModal({
   };
 
   return (
-    <div style={overlayStyle}>
-      <div style={modalStyle}>
+    <div style={{ ...overlayStyle, padding: "1rem" }}>
+      <div
+        style={{
+          ...modalStyle,
+          width: isMobile ? "92vw" : modalStyle.width,
+          padding: isMobile ? "1rem" : modalStyle.padding,
+        }}
+      >
         <div style={titleStyle}>{t("cancel_appointment_title")}</div>
 
         <div style={textStyle}>
@@ -140,9 +156,15 @@ export default function UpdateCancelAppointmentModal({
           </div>
         )}
 
-        <div style={actionsStyle}>
+        <div
+          style={{
+            ...actionsStyle,
+            flexDirection: isMobile ? "column-reverse" : "row",
+            alignItems: isMobile ? "stretch" : "center",
+          }}
+        >
           <button
-            style={cancelBtn}
+            style={{ ...cancelBtn, width: isMobile ? "100%" : "auto" }}
             onClick={onClose}
             disabled={loading}
           >
@@ -150,7 +172,7 @@ export default function UpdateCancelAppointmentModal({
           </button>
 
           <button
-            style={deleteBtn}
+            style={{ ...deleteBtn, width: isMobile ? "100%" : "auto" }}
             onClick={handleCancelAppointment}
             disabled={loading}
           >

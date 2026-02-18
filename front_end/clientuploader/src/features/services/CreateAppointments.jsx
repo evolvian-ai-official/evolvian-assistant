@@ -3,8 +3,8 @@ import { useEffect, useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import ShowAppointments from "./ShowAppointments";
-import AppointmentsFilter from "./AppointmentsFilter";
 import { authFetch } from "../../lib/authFetch";
+import "../../components/ui/internal-admin-responsive.css";
 
 
 /* 🌐 API ENV */
@@ -29,6 +29,9 @@ export default function CreateAppointment({ disabled = false }) {
   const clientId = useClientId();
   const { t } = useLanguage();
   const [sessionId] = useState(() => crypto.randomUUID());
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
 
   const [showModal, setShowModal] = useState(false);
   const [appointments] = useState([]);
@@ -65,6 +68,13 @@ export default function CreateAppointment({ disabled = false }) {
   const [selectedTime, setSelectedTime] = useState("");
   const [availableTimes, setAvailableTimes] = useState([]);
   const [availableDates, setAvailableDates] = useState([]);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
 
 
@@ -419,12 +429,15 @@ export default function CreateAppointment({ disabled = false }) {
      UI
      ========================= */
   return (
-    <div style={pageStyle}>
+    <div className="ia-page" style={pageStyle}>
       {/* Header */}
       <div style={headerRow}>
         <h2 style={titleStyle}>{t("appointments_nav")}</h2>
         <button
-          style={primaryButton(disabled)}
+          style={{
+            ...primaryButton(disabled),
+            width: isMobile ? "100%" : "auto",
+          }}
           onClick={() => {
             if (!disabled) setShowModal(true);
           }}
@@ -446,7 +459,14 @@ export default function CreateAppointment({ disabled = false }) {
       {/* Modal */}
       {showModal && (
         <div style={modalOverlay}>
-          <div style={modalBox}>
+          <div
+            style={{
+              ...modalBox,
+              width: isMobile ? "92vw" : modalBox.width,
+              maxHeight: isMobile ? "88dvh" : "90dvh",
+              overflowY: "auto",
+            }}
+          >
             <h3 style={modalTitle}>{t("new_appointment")}</h3>
 
             <input
@@ -672,9 +692,18 @@ export default function CreateAppointment({ disabled = false }) {
             </div>
 
             {/* Actions */}
-            <div style={modalActions}>
+            <div
+              style={{
+                ...modalActions,
+                flexDirection: isMobile ? "column-reverse" : "row",
+                alignItems: isMobile ? "stretch" : "center",
+              }}
+            >
               <button
-                style={secondaryButton}
+                style={{
+                  ...secondaryButton,
+                  width: isMobile ? "100%" : "auto",
+                }}
                 onClick={() => {
                   setShowModal(false);
                   resetForm();
@@ -684,7 +713,10 @@ export default function CreateAppointment({ disabled = false }) {
               </button>
 
               <button
-                style={primaryButton(!canSubmit || loading)}
+                style={{
+                  ...primaryButton(!canSubmit || loading),
+                  width: isMobile ? "100%" : "auto",
+                }}
                 disabled={!canSubmit || loading}
                 onClick={() => submit(false)}
               >
@@ -731,9 +763,9 @@ export default function CreateAppointment({ disabled = false }) {
 
 /* 🎨 Styles (SIN CAMBIOS) */
 const pageStyle = {
-  padding: "2rem 3rem",
+  padding: "clamp(0.75rem, 0.6rem + 0.8vw, 1.25rem)",
   backgroundColor: "#FFFFFF",
-  minHeight: "100vh",
+  minHeight: "100%",
   fontFamily: "system-ui, sans-serif",
   color: "#274472",
 };
@@ -741,14 +773,17 @@ const pageStyle = {
 const headerRow = {
   display: "flex",
   justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: "2rem",
+  alignItems: "flex-start",
+  marginBottom: "1.1rem",
+  gap: "0.75rem",
+  flexWrap: "wrap",
 };
 
 const titleStyle = {
-  fontSize: "1.8rem",
+  fontSize: "clamp(1.3rem, 1.05rem + 1vw, 1.8rem)",
   color: "#F5A623",
   fontWeight: "bold",
+  margin: 0,
 };
 
 const modalOverlay = {
@@ -764,8 +799,9 @@ const modalOverlay = {
 const modalBox = {
   backgroundColor: "#FFFFFF",
   borderRadius: 16,
-  padding: "2rem",
+  padding: "clamp(0.9rem, 0.8rem + 0.9vw, 1.5rem)",
   width: 440,
+  boxShadow: "0 14px 34px rgba(0,0,0,0.15)",
 };
 
 const modalTitle = {

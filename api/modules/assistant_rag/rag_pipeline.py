@@ -275,7 +275,8 @@ def ask_question(
     client_id: str,
     session_id: str = None,
     disable_rag: bool = False,
-    channel: str = "chat" 
+    channel: str = "chat",
+    provider: str = "internal",
 ) -> str:
     try:
         session_id = session_id or str(uuid.uuid4())
@@ -337,8 +338,8 @@ def ask_question(
                 if turn_lang == "es"
                 else "Hi! How can I help you today?"
             )
-            save_history(client_id, session_id, "user", original_question, channel=channel)
-            save_history(client_id, session_id, "assistant", answer, channel=channel)
+            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+            save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
             return answer
 
@@ -366,8 +367,8 @@ Rules:
             answer = (resp.content or "").strip() or fallback
 
            
-            save_history(client_id, session_id, "user", original_question, channel=channel)
-            save_history(client_id, session_id, "assistant", answer, channel=channel)
+            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+            save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
             return answer
 
@@ -387,8 +388,8 @@ Rules:
         if not _has_active_documents(client_id):
             fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
 
-            save_history(client_id, session_id, "user", original_question, channel=channel)
-            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel)
+            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
             return fallback_limit
 
 
@@ -410,8 +411,8 @@ Rules:
         if not os.path.exists(client_data_path):
             fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
 
-            save_history(client_id, session_id, "user", original_question, channel=channel)
-            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel)
+            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
             return fallback_limit
 
 
@@ -469,8 +470,8 @@ Rules:
         retrieved_docs = retriever.invoke(rewritten_question)
 
         if not retrieved_docs:
-            save_history(client_id, session_id, "user", original_question, channel=channel)
-            save_history(client_id, session_id, "assistant", fallback, channel=channel)
+            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+            save_history(client_id, session_id, "assistant", fallback, channel=channel, provider=provider)
             return fallback
 
 
@@ -568,8 +569,8 @@ Rules:
         # =====================================================
         # 💾 Guardar historial
         # =====================================================
-        save_history(client_id, session_id, "user", original_question, channel=channel)
-        save_history(client_id, session_id, "assistant", answer, channel=channel)
+        save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+        save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
         logging.info(f"✅ Respuesta generada para {client_id}: {answer}")
         return answer
@@ -595,7 +596,8 @@ async def handle_message(
     client_id: str,
     session_id: str,
     user_message: str,
-    channel: str = "chat"
+    channel: str = "chat",
+    provider: str = "internal",
 ) -> str:
     from api.modules.assistant_rag.intent_router import process_user_message
 
@@ -604,6 +606,7 @@ async def handle_message(
         session_id=session_id,
         message=user_message,
         channel=channel,
+        provider=provider,
     )
 
     if hasattr(result, "__await__"):

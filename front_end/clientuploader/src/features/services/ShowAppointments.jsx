@@ -9,6 +9,7 @@ import UpdateCancelAppointmentModal from "../services/update_cancel_appointment"
 import DayView from "../services/DayView";
 import WeekView from "../services/WeekView";
 import MonthView from "../services/MonthView";
+import "../../components/ui/internal-admin-responsive.css";
 
 /* 🌐 API ENV */
 const API_BASE_URL =
@@ -19,6 +20,9 @@ const API_BASE_URL =
 export default function ShowAppointments({ refreshKey = 0 }) {
   const clientId = useClientId();
   const { t } = useLanguage();
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
 
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +74,13 @@ export default function ShowAppointments({ refreshKey = 0 }) {
   useEffect(() => {
     fetchAppointments();
   }, [clientId, refreshKey]);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   /* =========================
      Navigation
@@ -147,12 +158,52 @@ export default function ShowAppointments({ refreshKey = 0 }) {
     return list;
   }, [appointments, filters]);
 
+  const appointmentCounters = useMemo(() => {
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const startOfWeek = new Date(startOfDay);
+    const dayIndex = startOfWeek.getDay();
+    const diffToMonday = (dayIndex + 6) % 7;
+    startOfWeek.setDate(startOfWeek.getDate() - diffToMonday);
+
+    const startOfMonth = new Date(startOfDay);
+    startOfMonth.setDate(1);
+
+    let day = 0;
+    let week = 0;
+    let month = 0;
+
+    for (const appointment of appointments) {
+      const dt = new Date(appointment.scheduled_time);
+      if (Number.isNaN(dt.getTime())) continue;
+
+      if (dt >= startOfMonth) month += 1;
+      if (dt >= startOfWeek) week += 1;
+      if (dt >= startOfDay) day += 1;
+    }
+
+    return {
+      total: appointments.length,
+      month,
+      week,
+      day,
+    };
+  }, [appointments]);
+
   /* =========================
      UI
      ========================= */
   return (
     <div style={container}>
       <h3 style={sectionTitle}>{t("appointments_created_title")}</h3>
+      <div style={counterRow}>
+        <span style={counterBadge}>{t("appointments_nav") || "Appointments"} · Total: {appointmentCounters.total}</span>
+        <span style={counterBadge}>{t("appointments_nav") || "Appointments"} · {t("month") || "Month"}: {appointmentCounters.month}</span>
+        <span style={counterBadge}>{t("appointments_nav") || "Appointments"} · {t("week") || "Week"}: {appointmentCounters.week}</span>
+        <span style={counterBadge}>{t("appointments_nav") || "Appointments"} · {t("day") || "Day"}: {appointmentCounters.day}</span>
+      </div>
 
       {/* 🔄 View Switcher */}
       <div style={viewBar}>
@@ -253,10 +304,22 @@ export default function ShowAppointments({ refreshKey = 0 }) {
 
             return (
               <div key={a.id} style={card}>
-                <div style={row}>
+                <div
+                  style={{
+                    ...row,
+                    flexDirection: isMobile ? "column" : "row",
+                    alignItems: isMobile ? "flex-start" : "center",
+                  }}
+                >
                   <strong>{a.user_name}</strong>
 
-                  <div style={rightRow}>
+                  <div
+                    style={{
+                      ...rightRow,
+                      width: isMobile ? "100%" : "auto",
+                      justifyContent: isMobile ? "space-between" : "flex-end",
+                    }}
+                  >
                     {canEdit && (
                       <button
                         title={t("appointments_edit_cancel_title")}
@@ -276,7 +339,7 @@ export default function ShowAppointments({ refreshKey = 0 }) {
                   </div>
                 </div>
 
-                <div style={meta}>
+                <div style={{ ...meta, marginTop: isMobile ? "0.35rem" : 0 }}>
                   <span>
                     📅 {new Date(a.scheduled_time).toLocaleString()}
                   </span>
@@ -312,10 +375,27 @@ export default function ShowAppointments({ refreshKey = 0 }) {
 const container = { marginTop: "2rem" };
 
 const sectionTitle = {
-  fontSize: "1.2rem",
+  fontSize: "clamp(1.05rem, 0.95rem + 0.4vw, 1.2rem)",
   fontWeight: "bold",
   color: "#274472",
+  marginBottom: "0.5rem",
+};
+
+const counterRow = {
+  display: "flex",
+  gap: "0.6rem",
   marginBottom: "1rem",
+  flexWrap: "wrap",
+};
+
+const counterBadge = {
+  backgroundColor: "#EAF7F0",
+  color: "#1F6B4A",
+  border: "1px solid #CDEBDB",
+  borderRadius: "999px",
+  padding: "0.35rem 0.75rem",
+  fontSize: "0.85rem",
+  fontWeight: 600,
 };
 
 const viewBar = {
@@ -368,7 +448,8 @@ const filterInput = {
   padding: "0.5rem 0.65rem",
   borderRadius: 10,
   border: "1px solid #EDEDED",
-  minWidth: 160,
+  minWidth: 0,
+  flex: "1 1 180px",
 };
 
 const filterSelect = {
@@ -376,6 +457,8 @@ const filterSelect = {
   borderRadius: 10,
   border: "1px solid #EDEDED",
   backgroundColor: "#FFFFFF",
+  minWidth: 0,
+  flex: "1 1 170px",
 };
 
 const hint = {
@@ -401,6 +484,7 @@ const row = {
   justifyContent: "space-between",
   alignItems: "center",
   marginBottom: "0.4rem",
+  gap: "0.55rem",
 };
 
 const rightRow = {

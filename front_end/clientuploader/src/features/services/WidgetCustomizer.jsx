@@ -649,35 +649,37 @@ export default function WidgetCustomizer() {
 /* 🎨 Rebranding Evolvian Premium Light (solo estilos) */
 const pageStyle = {
   color: "#274472",
-  padding: "2rem 3rem",
+  padding: "clamp(0.8rem, 0.6rem + 1vw, 1.4rem)",
   backgroundColor: "#FFFFFF", // light
   fontFamily: "system-ui, sans-serif",
-  minHeight: "100vh",
+  minHeight: "100%",
 };
-const titleStyle = { fontSize: "1.8rem", color: "#F5A623", marginBottom: "0.5rem" };
+const titleStyle = { fontSize: "clamp(1.35rem, 1.1rem + 1vw, 1.8rem)", color: "#F5A623", marginBottom: "0.5rem" };
 const subtitleStyle = { color: "#4A90E2", marginBottom: "2rem" };
 const containerStyle = {
   display: "grid",
-  gridTemplateColumns: "1fr 420px",
-  gap: "2rem",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+  gap: "1rem",
   alignItems: "flex-start",
 };
 const leftPanel = {
   backgroundColor: "#FFFFFF",
-  padding: "1.5rem",
+  padding: "clamp(0.9rem, 0.8rem + 0.9vw, 1.5rem)",
   border: "1px solid #EDEDED",
   borderRadius: "14px",
   boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+  minWidth: 0,
 };
 const previewPanel = {
   backgroundColor: "#FFFFFF",
-  padding: "1rem",
+  padding: "0.8rem",
   border: "1px solid #EDEDED",
   borderRadius: "14px",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+  minWidth: 0,
 };
 const formGrid = { display: "grid", gap: "1rem" };
 const labelStyle = { display: "flex", flexDirection: "column", fontSize: "0.9rem" };
@@ -748,7 +750,7 @@ const upgradeButton = {
   fontWeight: "bold",
 };
 const previewWidget = {
-  width: "360px",
+  width: "min(100%, 360px)",
   display: "flex",
   flexDirection: "column",
   overflow: "hidden",

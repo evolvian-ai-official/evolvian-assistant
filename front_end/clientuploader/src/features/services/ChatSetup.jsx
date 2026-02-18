@@ -9,6 +9,9 @@ export default function ChatSetup() {
   const { publicClientId, loading } = useInitializeUser();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState("install");
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
 
   // 🌀 Inyectar keyframes para el spinner (solo una vez)
   useEffect(() => {
@@ -25,9 +28,16 @@ export default function ChatSetup() {
     }
   }, []);
 
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   const handleCopy = (text) => {
     navigator.clipboard.writeText(text);
-    alert(`📋 ${t("copied_to_clipboard")}`);
+    alert(t("copied_to_clipboard"));
   };
 
   const domain = window.location.hostname.includes("localhost")
@@ -59,7 +69,7 @@ export default function ChatSetup() {
   }
 
   return (
-    <div style={pageStyle}>
+    <div className="ia-page" style={pageStyle}>
       <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
         {/* 🔀 Toggle superior */}
         <div style={toggleContainer}>
@@ -70,9 +80,10 @@ export default function ChatSetup() {
               backgroundColor: activeTab === "install" ? "#4A90E2" : "transparent",
               color: activeTab === "install" ? "#FFFFFF" : "#274472",
               borderColor: activeTab === "install" ? "#4A90E2" : "#EDEDED",
+              width: isMobile ? "100%" : "auto",
             }}
           >
-            ⚙️ {t("installation") || "Installation"}
+            {t("installation") || "Installation"}
           </button>
           <button
             onClick={() => setActiveTab("customize")}
@@ -81,9 +92,10 @@ export default function ChatSetup() {
               backgroundColor: activeTab === "customize" ? "#F5A623" : "transparent",
               color: activeTab === "customize" ? "#FFFFFF" : "#274472",
               borderColor: activeTab === "customize" ? "#F5A623" : "#EDEDED",
+              width: isMobile ? "100%" : "auto",
             }}
           >
-            🎨 {t("customize_widget") || "Customize Widget"}
+            {t("customize_widget") || "Customize Widget"}
           </button>
         </div>
 
@@ -94,10 +106,15 @@ export default function ChatSetup() {
               <img
                 src="/logo-evolvian.svg"
                 alt="Evolvian Logo"
-                style={{ width: 56, height: 56, borderRadius: "50%" }}
+                style={{
+                  width: isMobile ? 46 : 56,
+                  height: isMobile ? 46 : 56,
+                  borderRadius: "50%",
+                  flex: "0 0 auto",
+                }}
               />
               <div>
-                <h2 style={titleStyle}>🧠 {t("setup_evolvian_web")}</h2>
+                <h2 style={titleStyle}>{t("setup_evolvian_web")}</h2>
                 <p style={descriptionStyle}>
                   {t("setup_description") ||
                     "Embed Evolvian on your website in minutes. Choose floating script or iframe mode."}
@@ -106,8 +123,14 @@ export default function ChatSetup() {
             </div>
 
             {/* 🔑 Public ID */}
-            <div style={idBoxStyle}>
-              <div>
+            <div
+              style={{
+                ...idBoxStyle,
+                flexDirection: isMobile ? "column" : "row",
+                alignItems: isMobile ? "stretch" : "center",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
                 <strong style={{ color: "#274472" }}>{t("your_public_id")}:</strong>{" "}
                 <span style={{ color: "#2EB39A", fontWeight: 700 }}>
                   {publicClientId || t("not_available")}
@@ -116,40 +139,56 @@ export default function ChatSetup() {
               <button
                 onClick={() => handleCopy(publicClientId)}
                 disabled={!publicClientId}
-                style={copyButtonStyle(!!publicClientId)}
+                style={{
+                  ...copyButtonStyle(!!publicClientId),
+                  width: isMobile ? "100%" : "auto",
+                }}
               >
                 {t("copy_id")}
               </button>
             </div>
 
             {/* 🧩 Opciones */}
-            <div style={optionsContainerStyle}>
+            <div
+              style={{
+                ...optionsContainerStyle,
+                gridTemplateColumns: isMobile
+                  ? "minmax(0, 1fr)"
+                  : optionsContainerStyle.gridTemplateColumns,
+              }}
+            >
               {/* Option 1 - Script embebido */}
-              <div style={cardStyle}>
-                <h3 style={subtitleStyle}>🔹 {t("option1_title") || "Floating Button (Script)"}</h3>
-                <p style={hintStyle}>💡 {t("option1_hint") || "Recommended for global floating chat."}</p>
+              <div style={{ ...cardStyle, minHeight: isMobile ? "auto" : cardStyle.minHeight }}>
+                <h3 style={subtitleStyle}>{t("option1_title") || "Floating Button (Script)"}</h3>
+                <p style={hintStyle}>{t("option1_hint") || "Recommended for global floating chat."}</p>
                 <ol style={stepsStyle}>
-                  <li>1️⃣ {t("copy_script") || "Copy the script"}</li>
-                  <li>2️⃣ {t("paste_before_body") || "Paste before </body>"}</li>
-                  <li>3️⃣ {t("save_and_reload") || "Save and reload your site"}</li>
+                  <li>{t("copy_script") || "Copy the script"}</li>
+                  <li>{t("paste_before_body") || "Paste before </body>"}</li>
+                  <li>{t("save_and_reload") || "Save and reload your site"}</li>
                 </ol>
                 <pre style={codeStyle}>{scriptCode}</pre>
-                <button onClick={() => handleCopy(scriptCode)} style={actionButtonStyle}>
+                <button
+                  onClick={() => handleCopy(scriptCode)}
+                  style={{ ...actionButtonStyle, width: isMobile ? "100%" : "auto" }}
+                >
                   {t("copy_script_button") || "Copy script"}
                 </button>
               </div>
 
               {/* Option 2 - Iframe embebido */}
-              <div style={cardStyle}>
-                <h3 style={subtitleStyle}>🔹 {t("option2_title") || "Fixed Window (Iframe)"}</h3>
-                <p style={hintStyle}>💡 {t("option2_hint") || "Great for dedicated support pages."}</p>
+              <div style={{ ...cardStyle, minHeight: isMobile ? "auto" : cardStyle.minHeight }}>
+                <h3 style={subtitleStyle}>{t("option2_title") || "Fixed Window (Iframe)"}</h3>
+                <p style={hintStyle}>{t("option2_hint") || "Great for dedicated support pages."}</p>
                 <ol style={stepsStyle}>
-                  <li>1️⃣ {t("copy_code") || "Copy the iframe code"}</li>
-                  <li>2️⃣ {t("paste_where_visible") || "Paste where you want it visible"}</li>
-                  <li>3️⃣ {t("adjust_size_if_needed") || "Adjust dimensions if needed"}</li>
+                  <li>{t("copy_code") || "Copy the iframe code"}</li>
+                  <li>{t("paste_where_visible") || "Paste where you want it visible"}</li>
+                  <li>{t("adjust_size_if_needed") || "Adjust dimensions if needed"}</li>
                 </ol>
                 <pre style={codeStyle}>{iframeCode}</pre>
-                <button onClick={() => handleCopy(iframeCode)} style={actionButtonStyle}>
+                <button
+                  onClick={() => handleCopy(iframeCode)}
+                  style={{ ...actionButtonStyle, width: isMobile ? "100%" : "auto" }}
+                >
                   {t("copy_iframe") || "Copy iframe"}
                 </button>
               </div>
@@ -157,7 +196,7 @@ export default function ChatSetup() {
 
             {/* 📘 Step-by-Step Installation Guide */}
             <div style={guideContainer}>
-              <h2 style={guideTitle}>📖 {t("step_by_step_guide") || "Step-by-Step Installation Guide"}</h2>
+              <h2 style={guideTitle}>{t("step_by_step_guide") || "Step-by-Step Installation Guide"}</h2>
 
               {/* STEP 1 */}
               <GuideStep
@@ -167,6 +206,7 @@ export default function ChatSetup() {
                   "Go to your Evolvian Dashboard → Settings. Copy your public_client_id. You’ll use it in both widget and iframe integrations."
                 }
                 img="/widgetstep1.png"
+                isMobile={isMobile}
               />
 
               {/* STEP 2 */}
@@ -178,6 +218,7 @@ export default function ChatSetup() {
                 }
                 code={scriptCode}
                 img="/widgetstep2.png"
+                isMobile={isMobile}
               />
 
               {/* STEP 3 */}
@@ -189,6 +230,7 @@ export default function ChatSetup() {
                 }
                 code={iframeCode}
                 img="/widgetstep3.png"
+                isMobile={isMobile}
               />
 
               {/* STEP 4 */}
@@ -199,6 +241,7 @@ export default function ChatSetup() {
                   "Once embedded, verify that the chat icon appears, opens correctly, and messages sync with your dashboard."
                 }
                 img="/widgetstep4.png"
+                isMobile={isMobile}
               />
 
               {/* STEP 5 */}
@@ -209,6 +252,7 @@ export default function ChatSetup() {
                   "If the widget doesn’t appear, check that your public_client_id is correct, no CSP block is active, and you reloaded your site. Contact support@evolvianai.com if it persists."
                 }
                 img="/widgetstep5.png"
+                isMobile={isMobile}
               />
             </div>
           </>
@@ -221,16 +265,23 @@ export default function ChatSetup() {
 }
 
 /* 🧩 Reusable guide step component */
-function GuideStep({ title, text, img, code }) {
+function GuideStep({ title, text, img, code, isMobile }) {
   return (
-    <div style={guideRow}>
+    <div style={{ ...guideRow, flexDirection: isMobile ? "column" : "row" }}>
       <div style={guideLeft}>
         <h3 style={guideStepTitle}>{title}</h3>
         <p style={guideText}>{text}</p>
         {code && <pre style={codeStyle}>{code}</pre>}
       </div>
       <div style={guideRight}>
-        <img src={img} alt={title} style={gifStyle} />
+        <img
+          src={img}
+          alt={title}
+          style={{
+            ...gifStyle,
+            maxHeight: isMobile ? "340px" : gifStyle.maxHeight,
+          }}
+        />
       </div>
     </div>
   );
@@ -243,7 +294,7 @@ const loaderContainer = {
   alignItems: "center",
   justifyContent: "center",
   backgroundColor: "#FFFFFF",
-  minHeight: "100vh",
+  minHeight: "100%",
   color: "#274472",
   fontFamily: "system-ui, sans-serif",
 };
@@ -263,6 +314,7 @@ const toggleContainer = {
   justifyContent: "center",
   gap: "0.75rem",
   marginBottom: "1.5rem",
+  flexWrap: "wrap",
 };
 
 const toggleButton = {
@@ -273,26 +325,28 @@ const toggleButton = {
   cursor: "pointer",
   fontWeight: "bold",
   transition: "all 0.2s ease",
+  flex: "1 1 220px",
 };
 
 /* 🎨 Estilos generales (Premium Light) */
 const pageStyle = {
-  padding: "2rem 3rem",
+  padding: "clamp(0.8rem, 0.6rem + 1vw, 1.4rem)",
   fontFamily: "system-ui, sans-serif",
   backgroundColor: "#FFFFFF",
   color: "#274472",
-  minHeight: "100vh",
+  minHeight: "100%",
 };
 
 const headerRow = {
   display: "flex",
-  alignItems: "center",
+  alignItems: "flex-start",
   gap: "1rem",
   marginBottom: "1rem",
+  flexWrap: "wrap",
 };
 
 const titleStyle = {
-  fontSize: "1.8rem",
+  fontSize: "clamp(1.3rem, 1.1rem + 0.9vw, 1.8rem)",
   color: "#F5A623",
   fontWeight: "bold",
   margin: 0,
@@ -312,9 +366,10 @@ const idBoxStyle = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  maxWidth: "600px",
+  maxWidth: "100%",
   border: "1px solid #EDEDED",
   boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+  gap: "0.6rem",
 };
 
 const copyButtonStyle = (enabled) => ({
@@ -330,7 +385,7 @@ const copyButtonStyle = (enabled) => ({
 
 const optionsContainerStyle = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
   gap: "1.4rem",
   marginTop: "1.4rem",
 };
@@ -399,7 +454,7 @@ const guideContainer = {
   backgroundColor: "#FFFFFF",
   border: "1px solid #EDEDED",
   borderRadius: "16px",
-  padding: "2rem 2.5rem",
+  padding: "clamp(0.9rem, 0.8rem + 1vw, 1.6rem)",
   boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
 };
 
@@ -416,8 +471,8 @@ const guideRow = {
   display: "flex",
   flexWrap: "wrap",
   alignItems: "stretch",
-  gap: "2rem",
-  marginBottom: "2.4rem",
+  gap: "1rem",
+  marginBottom: "1.3rem",
 };
 
 const guideLeft = {
@@ -430,7 +485,7 @@ const guideLeft = {
   display: "flex",
   flexDirection: "column",
   justifyContent: "center",
-  minWidth: "300px",
+  minWidth: 0,
 };
 
 const guideRight = {
@@ -443,7 +498,7 @@ const guideRight = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  minWidth: "320px",
+  minWidth: 0,
 };
 
 const guideStepTitle = {

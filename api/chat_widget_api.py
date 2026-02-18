@@ -680,7 +680,13 @@ async def chat_widget(request: Request):
 
         # 🧠 INTENT ROUTER — procesa citas, agenda, RAG u otros
         print("🤖 Routing through intent system...")
-        answer = await process_user_message(client_id, session_id, message, channel)
+        answer = await process_user_message(
+            client_id,
+            session_id,
+            message,
+            channel,
+            provider="widget",
+        )
 
         print("✅ Generated answer:", answer)
 

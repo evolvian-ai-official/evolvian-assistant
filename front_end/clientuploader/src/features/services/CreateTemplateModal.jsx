@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "../../contexts/LanguageContext";
-
-/* ======================================================
-   Helpers
-====================================================== */
+import "../../components/ui/internal-admin-responsive.css";
 
 const toMinutes = (value, unit) => {
   const v = Number(value);
@@ -14,25 +11,11 @@ const toMinutes = (value, unit) => {
 };
 
 const buildLabel = (value, unit) => {
-  const unitLabel =
-    unit === "hours"
-      ? "hour"
-      : unit === "days"
-      ? "day"
-      : "week";
-
+  const unitLabel = unit === "hours" ? "hour" : unit === "days" ? "day" : "week";
   return `${value} ${unitLabel}${value > 1 ? "s" : ""} before`;
 };
 
-/* ======================================================
-   Modal
-====================================================== */
-
-export default function CreateTemplateModal({
-  clientId,
-  onClose,
-  onCreated,
-}) {
+export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
   const { t } = useLanguage();
   const API = import.meta.env.VITE_API_URL;
 
@@ -41,21 +24,24 @@ export default function CreateTemplateModal({
 
   const [templateTypes, setTemplateTypes] = useState([]);
   const [metaTemplates, setMetaTemplates] = useState([]);
-  const [selectedMetaTemplateId, setSelectedMetaTemplateId] =
-    useState("");
+  const [selectedMetaTemplateId, setSelectedMetaTemplateId] = useState("");
 
   const [label, setLabel] = useState("");
   const [body, setBody] = useState("");
 
-  const [reminders, setReminders] = useState([
-    { value: 1, unit: "hours" },
-  ]);
-
+  const [reminders, setReminders] = useState([{ value: 1, unit: "hours" }]);
   const [loading, setLoading] = useState(false);
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
 
-  /* =========================
-     Load Template Types
-  ========================= */
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   useEffect(() => {
     fetch(`${API}/message_templates/types`)
       .then((r) => r.json())
@@ -63,8 +49,7 @@ export default function CreateTemplateModal({
         const types = data || [];
         setTemplateTypes(types);
 
-        // Solo cambiar type si el actual no existe
-        const exists = types.some((t) => t.id === type);
+        const exists = types.some((tplType) => tplType.id === type);
         if (!exists && types.length > 0) {
           setType(types[0].id);
         }
@@ -72,10 +57,6 @@ export default function CreateTemplateModal({
       .catch(() => setTemplateTypes([]));
   }, []);
 
-  /* =========================
-     Load Meta templates
-     FILTRADO POR TYPE + CHANNEL
-  ========================= */
   useEffect(() => {
     if (channel !== "whatsapp") {
       setMetaTemplates([]);
@@ -84,20 +65,15 @@ export default function CreateTemplateModal({
 
     setSelectedMetaTemplateId("");
 
-    fetch(
-      `${API}/meta_approved_templates?type=${type}&channel=${channel}`
-    )
+    fetch(`${API}/meta_approved_templates?type=${type}&channel=${channel}`)
       .then((r) => r.json())
       .then((data) => setMetaTemplates(data || []))
       .catch(() => setMetaTemplates([]));
   }, [type, channel]);
 
-  const selectedTemplate = metaTemplates.find(
-    (t) => t.id === selectedMetaTemplateId
-  );
+  const selectedTemplate = metaTemplates.find((tpl) => tpl.id === selectedMetaTemplateId);
 
-  const addReminder = () =>
-    setReminders([...reminders, { value: 1, unit: "hours" }]);
+  const addReminder = () => setReminders([...reminders, { value: 1, unit: "hours" }]);
 
   const updateReminder = (index, field, value) => {
     const updated = [...reminders];
@@ -105,12 +81,8 @@ export default function CreateTemplateModal({
     setReminders(updated);
   };
 
-  const removeReminder = (index) =>
-    setReminders(reminders.filter((_, i) => i !== index));
+  const removeReminder = (index) => setReminders(reminders.filter((_, i) => i !== index));
 
-  /* =========================
-     Submit
-  ========================= */
   const handleSubmit = async () => {
     if (!clientId) {
       alert(t("template_client_not_ready"));
@@ -159,8 +131,8 @@ export default function CreateTemplateModal({
       });
 
       if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t);
+        const text = await res.text();
+        throw new Error(text);
       }
 
       onCreated?.();
@@ -173,51 +145,53 @@ export default function CreateTemplateModal({
     }
   };
 
-  /* =========================
-     UI
-  ========================= */
   return (
-    <div style={modalOverlay}>
-      <div style={modalCard}>
-        <h2 style={{ color: "#274472" }}>
-          {t("template_create_title")}
-        </h2>
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(0,0,0,0.4)",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        zIndex: 1100,
+        padding: "1rem",
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: "#fff",
+          padding: "1rem",
+          borderRadius: "12px",
+          width: "min(92vw, 560px)",
+          maxHeight: "88dvh",
+          overflowY: "auto",
+        }}
+      >
+        <h2 style={{ color: "#274472", marginTop: 0 }}>{t("template_create_title")}</h2>
 
-        {/* Channel */}
-        <label style={labelStyle}>{t("channel")}</label>
-        <select
-          value={channel}
-          onChange={(e) => setChannel(e.target.value)}
-          style={inputStyle}
-        >
+        <label className="ia-form-label">{t("channel")}</label>
+        <select value={channel} onChange={(e) => setChannel(e.target.value)} className="ia-form-input">
           <option value="whatsapp">WhatsApp</option>
           <option value="email">Email</option>
         </select>
 
-        {/* Type */}
-        <label style={labelStyle}>{t("type")}</label>
-        <select
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          style={inputStyle}
-        >
-          {templateTypes.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.description || t.id}
+        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("type")}</label>
+        <select value={type} onChange={(e) => setType(e.target.value)} className="ia-form-input">
+          {templateTypes.map((tplType) => (
+            <option key={tplType.id} value={tplType.id}>
+              {tplType.description || tplType.id}
             </option>
           ))}
         </select>
 
-        {/* META TEMPLATE */}
         {channel === "whatsapp" && (
           <>
-            <label style={labelStyle}>Meta template</label>
+            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Meta template</label>
             <select
               value={selectedMetaTemplateId}
-              onChange={(e) =>
-                setSelectedMetaTemplateId(e.target.value)
-              }
-              style={inputStyle}
+              onChange={(e) => setSelectedMetaTemplateId(e.target.value)}
+              className="ia-form-input"
             >
               <option value="">{t("template_select_placeholder")}</option>
               {metaTemplates.map((tpl) => (
@@ -228,78 +202,102 @@ export default function CreateTemplateModal({
             </select>
 
             {selectedTemplate && (
-              <div style={previewBox}>
+              <div
+                style={{
+                  marginTop: "0.6rem",
+                  padding: "0.75rem",
+                  backgroundColor: "#f7f7f7",
+                  borderRadius: "6px",
+                  fontSize: "0.85rem",
+                  border: "1px solid #EDEDED",
+                }}
+              >
                 <strong>{t("preview")}:</strong>
-                <p style={{ marginTop: "0.5rem" }}>
-                  {selectedTemplate.preview_body}
-                </p>
+                <p style={{ marginTop: "0.5rem", marginBottom: "0.4rem" }}>{selectedTemplate.preview_body}</p>
                 <small>
-                  {t("parameters_required")}:{" "}
-                  {selectedTemplate.parameter_count}
+                  {t("parameters_required")}: {selectedTemplate.parameter_count}
                 </small>
               </div>
             )}
           </>
         )}
 
-        {/* LABEL */}
-        <label style={labelStyle}>{t("label_optional")}</label>
-        <input
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          style={inputStyle}
-        />
+        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("label_optional")}</label>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} className="ia-form-input" />
 
-        {/* BODY (EMAIL ONLY) */}
         {channel === "email" && (
           <>
-            <label style={labelStyle}>Message body</label>
+            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Message body</label>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={4}
-              style={inputStyle}
+              className="ia-form-input"
+              style={{ resize: "vertical" }}
             />
           </>
         )}
 
-        {/* REMINDERS */}
         {type === "appointment_reminder" && (
           <>
-            <label style={labelStyle}>{t("reminders")}</label>
+            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("reminders")}</label>
             {reminders.map((r, idx) => (
-              <div key={idx} style={{ display: "flex", gap: "0.5rem" }}>
+              <div
+                key={idx}
+                style={{
+                  display: "flex",
+                  gap: "0.5rem",
+                  flexWrap: "wrap",
+                  marginBottom: "0.4rem",
+                }}
+              >
                 <input
                   type="number"
                   min="1"
                   value={r.value}
-                  onChange={(e) =>
-                    updateReminder(idx, "value", e.target.value)
-                  }
-                  style={{ ...inputStyle, width: "90px" }}
+                  onChange={(e) => updateReminder(idx, "value", e.target.value)}
+                  className="ia-form-input"
+                  style={{ width: isMobile ? "100%" : "90px" }}
                 />
                 <select
                   value={r.unit}
-                  onChange={(e) =>
-                    updateReminder(idx, "unit", e.target.value)
-                  }
-                  style={{ ...inputStyle, width: "120px" }}
+                  onChange={(e) => updateReminder(idx, "unit", e.target.value)}
+                  className="ia-form-input"
+                  style={{ width: isMobile ? "100%" : "130px" }}
                 >
                   <option value="hours">{t("hours")}</option>
                   <option value="days">{t("days")}</option>
                   <option value="weeks">{t("weeks")}</option>
                 </select>
-                <button onClick={() => removeReminder(idx)}>✕</button>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  onClick={() => removeReminder(idx)}
+                  style={{ width: isMobile ? "100%" : "auto" }}
+                >
+                  ✕
+                </button>
               </div>
             ))}
-            <button onClick={addReminder}>➕ {t("add_reminder")}</button>
+            <button type="button" onClick={addReminder} className="ia-button ia-button-ghost" style={{ marginTop: "0.3rem" }}>
+              ➕ {t("add_reminder")}
+            </button>
           </>
         )}
 
-        {/* ACTIONS */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
-          <button onClick={onClose}>{t("cancel")}</button>
-          <button onClick={handleSubmit} disabled={loading}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "0.5rem",
+            marginTop: "1rem",
+            flexDirection: isMobile ? "column-reverse" : "row",
+          }}
+        >
+          <button type="button" onClick={onClose} className="ia-button ia-button-ghost">
+            {t("cancel")}
+          </button>
+          <button type="button" onClick={handleSubmit} disabled={loading} className="ia-button ia-button-primary">
             {loading ? t("saving") : t("create")}
           </button>
         </div>
@@ -307,44 +305,3 @@ export default function CreateTemplateModal({
     </div>
   );
 }
-
-/* =========================
-   Styles
-========================= */
-
-const modalOverlay = {
-  position: "fixed",
-  inset: 0,
-  backgroundColor: "rgba(0,0,0,0.4)",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-};
-
-const modalCard = {
-  backgroundColor: "#fff",
-  padding: "1.5rem",
-  borderRadius: "12px",
-  width: "520px",
-};
-
-const labelStyle = {
-  fontSize: "0.8rem",
-  fontWeight: "bold",
-  marginTop: "0.75rem",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "0.45rem",
-  borderRadius: "6px",
-  border: "1px solid #ccc",
-};
-
-const previewBox = {
-  marginTop: "0.5rem",
-  padding: "0.75rem",
-  backgroundColor: "#f7f7f7",
-  borderRadius: "6px",
-  fontSize: "0.85rem",
-};

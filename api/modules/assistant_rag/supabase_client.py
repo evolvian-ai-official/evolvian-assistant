@@ -117,7 +117,7 @@ def save_history(
     content: str,
     channel: str = "chat",
     source_type: str = "chat",
-    provider: str = "internal",
+    provider: str | None = None,
     source_id: str | None = None,
     status: str = "sent",
     metadata: dict | None = None,
@@ -132,6 +132,8 @@ def save_history(
             f"✪ Guardando historial | client={client_id} | role={role} | channel={channel}"
         )
 
+        normalized_provider = (provider or "").strip().lower() or "internal"
+
         data = {
             "client_id": client_id,
             "session_id": session_id,
@@ -139,7 +141,7 @@ def save_history(
             "content": content,
             "channel": channel,
             "source_type": source_type,
-            "provider": provider,
+            "provider": normalized_provider,
             "source_id": source_id,
             "status": status,
             "metadata": metadata,

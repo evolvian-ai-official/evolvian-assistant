@@ -45,6 +45,7 @@ async def ask(
     client_id: str = Form(...),
     session_id: str = Form(None),
     channel: str = Form("chat"),  # ✅ preparado para multicanal
+    provider: str = Form("api"),
 ):
     """
     Endpoint principal de conversación (PRODUCCIÓN).
@@ -110,8 +111,8 @@ async def ask(
             session_id = session_id or str(uuid.uuid4())
             if not is_calendar_active(client_id):
                 answer = "⛔ La agenda está desactivada para este asistente."
-                save_history(client_id, session_id, "user", question, channel=channel)
-                save_history(client_id, session_id, "assistant", answer, channel=channel)
+                save_history(client_id, session_id, "user", question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
                 return JSONResponse(content={"answer": answer, "session_id": session_id})
 
             calendar_res = get_availability_from_google_calendar(client_id)
@@ -129,8 +130,8 @@ async def ask(
                 )
 
             # ✅ Guardado correcto con canal dinámico
-            save_history(client_id, session_id, "user", question, channel=channel)
-            save_history(client_id, session_id, "assistant", answer, channel=channel)
+            save_history(client_id, session_id, "user", question, channel=channel, provider=provider)
+            save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
             return JSONResponse(content={"answer": answer, "session_id": session_id})
 
@@ -146,8 +147,8 @@ async def ask(
             session_id = session_id or str(uuid.uuid4())
             if not is_calendar_active(client_id):
                 answer = "⛔ La agenda está desactivada para este asistente."
-                save_history(client_id, session_id, "user", question, channel=channel)
-                save_history(client_id, session_id, "assistant", answer, channel=channel)
+                save_history(client_id, session_id, "user", question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
                 return JSONResponse(content={"answer": answer, "session_id": session_id})
 
             try:
@@ -158,8 +159,8 @@ async def ask(
                     scheduled_time_str=scheduled_time.isoformat(),
                 )
 
-                save_history(client_id, session_id, "user", question, channel=channel)
-                save_history(client_id, session_id, "assistant", result, channel=channel)
+                save_history(client_id, session_id, "user", question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", result, channel=channel, provider=provider)
 
                 return JSONResponse(
                     content={"answer": result, "session_id": session_id}
@@ -203,7 +204,8 @@ async def ask(
             messages=message_payload,
             client_id=client_id,
             session_id=session_id,
-            channel=channel  # 🔥 ahora preparado para multicanal
+            channel=channel,  # 🔥 ahora preparado para multicanal
+            provider=provider,
         )
 
         return JSONResponse(

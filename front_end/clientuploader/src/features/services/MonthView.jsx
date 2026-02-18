@@ -22,40 +22,42 @@ export default function MonthView({ appointments, currentDate }) {
 
   return (
     <div style={wrapper}>
-      {/* Week headers */}
-      <div style={headerRow}>
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-          <div key={day} style={dayHeader}>{day}</div>
-        ))}
-      </div>
+      <div style={innerGrid}>
+        {/* Week headers */}
+        <div style={headerRow}>
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+            <div key={day} style={dayHeader}>{day}</div>
+          ))}
+        </div>
 
-      <div style={grid}>
-        {cells.map((date, index) => {
-          if (!date) {
-            return <div key={index} style={emptyCell}></div>;
-          }
+        <div style={grid}>
+          {cells.map((date, index) => {
+            if (!date) {
+              return <div key={index} style={emptyCell}></div>;
+            }
 
-          const dayEvents = appointments.filter((a) => {
-            const d = new Date(a.scheduled_time);
+            const dayEvents = appointments.filter((a) => {
+              const d = new Date(a.scheduled_time);
+              return (
+                d.getDate() === date.getDate() &&
+                d.getMonth() === date.getMonth() &&
+                d.getFullYear() === date.getFullYear()
+              );
+            });
+
             return (
-              d.getDate() === date.getDate() &&
-              d.getMonth() === date.getMonth() &&
-              d.getFullYear() === date.getFullYear()
+              <div key={index} style={cell}>
+                <div style={dateLabel}>{date.getDate()}</div>
+
+                {dayEvents.map((e) => (
+                  <div key={e.id} style={eventBadge}>
+                    {new Date(e.scheduled_time).getHours()}:00 {e.user_name}
+                  </div>
+                ))}
+              </div>
             );
-          });
-
-          return (
-            <div key={index} style={cell}>
-              <div style={dateLabel}>{date.getDate()}</div>
-
-              {dayEvents.map((e) => (
-                <div key={e.id} style={eventBadge}>
-                  {new Date(e.scheduled_time).getHours()}:00 {e.user_name}
-                </div>
-              ))}
-            </div>
-          );
-        })}
+          })}
+        </div>
       </div>
     </div>
   );
@@ -64,7 +66,12 @@ export default function MonthView({ appointments, currentDate }) {
 const wrapper = {
   border: "1px solid #EDEDED",
   borderRadius: 12,
-  overflow: "hidden",
+  overflowX: "auto",
+  backgroundColor: "#FFFFFF",
+};
+
+const innerGrid = {
+  minWidth: 760,
 };
 
 const headerRow = {
@@ -87,7 +94,7 @@ const grid = {
 };
 
 const cell = {
-  minHeight: 120,
+  minHeight: 108,
   borderRight: "1px solid #F0F0F0",
   borderBottom: "1px solid #F0F0F0",
   padding: "0.4rem",
@@ -95,7 +102,7 @@ const cell = {
 };
 
 const emptyCell = {
-  minHeight: 120,
+  minHeight: 108,
   borderRight: "1px solid #F0F0F0",
   borderBottom: "1px solid #F0F0F0",
 };
@@ -113,4 +120,5 @@ const eventBadge = {
   borderRadius: 6,
   padding: "0.2rem 0.3rem",
   marginBottom: 2,
+  overflowWrap: "anywhere",
 };

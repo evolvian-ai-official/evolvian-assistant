@@ -14,11 +14,18 @@ export default function ClientWidget() {
   if (!clientId) return <p style={{ padding: "1rem" }}>❌ Client ID no encontrado.</p>;
 
   return (
-    <div style={{
-      width: "100%",
-      height: "100%",
-      backgroundColor: "#ffffff"
-    }}>
+    <div
+      style={{
+        width: "100%",
+        minHeight: "100dvh",
+        boxSizing: "border-box",
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingRight: "env(safe-area-inset-right, 0px)",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        paddingLeft: "env(safe-area-inset-left, 0px)",
+        backgroundColor: "#ffffff",
+      }}
+    >
       <ChatWidget clientId={clientId} />
     </div>
   );

@@ -1,16 +1,15 @@
 import { useEffect, useState } from "react";
+import { useLanguage } from "../../contexts/LanguageContext";
 import TemplatesUpdateDelete from "../services/Templates_update_delete";
+import "../../components/ui/internal-admin-responsive.css";
 
 const truncate = (text = "", max = 220) => {
   if (!text) return "—";
   return text.length > max ? `${text.slice(0, max)}…` : text;
 };
 
-export default function TemplatesList({
-  clientId,
-  type,
-  refreshKey,
-}) {
+export default function TemplatesList({ clientId, type, refreshKey }) {
+  const { t } = useLanguage();
   const API = import.meta.env.VITE_API_URL;
 
   const [templates, setTemplates] = useState([]);
@@ -33,10 +32,7 @@ export default function TemplatesList({
       params.append("client_id", clientId);
       if (type) params.append("type", type);
 
-      const res = await fetch(
-        `${API}/message_templates?${params.toString()}`
-      );
-
+      const res = await fetch(`${API}/message_templates?${params.toString()}`);
       if (!res.ok) throw new Error();
 
       const list = await res.json();
@@ -55,44 +51,34 @@ export default function TemplatesList({
   };
 
   if (loading) {
-    return (
-      <p style={{ marginTop: "2rem", color: "#999" }}>
-        Loading templates…
-      </p>
-    );
+    return <p style={{ marginTop: "1.1rem", color: "#6B7280" }}>{t("loading") || "Loading"}...</p>;
   }
 
   if (templates.length === 0) {
     return (
       <div
         style={{
-          marginTop: "2rem",
-          padding: "2rem",
+          marginTop: "1.1rem",
+          padding: "1.1rem",
           border: "1px dashed #EDEDED",
           borderRadius: "12px",
           color: "#999",
         }}
       >
-        No templates created yet.
+        {t("no_templates_created") || "No templates created yet."}
       </div>
     );
   }
 
   return (
     <>
-      <div style={{ marginTop: "2rem", display: "grid", gap: "1rem" }}>
+      <div style={{ marginTop: "1rem", display: "grid", gap: "0.8rem" }}>
         {templates.map((tpl) => {
           const isMeta = tpl.is_meta_template;
 
-          const templateTitle =
-            tpl.meta_template_name ||
-            tpl.label ||
-            tpl.template_name ||
-            "—";
+          const templateTitle = tpl.meta_template_name || tpl.label || tpl.template_name || "—";
 
-          const bodyPreview = isMeta
-            ? truncate(tpl.meta_preview_body)
-            : truncate(tpl.body);
+          const bodyPreview = isMeta ? truncate(tpl.meta_preview_body) : truncate(tpl.body);
 
           return (
             <div
@@ -100,7 +86,7 @@ export default function TemplatesList({
               style={{
                 border: "1px solid #EDEDED",
                 borderRadius: "12px",
-                padding: "1.25rem",
+                padding: "0.95rem",
                 backgroundColor: "#fff",
               }}
             >
@@ -109,25 +95,19 @@ export default function TemplatesList({
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "flex-start",
+                  gap: "0.7rem",
+                  flexWrap: "wrap",
                 }}
               >
-                <h3 style={{ margin: 0, color: "#274472" }}>
-                  {templateTitle}
-                </h3>
+                <h3 style={{ margin: 0, color: "#274472", overflowWrap: "anywhere" }}>{templateTitle}</h3>
 
                 <span
                   style={{
                     fontSize: "0.75rem",
                     padding: "0.25rem 0.6rem",
                     borderRadius: "6px",
-                    backgroundColor:
-                      tpl.channel === "whatsapp"
-                        ? "#25D36620"
-                        : "#4A90E220",
-                    color:
-                      tpl.channel === "whatsapp"
-                        ? "#25D366"
-                        : "#4A90E2",
+                    backgroundColor: tpl.channel === "whatsapp" ? "#25D36620" : "#4A90E220",
+                    color: tpl.channel === "whatsapp" ? "#25D366" : "#4A90E2",
                     fontWeight: "bold",
                   }}
                 >
@@ -137,8 +117,8 @@ export default function TemplatesList({
 
               <div
                 style={{
-                  marginTop: "0.85rem",
-                  padding: "0.85rem",
+                  marginTop: "0.7rem",
+                  padding: "0.75rem",
                   borderRadius: "10px",
                   backgroundColor: isMeta ? "#F8FAFC" : "#FAFAFA",
                   border: "1px solid #EDEDED",
@@ -151,6 +131,7 @@ export default function TemplatesList({
                     color: "#555",
                     lineHeight: "1.5",
                     whiteSpace: "pre-line",
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {bodyPreview}
@@ -160,7 +141,7 @@ export default function TemplatesList({
                   <small
                     style={{
                       display: "block",
-                      marginTop: "0.6rem",
+                      marginTop: "0.5rem",
                       color: "#999",
                       fontSize: "0.75rem",
                     }}
@@ -171,16 +152,12 @@ export default function TemplatesList({
               </div>
 
               <button
+                type="button"
                 onClick={() => openEditModal(tpl)}
-                style={{
-                  marginTop: "0.75rem",
-                  background: "none",
-                  border: "none",
-                  color: "#4A90E2",
-                  cursor: "pointer",
-                }}
+                className="ia-button ia-button-ghost"
+                style={{ marginTop: "0.75rem", width: "100%" }}
               >
-                ✎ Edit
+                ✎ {t("edit") || "Edit"}
               </button>
             </div>
           );

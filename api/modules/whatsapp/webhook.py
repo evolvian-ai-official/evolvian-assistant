@@ -142,6 +142,7 @@ async def process_whatsapp_payload(payload: dict):
                 session_id=session_id,
                 user_message=user_text,
                 channel="whatsapp",
+                provider="meta",
             )
 
             # ---------------------------------------------------------

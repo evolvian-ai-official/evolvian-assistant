@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "../../contexts/LanguageContext";
+import "../../components/ui/internal-admin-responsive.css";
 
-/* =========================
-   Helpers
-========================= */
-
-// UI → DB
 const toMinutes = (value, unit) => {
   const v = Number(value);
   if (unit === "hours") return -v * 60;
@@ -15,17 +11,10 @@ const toMinutes = (value, unit) => {
 };
 
 const buildLabel = (value, unit) => {
-  const unitLabel =
-    unit === "hours"
-      ? "hour"
-      : unit === "days"
-      ? "day"
-      : "week";
-
+  const unitLabel = unit === "hours" ? "hour" : unit === "days" ? "day" : "week";
   return `${value} ${unitLabel}${value > 1 ? "s" : ""} before`;
 };
 
-// DB → UI
 const fromOffsetMinutes = (offset) => {
   const minutes = Math.abs(offset);
 
@@ -40,9 +29,6 @@ const fromOffsetMinutes = (offset) => {
   return { value: minutes / 60, unit: "hours" };
 };
 
-/* =========================
-   Component
-========================= */
 export default function TemplatesUpdateDelete({
   isOpen,
   mode = "edit",
@@ -59,48 +45,39 @@ export default function TemplatesUpdateDelete({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
 
   const isWhatsApp = initialData?.channel === "whatsapp";
 
-  /* =========================
-     Prefill
-  ========================= */
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   useEffect(() => {
     if (!initialData) return;
 
     setTemplateName(initialData.template_name || "");
     setLabel(initialData.label || "");
 
-    // 🔥 WhatsApp → mostrar preview de Meta
     if (initialData.channel === "whatsapp") {
-      setBody(
-        initialData.meta_preview_body ||
-        initialData.body ||
-        t("meta_preview_not_available")
-      );
+      setBody(initialData.meta_preview_body || initialData.body || t("meta_preview_not_available"));
     } else {
       setBody(initialData.body || "");
     }
 
-    if (
-      initialData.type === "appointment_reminder" &&
-      Array.isArray(initialData.frequency)
-    ) {
-      setReminders(
-        initialData.frequency.map((f) =>
-          fromOffsetMinutes(f.offset_minutes)
-        )
-      );
+    if (initialData.type === "appointment_reminder" && Array.isArray(initialData.frequency)) {
+      setReminders(initialData.frequency.map((f) => fromOffsetMinutes(f.offset_minutes)));
     }
   }, [initialData]);
 
   if (!isOpen || !initialData) return null;
 
-  /* =========================
-     Reminder handlers
-  ========================= */
-  const addReminder = () =>
-    setReminders([...reminders, { value: 1, unit: "hours" }]);
+  const addReminder = () => setReminders([...reminders, { value: 1, unit: "hours" }]);
 
   const updateReminder = (index, field, value) => {
     const updated = [...reminders];
@@ -108,12 +85,8 @@ export default function TemplatesUpdateDelete({
     setReminders(updated);
   };
 
-  const removeReminder = (index) =>
-    setReminders(reminders.filter((_, i) => i !== index));
+  const removeReminder = (index) => setReminders(reminders.filter((_, i) => i !== index));
 
-  /* =========================
-     SAVE (EDIT)
-  ========================= */
   const handleSubmit = async () => {
     setLoading(true);
     setError(null);
@@ -132,20 +105,16 @@ export default function TemplatesUpdateDelete({
         ...(frequency ? { frequency } : {}),
       };
 
-      // ⛔ WhatsApp → NO body updates
       if (!isWhatsApp) {
         payload.body = body;
         payload.template_name = templateName;
       }
 
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
       if (!res.ok) {
         const errText = await res.text();
@@ -162,23 +131,16 @@ export default function TemplatesUpdateDelete({
     }
   };
 
-  /* =========================
-     DELETE (SOFT)
-  ========================= */
   const handleDelete = async () => {
-    const confirmDelete = window.confirm(
-      t("template_delete_confirm")
-    );
-
+    const confirmDelete = window.confirm(t("template_delete_confirm"));
     if (!confirmDelete) return;
 
     try {
       setLoading(true);
 
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`,
-        { method: "DELETE" }
-      );
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`, {
+        method: "DELETE",
+      });
 
       if (!res.ok) {
         const txt = await res.text();
@@ -195,53 +157,66 @@ export default function TemplatesUpdateDelete({
     }
   };
 
-  /* =========================
-     UI
-  ========================= */
   return (
-    <div style={overlayStyle}>
-      <div style={modalStyle}>
-        <div style={headerStyle}>{t("template_edit_title")}</div>
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(0,0,0,0.45)",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        zIndex: 1200,
+        padding: "1rem",
+      }}
+    >
+      <div
+        style={{
+          width: "min(92vw, 560px)",
+          backgroundColor: "#FFFFFF",
+          borderRadius: "12px",
+          padding: "1rem",
+          fontFamily: "system-ui, sans-serif",
+          color: "#274472",
+          maxHeight: "88dvh",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ fontSize: "1.25rem", fontWeight: 800, marginBottom: "0.8rem", color: "#F5A623" }}>
+          {t("template_edit_title")}
+        </div>
 
-        {error && <div style={{ color: "#D9534F" }}>{error}</div>}
+        {error && <div style={{ color: "#D9534F", marginBottom: "0.6rem" }}>{error}</div>}
 
-        {/* Template name */}
         <div>
-          <div style={labelStyle}>{t("template_name")}</div>
+          <div className="ia-form-label">{t("template_name")}</div>
           <input
-            style={inputStyle}
+            className="ia-form-input"
             value={templateName}
             onChange={(e) => setTemplateName(e.target.value)}
             disabled={isWhatsApp}
           />
         </div>
 
-        {/* Label */}
         <div>
-          <div style={labelStyle}>{t("label")}</div>
-          <input
-            style={inputStyle}
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-          />
+          <div className="ia-form-label">{t("label")}</div>
+          <input className="ia-form-input" value={label} onChange={(e) => setLabel(e.target.value)} />
         </div>
 
-        {/* Body */}
         <div>
-          <div style={labelStyle}>{t("message_body")}</div>
+          <div className="ia-form-label">{t("message_body")}</div>
 
           {isWhatsApp && (
-            <small style={{ color: "#7A7A7A" }}>
-              {t("whatsapp_template_managed_meta")}
-            </small>
+            <small style={{ color: "#7A7A7A" }}>{t("whatsapp_template_managed_meta")}</small>
           )}
 
           <textarea
+            className="ia-form-input"
             style={{
-              ...inputStyle,
               minHeight: "120px",
               backgroundColor: isWhatsApp ? "#F5F7FA" : "#FFFFFF",
               cursor: isWhatsApp ? "not-allowed" : "text",
+              resize: "vertical",
             }}
             value={body}
             onChange={(e) => {
@@ -251,54 +226,74 @@ export default function TemplatesUpdateDelete({
           />
         </div>
 
-        {/* Reminders */}
         {initialData.type === "appointment_reminder" && (
           <>
-            <div style={labelStyle}>{t("reminders")}</div>
+            <div className="ia-form-label">{t("reminders")}</div>
 
             {reminders.map((r, idx) => (
-              <div key={idx} style={{ display: "flex", gap: "0.5rem" }}>
+              <div
+                key={idx}
+                style={{
+                  display: "flex",
+                  gap: "0.5rem",
+                  flexWrap: "wrap",
+                  marginBottom: "0.4rem",
+                }}
+              >
                 <input
                   type="number"
                   min="1"
                   value={r.value}
-                  onChange={(e) =>
-                    updateReminder(idx, "value", e.target.value)
-                  }
-                  style={{ ...inputStyle, width: "90px" }}
+                  onChange={(e) => updateReminder(idx, "value", e.target.value)}
+                  className="ia-form-input"
+                  style={{ width: isMobile ? "100%" : "90px" }}
                 />
 
                 <select
                   value={r.unit}
-                  onChange={(e) =>
-                    updateReminder(idx, "unit", e.target.value)
-                  }
-                  style={{ ...inputStyle, width: "120px" }}
+                  onChange={(e) => updateReminder(idx, "unit", e.target.value)}
+                  className="ia-form-input"
+                  style={{ width: isMobile ? "100%" : "130px" }}
                 >
                   <option value="hours">{t("hours")}</option>
                   <option value="days">{t("days")}</option>
                   <option value="weeks">{t("weeks")}</option>
                 </select>
 
-                <button onClick={() => removeReminder(idx)}>✕</button>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  onClick={() => removeReminder(idx)}
+                  style={{ width: isMobile ? "100%" : "auto" }}
+                >
+                  ✕
+                </button>
               </div>
             ))}
 
-            <button onClick={addReminder}>➕ {t("add_reminder")}</button>
+            <button type="button" onClick={addReminder} className="ia-button ia-button-ghost">
+              ➕ {t("add_reminder")}
+            </button>
           </>
         )}
 
-        {/* Footer */}
-        <div style={footerStyle}>
-          <button
-            onClick={handleDelete}
-            style={{ marginRight: "auto", color: "#D9534F" }}
-          >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "0.75rem",
+            marginTop: "1rem",
+            flexDirection: isMobile ? "column-reverse" : "row",
+          }}
+        >
+          <button type="button" onClick={handleDelete} className="ia-button" style={{ marginRight: "auto", color: "#D9534F", background: "#fff", border: "1px solid #f4c5c0" }}>
             🗑 {t("delete_template")}
           </button>
 
-          <button onClick={onClose}>{t("cancel")}</button>
-          <button onClick={handleSubmit} disabled={loading}>
+          <button type="button" onClick={onClose} className="ia-button ia-button-ghost">
+            {t("cancel")}
+          </button>
+          <button type="button" onClick={handleSubmit} disabled={loading} className="ia-button ia-button-primary">
             {loading ? t("saving") : t("save_changes")}
           </button>
         </div>
@@ -306,53 +301,3 @@ export default function TemplatesUpdateDelete({
     </div>
   );
 }
-
-/* =========================
-   Styles
-========================= */
-const overlayStyle = {
-  position: "fixed",
-  inset: 0,
-  backgroundColor: "rgba(0,0,0,0.45)",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 50,
-};
-
-const modalStyle = {
-  width: "520px",
-  backgroundColor: "#FFFFFF",
-  borderRadius: "12px",
-  padding: "1.5rem 1.75rem",
-  fontFamily: "system-ui, sans-serif",
-  color: "#274472",
-};
-
-const headerStyle = {
-  fontSize: "1.4rem",
-  fontWeight: "bold",
-  marginBottom: "1rem",
-  color: "#F5A623",
-};
-
-const labelStyle = {
-  fontSize: "0.9rem",
-  fontWeight: 600,
-  marginTop: "1rem",
-  marginBottom: "0.25rem",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "0.55rem 0.6rem",
-  borderRadius: "6px",
-  border: "1px solid #274472",
-};
-
-const footerStyle = {
-  display: "flex",
-  justifyContent: "flex-end",
-  gap: "0.75rem",
-  marginTop: "1.5rem",
-};

@@ -129,11 +129,12 @@ export default function WidgetConsentScreen({
         color: color,
         height: "100%",
         width: "100%",
+        boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
         alignItems: "center",
-        padding: "1.5rem",
+        padding: "clamp(1rem, 4vw, 1.5rem)",
         textAlign: "center",
         fontFamily: "Inter, sans-serif",
       }}
@@ -143,7 +144,11 @@ export default function WidgetConsentScreen({
       {requireEmailConsent && (
         <>
           <p
-            style={{ marginBottom: "1rem", maxWidth: "320px", fontSize: "0.9rem" }}
+            style={{
+              marginBottom: "1rem",
+              maxWidth: "min(100%, 320px)",
+              fontSize: "0.9rem",
+            }}
           >
             Please provide your email before we continue.
           </p>
@@ -159,7 +164,7 @@ export default function WidgetConsentScreen({
               borderRadius: "8px",
               border: emailValid ? "1px solid #ccc" : "1px solid red",
               marginBottom: "0.3rem",
-              width: "260px",
+              width: "min(100%, 320px)",
             }}
           />
 
@@ -175,7 +180,7 @@ export default function WidgetConsentScreen({
               fontSize: "0.75rem",
               color: "#666",
               marginBottom: "1rem",
-              maxWidth: "260px",
+              maxWidth: "min(100%, 320px)",
               lineHeight: "1.2",
             }}
           >
@@ -191,6 +196,8 @@ export default function WidgetConsentScreen({
               gap: "0.4rem",
               marginBottom: "1rem",
               fontSize: "0.85rem",
+              maxWidth: "min(100%, 320px)",
+              textAlign: "left",
             }}
           >
             <input
@@ -214,7 +221,7 @@ export default function WidgetConsentScreen({
             borderRadius: "8px",
             border: "1px solid #ccc",
             marginBottom: "0.75rem",
-            width: "260px",
+            width: "min(100%, 320px)",
           }}
         />
       )}
@@ -270,6 +277,7 @@ export default function WidgetConsentScreen({
           border: "none",
           borderRadius: "8px",
           padding: "0.6rem 1.2rem",
+          width: "min(100%, 320px)",
           fontWeight: "600",
           cursor:
             loading ||

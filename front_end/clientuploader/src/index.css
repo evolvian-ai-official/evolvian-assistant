@@ -2,30 +2,104 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ✅ Garantizar altura total en el layout base */
-html, body, #root {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-}
-
-/* 🌐 Estilos globales opcionales y neutros */
+/* Responsive design tokens (admin interno) */
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  color-scheme: light dark;
+  --evo-bp-sm: 640px;
+  --evo-bp-md: 768px;
+  --evo-bp-lg: 1024px;
+  --evo-bp-xl: 1280px;
+
+  --evo-space-1: clamp(0.25rem, 0.2rem + 0.15vw, 0.5rem);
+  --evo-space-2: clamp(0.5rem, 0.35rem + 0.3vw, 0.75rem);
+  --evo-space-3: clamp(0.75rem, 0.55rem + 0.45vw, 1rem);
+  --evo-space-4: clamp(1rem, 0.75rem + 0.6vw, 1.25rem);
+  --evo-space-5: clamp(1.25rem, 0.9rem + 0.9vw, 1.75rem);
+  --evo-space-6: clamp(1.5rem, 1.1rem + 1.1vw, 2.25rem);
+
+  --evo-page-max: 1200px;
+  --evo-page-gutter: clamp(1rem, 0.5rem + 1.8vw, 2rem);
+
+  --evo-radius-sm: 8px;
+  --evo-radius-md: 12px;
+  --evo-radius-lg: 16px;
+
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ✅ Fondo base Evolvian aplicado solo si no lo sobreescribe Tailwind */
-body {
-  background-color: #0f1c2e;
-  color: #ffffff;
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
-/* ✅ Enlaces con colores de marca */
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: #0f1c2e;
+  color: #ffffff;
+  overflow-x: hidden;
+}
+
+/* Responsive primitives for upcoming phase migrations */
+.evo-page {
+  width: min(100%, var(--evo-page-max));
+  margin-inline: auto;
+  padding-inline: var(--evo-page-gutter);
+}
+
+.evo-stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--evo-space-2);
+}
+
+.evo-stack-md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--evo-space-4);
+}
+
+.evo-grid-auto {
+  display: grid;
+  gap: var(--evo-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+.evo-vh {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.evo-scroll-y {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 a {
-  @apply text-[#4a90e2] hover:text-[#274472] font-medium;
+  color: #4a90e2;
+  font-weight: 500;
+}
+
+a:hover {
+  color: #274472;
 }

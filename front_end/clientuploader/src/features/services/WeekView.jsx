@@ -14,49 +14,51 @@ export default function WeekView({ appointments, currentDate }) {
 
   return (
     <div style={wrapper}>
-      {/* Header */}
-      <div style={headerRow}>
-        <div style={{ width: 80 }}></div>
-        {days.map((d, i) => (
-          <div key={i} style={dayHeader}>
-            {d.toLocaleDateString("en-US", {
-              weekday: "short",
-              day: "numeric",
+      <div style={innerGrid}>
+        {/* Header */}
+        <div style={headerRow}>
+          <div style={{ width: "clamp(58px, 16vw, 80px)" }}></div>
+          {days.map((d, i) => (
+            <div key={i} style={dayHeader}>
+              {d.toLocaleDateString("en-US", {
+                weekday: "short",
+                day: "numeric",
+              })}
+            </div>
+          ))}
+        </div>
+
+        {/* Grid */}
+        {hours.map((hour) => (
+          <div key={hour} style={hourRow}>
+            <div style={hourLabel}>
+              {hour.toString().padStart(2, "0")}:00
+            </div>
+
+            {days.map((day, i) => {
+              const events = appointments.filter((a) => {
+                const d = new Date(a.scheduled_time);
+                return (
+                  d.getDate() === day.getDate() &&
+                  d.getMonth() === day.getMonth() &&
+                  d.getFullYear() === day.getFullYear() &&
+                  d.getHours() === hour
+                );
+              });
+
+              return (
+                <div key={i} style={cell}>
+                  {events.map((e) => (
+                    <div key={e.id} style={eventCard}>
+                      {e.user_name}
+                    </div>
+                  ))}
+                </div>
+              );
             })}
           </div>
         ))}
       </div>
-
-      {/* Grid */}
-      {hours.map((hour) => (
-        <div key={hour} style={hourRow}>
-          <div style={hourLabel}>
-            {hour.toString().padStart(2, "0")}:00
-          </div>
-
-          {days.map((day, i) => {
-            const events = appointments.filter((a) => {
-              const d = new Date(a.scheduled_time);
-              return (
-                d.getDate() === day.getDate() &&
-                d.getMonth() === day.getMonth() &&
-                d.getFullYear() === day.getFullYear() &&
-                d.getHours() === hour
-              );
-            });
-
-            return (
-              <div key={i} style={cell}>
-                {events.map((e) => (
-                  <div key={e.id} style={eventCard}>
-                    {e.user_name}
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      ))}
     </div>
   );
 }
@@ -65,6 +67,11 @@ const wrapper = {
   border: "1px solid #EDEDED",
   borderRadius: 12,
   overflowX: "auto",
+  backgroundColor: "#FFFFFF",
+};
+
+const innerGrid = {
+  minWidth: 840,
 };
 
 const headerRow = {
@@ -73,7 +80,8 @@ const headerRow = {
 };
 
 const dayHeader = {
-  flex: 1,
+  flex: "1 0 108px",
+  minWidth: 108,
   padding: "0.5rem",
   textAlign: "center",
   fontWeight: "600",
@@ -87,15 +95,17 @@ const hourRow = {
 };
 
 const hourLabel = {
-  width: 80,
+  width: "clamp(58px, 16vw, 80px)",
   padding: "0.4rem",
   fontSize: "0.75rem",
   color: "#999",
   borderRight: "1px solid #F0F0F0",
+  flex: "0 0 auto",
 };
 
 const cell = {
-  flex: 1,
+  flex: "1 0 108px",
+  minWidth: 108,
   borderLeft: "1px solid #F5F5F5",
   padding: "0.3rem",
 };
@@ -106,4 +116,5 @@ const eventCard = {
   borderRadius: 6,
   padding: "0.2rem 0.4rem",
   fontSize: "0.75rem",
+  overflowWrap: "anywhere",
 };

@@ -1,19 +1,67 @@
+import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
-import InternalSupportWidget from "../components/InternalSupportWidget"; // ✅ Widget interno para soporte técnico
+import InternalSupportWidget from "../components/InternalSupportWidget";
+
+const MOBILE_BREAKPOINT = 1024;
 
 export default function MainLayout({ children }) {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    };
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (!isMobile) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    if (sidebarOpen) document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobile, sidebarOpen]);
+
   return (
     <div style={outerContainer}>
-      {/* Header */}
-      <header style={headerStyle}>Evolvian™</header>
+      <header style={headerStyle}>
+        <div style={headerInner}>
+          {isMobile ? (
+            <button
+              type="button"
+              aria-label="Open menu"
+              onClick={() => setSidebarOpen(true)}
+              style={menuButtonStyle}
+            >
+              ☰
+            </button>
+          ) : (
+            <div style={headerSpacer} />
+          )}
 
-      {/* Contenido principal con sidebar */}
+          <div style={brandStyle}>Evolvian™</div>
+          <div style={headerSpacer} />
+        </div>
+      </header>
+
       <div style={layoutContainer}>
-        <Sidebar />
-        <main style={mainContent}>{children}</main>
+        {!isMobile && <Sidebar />}
+        <main style={isMobile ? mobileMainContent : mainContent}>{children}</main>
       </div>
 
-      {/* Footer legal */}
       <footer style={footerStyle}>
         <div>
           Evolvian™ is a pending trademark application filed with the USPTO. All rights reserved.
@@ -33,43 +81,88 @@ export default function MainLayout({ children }) {
             Terms & Conditions
           </a>{" "}
           |{" "}
-          <a href="/privacypolicy" style={linkStyle}>
+          <a href="/PrivacyPolicy" style={linkStyle}>
             Privacy Policy
           </a>
         </div>
       </footer>
 
-      {/* Widget de ayuda interna para clientes Evolvian */}
+      {isMobile && sidebarOpen && (
+        <>
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setSidebarOpen(false)}
+            style={backdropStyle}
+          />
+          <aside style={mobileDrawerStyle}>
+            <Sidebar mobile onNavigate={() => setSidebarOpen(false)} />
+          </aside>
+        </>
+      )}
+
       <InternalSupportWidget />
     </div>
   );
 }
 
-// 🎨 Estilos inline con nueva paleta Evolvian
 const outerContainer = {
   display: "flex",
   flexDirection: "column",
-  minHeight: "100vh",
-  backgroundColor: "#f8fafc", // más limpio y moderno
-  color: "#274472", // texto principal azul oscuro
+  minHeight: "100dvh",
+  backgroundColor: "#f8fafc",
+  color: "#274472",
   fontFamily: "Inter, system-ui, sans-serif",
 };
 
 const headerStyle = {
-  padding: "1rem",
-  fontSize: "1.5rem",
-  fontWeight: "bold",
-  color: "#4a90e2", // azul brillante Evolvian
-  backgroundColor: "#ffffff", // header blanco elegante
-  textAlign: "center",
+  position: "sticky",
+  top: 0,
+  zIndex: 20,
+  backgroundColor: "#ffffff",
   borderBottom: "1px solid #e5e7eb",
   boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+};
+
+const headerInner = {
+  minHeight: "64px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.75rem",
+  padding: "0.75rem 1rem",
+};
+
+const brandStyle = {
+  fontSize: "1.25rem",
+  fontWeight: "700",
+  color: "#4a90e2",
+  textAlign: "center",
+  whiteSpace: "nowrap",
+};
+
+const menuButtonStyle = {
+  width: "40px",
+  height: "40px",
+  borderRadius: "10px",
+  border: "1px solid #d9e2ee",
+  background: "#ffffff",
+  color: "#274472",
+  fontSize: "1.25rem",
+  lineHeight: 1,
+  cursor: "pointer",
+};
+
+const headerSpacer = {
+  width: "40px",
+  height: "40px",
 };
 
 const layoutContainer = {
   display: "flex",
   flex: 1,
   backgroundColor: "#ffffff",
+  minHeight: 0,
 };
 
 const mainContent = {
@@ -78,6 +171,33 @@ const mainContent = {
   overflowY: "auto",
   backgroundColor: "#f8fafc",
   borderLeft: "1px solid #e5e7eb",
+  minHeight: 0,
+};
+
+const mobileMainContent = {
+  ...mainContent,
+  padding: "1rem",
+  borderLeft: "none",
+};
+
+const mobileDrawerStyle = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  height: "100dvh",
+  width: "min(88vw, 320px)",
+  background: "#ffffff",
+  zIndex: 32,
+  boxShadow: "0 12px 30px rgba(0, 0, 0, 0.22)",
+};
+
+const backdropStyle = {
+  position: "fixed",
+  inset: 0,
+  border: "none",
+  background: "rgba(15, 28, 46, 0.45)",
+  zIndex: 31,
+  cursor: "pointer",
 };
 
 const footerStyle = {
@@ -91,6 +211,6 @@ const footerStyle = {
 
 const linkStyle = {
   textDecoration: "underline",
-  color: "#4a90e2", // acento azul
+  color: "#4a90e2",
   fontWeight: 500,
 };
