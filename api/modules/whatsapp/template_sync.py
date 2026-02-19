@@ -477,7 +477,7 @@ def get_active_whatsapp_channel(client_id: str) -> Optional[dict]:
         response = (
             supabase
             .table("channels")
-            .select("id, wa_phone_id, wa_token, wa_waba_id")
+            .select("id, wa_phone_id, wa_token, wa_business_account_id")
             .eq("client_id", client_id)
             .eq("type", "whatsapp")
             .eq("is_active", True)
@@ -502,16 +502,22 @@ def get_active_whatsapp_channel(client_id: str) -> Optional[dict]:
         return None
 
     row = dict(rows[0] or {})
-    row.setdefault("wa_waba_id", None)
+    row.setdefault("wa_business_account_id", None)
+
     return row
 
 
-def _persist_channel_waba_id(*, client_id: str, channel_id: Optional[str], waba_id: str) -> None:
+def _persist_channel_waba_id(
+    *,
+    client_id: str,
+    channel_id: Optional[str],
+    waba_id: str,
+) -> None:
     if not waba_id:
         return
 
     update_payload = {
-        "wa_waba_id": waba_id,
+        "wa_business_account_id": waba_id,
         "updated_at": _utcnow_iso(),
     }
 
@@ -533,12 +539,17 @@ def _persist_channel_waba_id(*, client_id: str, channel_id: Optional[str], waba_
             )
 
         query.execute()
+
     except Exception:
-        logger.warning("⚠️ Unable to persist wa_waba_id cache (migration may be pending)")
+        logger.warning(
+            "⚠️ Unable to persist wa_business_account_id cache (migration may be pending)"
+        )
+
 
 
 def _resolve_channel_waba_id(*, client_id: str, channel: dict) -> Optional[str]:
-    cached = str(channel.get("wa_waba_id") or "").strip()
+    cached = str(channel.get("wa_business_account_id") or "").strip()
+
     if cached:
         return cached
 

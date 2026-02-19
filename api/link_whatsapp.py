@@ -36,6 +36,7 @@ def get_client_id_from_user(auth_user_id: str) -> str:
         supabase.table("clients")
         .select("id")
         .eq("user_id", auth_user_id)
+        .limit(1)
         .execute()
     )
 
@@ -105,6 +106,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
         now = datetime.utcnow().isoformat()
         resolved_waba_id = None
 
+        # 4️⃣ Resolve WABA (manteniendo tu lógica actual)
         if payload.provider == "meta":
             resolved_waba_id = resolve_waba_id_from_phone(
                 wa_phone_id=str(payload.wa_phone_id or ""),
@@ -117,7 +119,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
                     payload.wa_phone_id,
                 )
 
-        # 4️⃣ Deactivate any previous WhatsApp channel
+        # 5️⃣ Deactivate previous WhatsApp channel
         supabase.table("channels") \
             .update({
                 "is_active": False,
@@ -130,7 +132,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
             .eq("type", "whatsapp") \
             .execute()
 
-        # 5️⃣ Insert new channel
+        # 6️⃣ Insert new channel
         insert_payload = {
             "id": str(uuid.uuid4()),
             "client_id": client_id,
@@ -138,7 +140,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
             "value": number,
             "provider": payload.provider,
             "wa_phone_id": payload.wa_phone_id,
-            "wa_token": payload.wa_token,  # NEVER RETURN THIS
+            "wa_token": payload.wa_token,  # NEVER RETURN
             "is_active": True,
             "created_at": now,
             "updated_at": now,
@@ -147,18 +149,19 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
             "archived_reason": None,
             "last_disconnected_at": None
         }
+
         if resolved_waba_id:
-            insert_payload["wa_waba_id"] = resolved_waba_id
+            insert_payload["wa_business_account_id"] = resolved_waba_id
 
         try:
             insert_res = supabase.table("channels").insert(insert_payload).execute()
         except Exception as insert_error:
-            if "wa_waba_id" in insert_payload:
+            if "wa_business_account_id" in insert_payload:
                 logger.warning(
-                    "⚠️ channels.wa_waba_id not available yet; retrying insert without cache | %s",
+                    "⚠️ channels.wa_business_account_id not available yet; retrying insert without cache | %s",
                     insert_error,
                 )
-                insert_payload.pop("wa_waba_id", None)
+                insert_payload.pop("wa_business_account_id", None)
                 insert_res = supabase.table("channels").insert(insert_payload).execute()
             else:
                 raise
@@ -166,6 +169,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
         if not insert_res.data:
             raise HTTPException(status_code=500, detail="Error creando canal")
 
+        # 7️⃣ Sync templates (no rompe si falla)
         sync_summary = None
         if payload.provider == "meta":
             try:
@@ -192,14 +196,13 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
 
     except HTTPException:
         raise
-
     except Exception:
         logger.exception("❌ link_whatsapp internal error")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =====================================================
-# UNLINK WHATSAPP (PRODUCTION SAFE)
+# UNLINK WHATSAPP
 # =====================================================
 
 @router.post("/unlink_whatsapp")
@@ -207,6 +210,7 @@ def unlink_whatsapp(payload: WhatsAppUnlinkPayload, request: Request):
     try:
         logger.info("🛑 Unlinking WhatsApp channel")
         auth_user_id = get_current_user_id(request)
+
         if payload.auth_user_id and payload.auth_user_id != auth_user_id:
             raise HTTPException(status_code=403, detail="forbidden_user_mismatch")
 
@@ -218,7 +222,7 @@ def unlink_whatsapp(payload: WhatsAppUnlinkPayload, request: Request):
                 "is_active": False,
                 "wa_token": None,
                 "wa_phone_id": None,
-                "wa_waba_id": None,
+                "wa_business_account_id": None,
                 "archived_at": now,
                 "archived_reason": "manual_disconnect",
                 "last_disconnected_at": now,
@@ -231,7 +235,7 @@ def unlink_whatsapp(payload: WhatsAppUnlinkPayload, request: Request):
             update_res = update_res.execute()
         except Exception as update_error:
             logger.warning(
-                "⚠️ channels.wa_waba_id not available yet; retrying unlink without cache field | %s",
+                "⚠️ channels.wa_business_account_id not available yet; retrying unlink without cache field | %s",
                 update_error,
             )
             update_res = supabase.table("channels") \
@@ -277,10 +281,11 @@ def whatsapp_status(request: Request):
 
         channel_res = (
             supabase.table("channels")
-            .select("value, provider, wa_phone_id")
+            .select("value, provider, wa_phone_id, wa_business_account_id")
             .eq("client_id", client_id)
             .eq("type", "whatsapp")
             .eq("is_active", True)
+            .limit(1)
             .execute()
         )
 
@@ -289,7 +294,8 @@ def whatsapp_status(request: Request):
                 "connected": True,
                 "phone": channel_res.data[0]["value"],
                 "provider": channel_res.data[0]["provider"],
-                "wa_phone_id": channel_res.data[0]["wa_phone_id"]
+                "wa_phone_id": channel_res.data[0]["wa_phone_id"],
+                "wa_business_account_id": channel_res.data[0]["wa_business_account_id"],
             }
 
         return {"connected": False}
