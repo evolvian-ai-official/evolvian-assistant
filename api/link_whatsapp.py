@@ -1,7 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from api.modules.assistant_rag.supabase_client import supabase
-from api.modules.whatsapp.template_sync import sync_canonical_templates_for_client
+from api.modules.whatsapp.template_sync import (
+    resolve_waba_id_from_phone,
+    sync_canonical_templates_for_client,
+)
 from datetime import datetime
 import uuid
 import re
@@ -100,6 +103,19 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
         # 3️⃣ Validate phone
         number = validate_e164(payload.phone)
         now = datetime.utcnow().isoformat()
+        resolved_waba_id = None
+
+        if payload.provider == "meta":
+            resolved_waba_id = resolve_waba_id_from_phone(
+                wa_phone_id=str(payload.wa_phone_id or ""),
+                wa_token=str(payload.wa_token or ""),
+            )
+            if not resolved_waba_id:
+                logger.warning(
+                    "⚠️ Could not resolve waba_id during link_whatsapp | client_id=%s | phone_id=%s",
+                    client_id,
+                    payload.wa_phone_id,
+                )
 
         # 4️⃣ Deactivate any previous WhatsApp channel
         supabase.table("channels") \
@@ -115,24 +131,37 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
             .execute()
 
         # 5️⃣ Insert new channel
-        insert_res = supabase.table("channels") \
-            .insert({
-                "id": str(uuid.uuid4()),
-                "client_id": client_id,
-                "type": "whatsapp",
-                "value": number,
-                "provider": payload.provider,
-                "wa_phone_id": payload.wa_phone_id,
-                "wa_token": payload.wa_token,  # NEVER RETURN THIS
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-                "last_connected_at": now,
-                "archived_at": None,
-                "archived_reason": None,
-                "last_disconnected_at": None
-            }) \
-            .execute()
+        insert_payload = {
+            "id": str(uuid.uuid4()),
+            "client_id": client_id,
+            "type": "whatsapp",
+            "value": number,
+            "provider": payload.provider,
+            "wa_phone_id": payload.wa_phone_id,
+            "wa_token": payload.wa_token,  # NEVER RETURN THIS
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+            "last_connected_at": now,
+            "archived_at": None,
+            "archived_reason": None,
+            "last_disconnected_at": None
+        }
+        if resolved_waba_id:
+            insert_payload["wa_waba_id"] = resolved_waba_id
+
+        try:
+            insert_res = supabase.table("channels").insert(insert_payload).execute()
+        except Exception as insert_error:
+            if "wa_waba_id" in insert_payload:
+                logger.warning(
+                    "⚠️ channels.wa_waba_id not available yet; retrying insert without cache | %s",
+                    insert_error,
+                )
+                insert_payload.pop("wa_waba_id", None)
+                insert_res = supabase.table("channels").insert(insert_payload).execute()
+            else:
+                raise
 
         if not insert_res.data:
             raise HTTPException(status_code=500, detail="Error creando canal")
@@ -189,14 +218,35 @@ def unlink_whatsapp(payload: WhatsAppUnlinkPayload, request: Request):
                 "is_active": False,
                 "wa_token": None,
                 "wa_phone_id": None,
+                "wa_waba_id": None,
                 "archived_at": now,
                 "archived_reason": "manual_disconnect",
                 "last_disconnected_at": now,
                 "updated_at": now
             }) \
             .eq("client_id", client_id) \
-            .eq("type", "whatsapp") \
-            .execute()
+            .eq("type", "whatsapp")
+
+        try:
+            update_res = update_res.execute()
+        except Exception as update_error:
+            logger.warning(
+                "⚠️ channels.wa_waba_id not available yet; retrying unlink without cache field | %s",
+                update_error,
+            )
+            update_res = supabase.table("channels") \
+                .update({
+                    "is_active": False,
+                    "wa_token": None,
+                    "wa_phone_id": None,
+                    "archived_at": now,
+                    "archived_reason": "manual_disconnect",
+                    "last_disconnected_at": now,
+                    "updated_at": now
+                }) \
+                .eq("client_id", client_id) \
+                .eq("type", "whatsapp") \
+                .execute()
 
         if not update_res.data:
             logger.warning(f"⚠️ No WhatsApp channel found to unlink for client {client_id}")

@@ -231,10 +231,21 @@ export default function TemplatesList({ clientId, refreshKey }) {
         const text = await res.text();
         throw new Error(text || "Failed to refresh Meta statuses");
       }
+      const summary = await res.json().catch(() => null);
+      if (summary && summary.success === false) {
+        const details = Array.isArray(summary.errors) && summary.errors.length
+          ? summary.errors.join(", ")
+          : "Failed refreshing Meta status";
+        throw new Error(details);
+      }
       await fetchTemplates();
     } catch (err) {
       console.error(err);
-      alert("No se pudo refrescar el estado de templates en Meta.");
+      const detail =
+        err instanceof Error && err.message
+          ? err.message
+          : "No se pudo refrescar el estado de templates en Meta.";
+      alert(`No se pudo refrescar el estado de templates en Meta. ${detail}`);
     } finally {
       setSyncingMetaStatus(false);
     }

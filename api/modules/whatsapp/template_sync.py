@@ -123,22 +123,241 @@ def _meta_request(
     )
 
 
-def resolve_waba_id_from_phone(*, wa_phone_id: str, wa_token: str) -> Optional[str]:
+def _extract_after_cursor(payload: Any) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    paging = payload.get("paging")
+    if not isinstance(paging, dict):
+        return None
+    cursors = paging.get("cursors")
+    if not isinstance(cursors, dict):
+        return None
+    after = cursors.get("after")
+    return str(after) if after else None
+
+
+def _response_has_unknown_field_error(response: requests.Response) -> bool:
     try:
+        payload = response.json()
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        if not isinstance(error, dict):
+            return False
+        message = str(error.get("message") or "").lower()
+        code = error.get("code")
+        return bool(code == 100 and "nonexisting field" in message)
+    except Exception:
+        return False
+
+
+def _extract_waba_id_from_phone_payload(payload: Any) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+
+    direct = payload.get("waba_id")
+    if direct:
+        return str(direct)
+
+    legacy = payload.get("whatsapp_business_account")
+    if isinstance(legacy, dict) and legacy.get("id"):
+        return str(legacy["id"])
+
+    return None
+
+
+def _list_business_ids_for_token(wa_token: str) -> list[str]:
+    business_ids: set[str] = set()
+
+    # Newer Graph setups: /me?fields=businesses{id}
+    response = _meta_request(
+        "GET",
+        "me",
+        token=wa_token,
+        params={"fields": "businesses{id}"},
+    )
+    if response.status_code < 400:
+        payload = response.json()
+        businesses = payload.get("businesses") if isinstance(payload, dict) else None
+        data = businesses.get("data") if isinstance(businesses, dict) else []
+        for row in data or []:
+            business_id = str((row or {}).get("id") or "").strip()
+            if business_id:
+                business_ids.add(business_id)
+    else:
+        logger.warning("⚠️ Failed listing businesses from /me | %s", _format_meta_error(response))
+
+    # Legacy/alternative edge: /me/businesses
+    after_cursor: Optional[str] = None
+    while True:
+        params: dict[str, Any] = {"fields": "id", "limit": 200}
+        if after_cursor:
+            params["after"] = after_cursor
+
         response = _meta_request(
             "GET",
-            f"{wa_phone_id}",
+            "me/businesses",
             token=wa_token,
-            params={"fields": "whatsapp_business_account"},
+            params=params,
         )
         if response.status_code >= 400:
-            logger.error("❌ Failed resolving WABA id | %s", _format_meta_error(response))
-            return None
+            # This edge commonly requires business_management; keep graceful.
+            break
 
         payload = response.json()
-        waba = payload.get("whatsapp_business_account") if isinstance(payload, dict) else None
-        if isinstance(waba, dict):
-            return waba.get("id")
+        data = payload.get("data") if isinstance(payload, dict) else []
+        for row in data or []:
+            business_id = str((row or {}).get("id") or "").strip()
+            if business_id:
+                business_ids.add(business_id)
+
+        after_cursor = _extract_after_cursor(payload)
+        if not after_cursor:
+            break
+
+    return list(business_ids)
+
+
+def _list_owned_wabas_for_business(*, business_id: str, wa_token: str) -> list[str]:
+    found: list[str] = []
+    after_cursor: Optional[str] = None
+
+    while True:
+        params: dict[str, Any] = {"fields": "id", "limit": 200}
+        if after_cursor:
+            params["after"] = after_cursor
+
+        response = _meta_request(
+            "GET",
+            f"{business_id}/owned_whatsapp_business_accounts",
+            token=wa_token,
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "⚠️ Failed listing owned WABAs | business_id=%s | %s",
+                business_id,
+                _format_meta_error(response),
+            )
+            break
+
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else []
+        for row in data or []:
+            waba_id = str((row or {}).get("id") or "").strip()
+            if waba_id:
+                found.append(waba_id)
+
+        after_cursor = _extract_after_cursor(payload)
+        if not after_cursor:
+            break
+
+    return found
+
+
+def _waba_has_phone_number(*, waba_id: str, wa_phone_id: str, wa_token: str) -> bool:
+    after_cursor: Optional[str] = None
+
+    while True:
+        params: dict[str, Any] = {"fields": "id", "limit": 200}
+        if after_cursor:
+            params["after"] = after_cursor
+
+        response = _meta_request(
+            "GET",
+            f"{waba_id}/phone_numbers",
+            token=wa_token,
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "⚠️ Failed listing phone numbers for WABA | waba_id=%s | %s",
+                waba_id,
+                _format_meta_error(response),
+            )
+            return False
+
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else []
+        for row in data or []:
+            phone_id = str((row or {}).get("id") or "").strip()
+            if phone_id and phone_id == wa_phone_id:
+                return True
+
+        after_cursor = _extract_after_cursor(payload)
+        if not after_cursor:
+            break
+
+    return False
+
+
+def _resolve_waba_id_via_business_graph(*, wa_phone_id: str, wa_token: str) -> Optional[str]:
+    business_ids = _list_business_ids_for_token(wa_token)
+    if not business_ids:
+        return None
+
+    for business_id in business_ids:
+        waba_ids = _list_owned_wabas_for_business(
+            business_id=business_id,
+            wa_token=wa_token,
+        )
+        for waba_id in waba_ids:
+            if _waba_has_phone_number(
+                waba_id=waba_id,
+                wa_phone_id=wa_phone_id,
+                wa_token=wa_token,
+            ):
+                return waba_id
+
+    return None
+
+
+def resolve_waba_id_from_phone(*, wa_phone_id: str, wa_token: str) -> Optional[str]:
+    try:
+        normalized_phone_id = str(wa_phone_id or "").strip()
+        if not normalized_phone_id:
+            return None
+
+        # Try direct phone-node fields first. Some Graph versions expose only one.
+        for field_name in ("waba_id", "whatsapp_business_account"):
+            response = _meta_request(
+                "GET",
+                normalized_phone_id,
+                token=wa_token,
+                params={"fields": field_name},
+            )
+            if response.status_code >= 400:
+                if _response_has_unknown_field_error(response):
+                    continue
+                logger.warning(
+                    "⚠️ Direct WABA lookup failed | phone_id=%s | field=%s | %s",
+                    normalized_phone_id,
+                    field_name,
+                    _format_meta_error(response),
+                )
+                continue
+
+            direct_id = _extract_waba_id_from_phone_payload(response.json())
+            if direct_id:
+                return direct_id
+
+        # Robust fallback: discover businesses -> owned WABAs -> phone_numbers.
+        fallback = _resolve_waba_id_via_business_graph(
+            wa_phone_id=normalized_phone_id,
+            wa_token=wa_token,
+        )
+        if fallback:
+            return fallback
+
+        # Optional env fallback for single-WABA environments.
+        env_waba = str(os.getenv("WHATSAPP_WABA_ID") or "").strip()
+        if env_waba and _waba_has_phone_number(
+            waba_id=env_waba,
+            wa_phone_id=normalized_phone_id,
+            wa_token=wa_token,
+        ):
+            logger.warning("⚠️ Using WHATSAPP_WABA_ID fallback for phone_id=%s", normalized_phone_id)
+            return env_waba
+
+        logger.error("❌ Failed resolving WABA id | phone_id=%s", normalized_phone_id)
     except Exception:
         logger.exception("❌ resolve_waba_id_from_phone failed")
     return None
@@ -254,18 +473,90 @@ def get_client_country_code(client_id: str) -> str:
 
 
 def get_active_whatsapp_channel(client_id: str) -> Optional[dict]:
-    response = (
-        supabase
-        .table("channels")
-        .select("wa_phone_id, wa_token")
-        .eq("client_id", client_id)
-        .eq("type", "whatsapp")
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
-    )
+    try:
+        response = (
+            supabase
+            .table("channels")
+            .select("id, wa_phone_id, wa_token, wa_waba_id")
+            .eq("client_id", client_id)
+            .eq("type", "whatsapp")
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        # Backward-compatible fallback when wa_waba_id column is not yet migrated.
+        response = (
+            supabase
+            .table("channels")
+            .select("id, wa_phone_id, wa_token")
+            .eq("client_id", client_id)
+            .eq("type", "whatsapp")
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+
     rows = response.data or []
-    return rows[0] if rows else None
+    if not rows:
+        return None
+
+    row = dict(rows[0] or {})
+    row.setdefault("wa_waba_id", None)
+    return row
+
+
+def _persist_channel_waba_id(*, client_id: str, channel_id: Optional[str], waba_id: str) -> None:
+    if not waba_id:
+        return
+
+    update_payload = {
+        "wa_waba_id": waba_id,
+        "updated_at": _utcnow_iso(),
+    }
+
+    try:
+        query = (
+            supabase
+            .table("channels")
+            .update(update_payload)
+        )
+
+        if channel_id:
+            query = query.eq("id", channel_id)
+        else:
+            query = (
+                query
+                .eq("client_id", client_id)
+                .eq("type", "whatsapp")
+                .eq("is_active", True)
+            )
+
+        query.execute()
+    except Exception:
+        logger.warning("⚠️ Unable to persist wa_waba_id cache (migration may be pending)")
+
+
+def _resolve_channel_waba_id(*, client_id: str, channel: dict) -> Optional[str]:
+    cached = str(channel.get("wa_waba_id") or "").strip()
+    if cached:
+        return cached
+
+    wa_phone_id = str(channel.get("wa_phone_id") or "").strip()
+    wa_token = str(channel.get("wa_token") or "").strip()
+    if not wa_phone_id or not wa_token:
+        return None
+
+    resolved = resolve_waba_id_from_phone(wa_phone_id=wa_phone_id, wa_token=wa_token)
+    if not resolved:
+        return None
+
+    _persist_channel_waba_id(
+        client_id=client_id,
+        channel_id=str(channel.get("id") or "").strip() or None,
+        waba_id=resolved,
+    )
+    return resolved
 
 
 def _load_canonical_templates() -> list[dict]:
@@ -528,7 +819,7 @@ def sync_canonical_templates_for_client(
         result["errors"].append("whatsapp_channel_credentials_missing")
         return result
 
-    waba_id = resolve_waba_id_from_phone(wa_phone_id=wa_phone_id, wa_token=wa_token)
+    waba_id = _resolve_channel_waba_id(client_id=client_id, channel=channel)
     if not waba_id:
         result["errors"].append("unable_to_resolve_waba_id")
         return result
@@ -664,7 +955,7 @@ def refresh_client_template_statuses(*, client_id: str) -> dict:
         outcome["errors"].append("whatsapp_channel_credentials_missing")
         return outcome
 
-    waba_id = resolve_waba_id_from_phone(wa_phone_id=wa_phone_id, wa_token=wa_token)
+    waba_id = _resolve_channel_waba_id(client_id=client_id, channel=channel)
     if not waba_id:
         outcome["errors"].append("unable_to_resolve_waba_id")
         return outcome
