@@ -20,6 +20,18 @@ export default function MonthView({ appointments, currentDate }) {
     cells.push(new Date(year, month, d));
   }
 
+  const toValidDate = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const formatTime = (value) => {
+    const date = toValidDate(value);
+    return date
+      ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "--:--";
+  };
+
   return (
     <div style={wrapper}>
       <div style={innerGrid}>
@@ -37,7 +49,8 @@ export default function MonthView({ appointments, currentDate }) {
             }
 
             const dayEvents = appointments.filter((a) => {
-              const d = new Date(a.scheduled_time);
+              const d = toValidDate(a.scheduled_time);
+              if (!d) return false;
               return (
                 d.getDate() === date.getDate() &&
                 d.getMonth() === date.getMonth() &&
@@ -54,7 +67,7 @@ export default function MonthView({ appointments, currentDate }) {
                     key={e.id}
                     style={e.source === "google_busy" ? googleBusyBadge : eventBadge}
                   >
-                    {new Date(e.scheduled_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{" "}
+                    {formatTime(e.scheduled_time)}{" "}
                     {e.source === "google_busy" ? "Ocupado (Google)" : e.user_name}
                   </div>
                 ))}

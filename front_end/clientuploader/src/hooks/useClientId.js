@@ -2,7 +2,12 @@ import { useEffect, useState } from "react";
 
 export function useClientId() {
   const [clientId, setClientId] = useState(() => {
-    const stored = localStorage.getItem("client_id");
+    let stored = null;
+    try {
+      stored = localStorage.getItem("client_id");
+    } catch {
+      stored = null;
+    }
     return stored && stored !== "undefined" && stored !== "null" ? stored : null;
   });
 

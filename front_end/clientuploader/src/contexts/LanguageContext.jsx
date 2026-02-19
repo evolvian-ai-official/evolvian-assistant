@@ -12,9 +12,25 @@ const normalizeLang = (lang) => {
   return SUPPORTED_LANGUAGES.includes(lowered) ? lowered : FALLBACK_LANGUAGE;
 };
 
+const safeStorageGet = (key) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeStorageSet = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // no-op when storage is unavailable
+  }
+};
+
 export function LanguageProvider({ children }) {
   const [lang, setLang] = useState(() => {
-    const stored = localStorage.getItem("lang");
+    const stored = safeStorageGet("lang");
     return normalizeLang(stored);
   });
 
@@ -22,13 +38,13 @@ export function LanguageProvider({ children }) {
     let isMounted = true;
 
     const resolveLanguage = async () => {
-      const storedLang = normalizeLang(localStorage.getItem("lang"));
-      const clientId = localStorage.getItem("client_id");
+      const storedLang = normalizeLang(safeStorageGet("lang"));
+      const clientId = safeStorageGet("client_id");
 
       if (!clientId || clientId === "undefined" || clientId === "null") {
         if (isMounted) {
           setLang(storedLang);
-          localStorage.setItem("lang", storedLang);
+          safeStorageSet("lang", storedLang);
         }
         return;
       }
@@ -44,14 +60,14 @@ export function LanguageProvider({ children }) {
 
         if (isMounted) {
           setLang(backendLang);
-          localStorage.setItem("lang", backendLang);
+          safeStorageSet("lang", backendLang);
         }
       } catch (error) {
         console.warn("⚠️ Falling back to local language setting:", error);
         // If there is no active session or backend is unavailable, keep local fallback.
         if (isMounted) {
           setLang(storedLang);
-          localStorage.setItem("lang", storedLang);
+          safeStorageSet("lang", storedLang);
         }
       }
     };
@@ -76,9 +92,9 @@ export function LanguageProvider({ children }) {
   const changeLanguage = async (newLang) => {
     const validLang = normalizeLang(newLang);
     setLang(validLang);
-    localStorage.setItem("lang", validLang);
+    safeStorageSet("lang", validLang);
 
-    const clientId = localStorage.getItem("client_id");
+    const clientId = safeStorageGet("client_id");
     if (!clientId || clientId === "undefined" || clientId === "null") return;
 
     try {

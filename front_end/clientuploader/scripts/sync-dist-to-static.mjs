@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,10 +26,6 @@ for (const fileName of ["index.html", "widget.html"]) {
 
 if (!existsSync(distAssetsDir)) {
   throw new Error(`dist/assets not found: ${distAssetsDir}`);
-}
-
-for (const entry of readdirSync(staticAssetsDir)) {
-  rmSync(path.resolve(staticAssetsDir, entry), { recursive: true, force: true });
 }
 
 cpSync(distAssetsDir, staticAssetsDir, { recursive: true });

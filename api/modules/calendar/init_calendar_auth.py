@@ -8,6 +8,27 @@ from api.authz import authorize_client_request
 
 router = APIRouter(tags=["Calendar"])
 
+
+def _request_host(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-host")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower()
+    return (request.url.hostname or "").lower()
+
+
+def _is_local_host(host: str) -> bool:
+    return host in {"localhost", "127.0.0.1"} or host.endswith(".local")
+
+
+def _resolve_redirect_uri(request: Request) -> str | None:
+    local_uri = os.getenv("GOOGLE_REDIRECT_URI_LOCAL")
+    prod_uri = os.getenv("GOOGLE_REDIRECT_URI_PROD")
+    host = _request_host(request)
+    if not _is_local_host(host):
+        return prod_uri or local_uri
+    return local_uri or prod_uri
+
+
 # ✅ Real Google Calendar OAuth initializer
 @router.get("/auth/google_calendar/init")
 def google_calendar_init(
@@ -16,11 +37,8 @@ def google_calendar_init(
     as_json: bool = Query(False),
 ):
     authorize_client_request(request, client_id)
-    ENV = os.getenv("ENV", "local").lower()
-    IS_PROD = ENV == "prod"
-
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-    REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI_PROD" if IS_PROD else "GOOGLE_REDIRECT_URI_LOCAL")
+    REDIRECT_URI = _resolve_redirect_uri(request)
 
     if not GOOGLE_CLIENT_ID or not REDIRECT_URI:
         raise HTTPException(status_code=500, detail="Missing environment variables for Google OAuth")

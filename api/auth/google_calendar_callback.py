@@ -10,19 +10,37 @@ from ..modules.assistant_rag.supabase_client import supabase
 router = APIRouter(prefix="/api", tags=["Calendar"])
 
 # 🌍 Configuración por entorno
-ENV = os.getenv("ENV", "local").lower()
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = (
-    os.getenv("GOOGLE_REDIRECT_URI_PROD")
-    if ENV == "prod"
-    else os.getenv("GOOGLE_REDIRECT_URI_LOCAL")
-)
-DASHBOARD_REDIRECT_URL = (
-    os.getenv("DASHBOARD_REDIRECT_URL_PROD", "https://evolvianai.net/dashboard")
-    if ENV == "prod"
-    else os.getenv("DASHBOARD_REDIRECT_URL_LOCAL", "http://localhost:5173/dashboard")
-)
+
+
+def _request_host(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-host")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower()
+    return (request.url.hostname or "").lower()
+
+
+def _is_local_host(host: str) -> bool:
+    return host in {"localhost", "127.0.0.1"} or host.endswith(".local")
+
+
+def _resolve_redirect_uri(request: Request) -> str | None:
+    local_uri = os.getenv("GOOGLE_REDIRECT_URI_LOCAL")
+    prod_uri = os.getenv("GOOGLE_REDIRECT_URI_PROD")
+    host = _request_host(request)
+    if not _is_local_host(host):
+        return prod_uri or local_uri
+    return local_uri or prod_uri
+
+
+def _resolve_dashboard_redirect(request: Request) -> str:
+    local_url = os.getenv("DASHBOARD_REDIRECT_URL_LOCAL", "http://localhost:5173/dashboard")
+    prod_url = os.getenv("DASHBOARD_REDIRECT_URL_PROD", "https://evolvianai.net/dashboard")
+    host = _request_host(request)
+    if not _is_local_host(host):
+        return prod_url
+    return local_url
 
 
 @router.get("/auth/google_calendar/callback")
@@ -39,9 +57,13 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
         raise HTTPException(status_code=400, detail="Missing required parameters in callback URL")
 
     client_id = state
+    google_redirect_uri = _resolve_redirect_uri(request)
+    dashboard_redirect_url = _resolve_dashboard_redirect(request)
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not google_redirect_uri:
+        raise HTTPException(status_code=500, detail="Missing Google OAuth configuration")
+
     logging.info(f"🔄 Received callback | client_id={client_id} | code={code}")
-    logging.info(f"🌐 ENV: {ENV}")
-    logging.info(f"➡️ redirect_uri used: {GOOGLE_REDIRECT_URI}")
+    logging.info(f"➡️ redirect_uri used: {google_redirect_uri}")
 
     # 📨 Exchange authorization code for access + refresh tokens
     token_url = "https://oauth2.googleapis.com/token"
@@ -49,7 +71,7 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
         "code": code,
         "client_id": GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "redirect_uri": google_redirect_uri,
         "grant_type": "authorization_code",
         "is_active": True
     }
@@ -60,7 +82,7 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
             "code_present": bool(code),
             "client_id_present": bool(GOOGLE_CLIENT_ID),
             "client_secret_present": bool(GOOGLE_CLIENT_SECRET),
-            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "redirect_uri": google_redirect_uri,
             "grant_type": token_data.get("grant_type"),
         },
     )
@@ -120,6 +142,6 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
         raise HTTPException(status_code=500, detail="Error saving calendar integration to Supabase")
 
     # ✅ Redirect to dashboard after success
-    final_url = f"{DASHBOARD_REDIRECT_URL}?connected_calendar=true"
+    final_url = f"{dashboard_redirect_url}?connected_calendar=true"
     logging.info(f"✅ Redirecting to: {final_url}")
     return RedirectResponse(url=final_url)

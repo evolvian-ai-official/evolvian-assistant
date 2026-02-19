@@ -9,6 +9,7 @@ from api.modules.assistant_rag.supabase_client import (
 )
 from api.modules.assistant_rag.intent_router import process_user_message
 from api.modules.whatsapp.send_wa_message import send_whatsapp_message
+from api.modules.whatsapp.webhook import _cancel_appointment_from_whatsapp, _is_cancel_action
 from api.webhook_security import verify_meta_signature
 
 router = APIRouter()
@@ -17,6 +18,30 @@ logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolviansecret2025")
 if VERIFY_TOKEN == "evolviansecret2025":
     logger.warning("⚠️ Using default META_WHATSAPP_VERIFY_TOKEN. Configure env var in production.")
+
+
+def _extract_message_text(msg: dict) -> str | None:
+    message_type = msg.get("type")
+
+    if message_type == "text":
+        return msg.get("text", {}).get("body")
+
+    if message_type == "interactive":
+        interactive = msg.get("interactive") or {}
+        button = interactive.get("button_reply") or {}
+        list_reply = interactive.get("list_reply") or {}
+        return (
+            button.get("title")
+            or button.get("id")
+            or list_reply.get("title")
+            or list_reply.get("id")
+        )
+
+    if message_type == "button":
+        button = msg.get("button") or {}
+        return button.get("text") or button.get("payload")
+
+    return None
 
 
 @router.get("/webhooks/meta")
@@ -49,8 +74,13 @@ async def receive_whatsapp_message(request: Request):
             return JSONResponse(content={"status": "no_message"}, status_code=200)
 
         msg = messages[0]
-        user_phone = msg["from"]
-        text = msg["text"]["body"]
+        user_phone = msg.get("from")
+        text = _extract_message_text(msg)
+
+        if not user_phone or not text:
+            print("⚠️ Mensaje sin texto procesable en webhook Meta")
+            return JSONResponse(content={"status": "ignored"}, status_code=200)
+
         print(f"📞 Mensaje de {user_phone}: {text}")
 
         business_phone = value.get("metadata", {}).get("display_phone_number")
@@ -74,16 +104,25 @@ async def receive_whatsapp_message(request: Request):
         credentials = get_whatsapp_credentials(client_id)
         print(f"🔑 Credenciales de WhatsApp obtenidas: {credentials}")
 
-        # ✅ Procesar con intent router (agenda + RAG)
-        session_id = f"whatsapp-{user_phone}"
-        response = await process_user_message(
-            client_id=client_id,
-            session_id=session_id,
-            message=text,
-            channel="whatsapp",
-            provider="meta",
-        )
-        print(f"💬 Respuesta generada por RAG: {response}")
+        message_type = msg.get("type") or ""
+        if _is_cancel_action(message_type, msg, text):
+            try:
+                _, response = _cancel_appointment_from_whatsapp(client_id, user_phone)
+            except Exception:
+                logger.exception("❌ Error cancelando cita desde webhook legacy")
+                response = "⚠️ No pude cancelar tu cita en este momento. Intenta de nuevo."
+            print(f"💬 Respuesta cancelación: {response}")
+        else:
+            # ✅ Procesar con intent router (agenda + RAG)
+            session_id = f"whatsapp-{user_phone}"
+            response = await process_user_message(
+                client_id=client_id,
+                session_id=session_id,
+                message=text,
+                channel="whatsapp",
+                provider="meta",
+            )
+            print(f"💬 Respuesta generada por RAG: {response}")
 
         # 🔧 Ajuste temporal para evitar error (#131030) con +521
         if user_phone.startswith("521"):

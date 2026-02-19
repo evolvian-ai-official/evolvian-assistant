@@ -30,7 +30,12 @@ const isChannelEnabled = (channel) => Boolean(channel?.is_active ?? channel?.act
 export default function CreateAppointment({ disabled = false }) {
   const clientId = useClientId();
   const { t } = useLanguage();
-  const [sessionId] = useState(() => crypto.randomUUID());
+  const [sessionId] = useState(() => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  });
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth < 768 : false
   );

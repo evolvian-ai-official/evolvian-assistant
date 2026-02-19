@@ -56,6 +56,16 @@ export default function ShowAppointments({ refreshKey = 0 }) {
     return `${y}-${m}-${d}`;
   };
 
+  const toValidDate = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const formatDateTime = (value) => {
+    const date = toValidDate(value);
+    return date ? date.toLocaleString() : "Fecha inválida";
+  };
+
   const getVisibleRange = () => {
     if (viewMode === "day") {
       return { from: new Date(currentDate), to: new Date(currentDate) };
@@ -166,7 +176,9 @@ export default function ShowAppointments({ refreshKey = 0 }) {
     if (appointment.status === "cancelled") return "cancelled";
 
     const now = new Date();
-    const scheduled = new Date(appointment.scheduled_time);
+    const scheduled = toValidDate(appointment.scheduled_time);
+
+    if (!scheduled) return appointment.status || "pending";
 
     if (now > scheduled) return "closed";
     if (appointment.status === "confirmed") return "confirmed";
@@ -204,9 +216,11 @@ export default function ShowAppointments({ refreshKey = 0 }) {
     }
 
     list.sort((a, b) => {
-      const da = new Date(a.scheduled_time);
-      const db = new Date(b.scheduled_time);
-      return filters.order === "asc" ? da - db : db - da;
+      const da = toValidDate(a.scheduled_time);
+      const db = toValidDate(b.scheduled_time);
+      const ta = da ? da.getTime() : 0;
+      const tb = db ? db.getTime() : 0;
+      return filters.order === "asc" ? ta - tb : tb - ta;
     });
 
     return list;
@@ -230,8 +244,8 @@ export default function ShowAppointments({ refreshKey = 0 }) {
     let month = 0;
 
     for (const appointment of appointments) {
-      const dt = new Date(appointment.scheduled_time);
-      if (Number.isNaN(dt.getTime())) continue;
+      const dt = toValidDate(appointment.scheduled_time);
+      if (!dt) continue;
 
       if (dt >= startOfMonth) month += 1;
       if (dt >= startOfWeek) week += 1;
@@ -443,7 +457,7 @@ export default function ShowAppointments({ refreshKey = 0 }) {
 
                 <div style={{ ...meta, marginTop: isMobile ? "0.35rem" : 0 }}>
                   <span>
-                    📅 {new Date(a.scheduled_time).toLocaleString()}
+                    📅 {formatDateTime(a.scheduled_time)}
                   </span>
                   <span>📌 {a.appointment_type}</span>
                   <span>💬 {a.channel}</span>

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from uuid import UUID
 import logging
+from datetime import datetime
 
 from api.config.config import supabase
 
@@ -12,6 +13,20 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_valid_datetime(value) -> bool:
+    if not value or not isinstance(value, str):
+        return False
+    raw = value.strip()
+    if not raw:
+        return False
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        datetime.fromisoformat(normalized)
+        return True
+    except Exception:
+        return False
 
 
 @router.get("/show")  # ⬅️ ESTO es lo que te está faltando
@@ -35,7 +50,16 @@ def show_appointments(
             .execute()
         )
 
-        return response.data or []
+        rows = response.data or []
+        clean_rows = []
+        for row in rows:
+            scheduled_time = row.get("scheduled_time") if isinstance(row, dict) else None
+            if not _is_valid_datetime(scheduled_time):
+                logger.warning("Skipping appointment with invalid scheduled_time. id=%s", row.get("id") if isinstance(row, dict) else None)
+                continue
+            clean_rows.append(row)
+
+        return clean_rows
 
     except Exception as e:
         logger.exception("Failed to fetch appointments")

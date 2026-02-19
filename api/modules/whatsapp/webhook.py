@@ -25,6 +25,29 @@ if VERIFY_TOKEN == "evolvian2025":
 CANCEL_KEYWORDS = ("cancelar", "cancel", "anular", "cancelacion", "cancelación")
 
 
+def _extract_user_text(message_type: str, message: dict) -> str | None:
+    if message_type == "text":
+        return message.get("text", {}).get("body")
+
+    if message_type == "interactive":
+        interactive = message.get("interactive") or {}
+        button = interactive.get("button_reply") or {}
+        list_reply = interactive.get("list_reply") or {}
+        return (
+            button.get("title")
+            or button.get("id")
+            or list_reply.get("title")
+            or list_reply.get("id")
+        )
+
+    # Meta template quick-reply button callbacks llegan como type="button".
+    if message_type == "button":
+        button = message.get("button") or {}
+        return button.get("text") or button.get("payload")
+
+    return None
+
+
 def _phone_candidates(from_number: str) -> list[str]:
     digits = re.sub(r"\D", "", from_number or "")
     if not digits:
@@ -52,6 +75,14 @@ def _phone_candidates(from_number: str) -> list[str]:
 
 def _is_cancel_action(message_type: str, message: dict, user_text: str | None) -> bool:
     text = (user_text or "").strip().lower()
+
+    if message_type == "button":
+        button = message.get("button") or {}
+        combined = " ".join([
+            str(button.get("text") or ""),
+            str(button.get("payload") or ""),
+        ]).lower()
+        return any(keyword in combined for keyword in CANCEL_KEYWORDS)
 
     if message_type == "interactive":
         interactive = message.get("interactive") or {}
@@ -137,7 +168,7 @@ def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) -> tuple
         "created_at": now_iso,
     }).execute()
 
-    return True, "✅ Tu cita fue cancelada correctamente."
+    return True, "✅ Tu cita fue cancelada."
 
 
 # -------------------------------------------------------------------
@@ -215,25 +246,13 @@ async def process_whatsapp_payload(payload: dict):
         # -------------------------------------------------------------
         for message in messages:
             message_type = message.get("type")
-            if message_type not in {"text", "interactive"}:
+            if message_type not in {"text", "interactive", "button"}:
                 continue
 
             wa_message_id = message.get("id")
             from_number = message.get("from")
 
-            user_text = None
-            if message_type == "text":
-                user_text = message.get("text", {}).get("body")
-            elif message_type == "interactive":
-                interactive = message.get("interactive") or {}
-                button = interactive.get("button_reply") or {}
-                list_reply = interactive.get("list_reply") or {}
-                user_text = (
-                    button.get("title")
-                    or button.get("id")
-                    or list_reply.get("title")
-                    or list_reply.get("id")
-                )
+            user_text = _extract_user_text(message_type, message)
 
             if not wa_message_id or not from_number or not user_text:
                 continue

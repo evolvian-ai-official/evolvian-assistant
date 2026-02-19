@@ -4,6 +4,11 @@ export default function WeekView({ appointments, currentDate }) {
   const startOfWeek = new Date(currentDate);
   startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
 
+  const toValidDate = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(startOfWeek);
     d.setDate(startOfWeek.getDate() + i);
@@ -37,7 +42,8 @@ export default function WeekView({ appointments, currentDate }) {
 
             {days.map((day, i) => {
               const events = appointments.filter((a) => {
-                const d = new Date(a.scheduled_time);
+                const d = toValidDate(a.scheduled_time);
+                if (!d) return false;
                 return (
                   d.getDate() === day.getDate() &&
                   d.getMonth() === day.getMonth() &&

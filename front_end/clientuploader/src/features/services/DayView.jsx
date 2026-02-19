@@ -4,8 +4,21 @@ export default function DayView({ appointments, currentDate }) {
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const targetDate = currentDate ? new Date(currentDate) : new Date();
 
+  const toValidDate = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const formatTime = (value) => {
+    const date = toValidDate(value);
+    return date
+      ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "--:--";
+  };
+
   const appointmentsByHour = (appointments || []).reduce((acc, appt) => {
-    const date = new Date(appt.scheduled_time);
+    const date = toValidDate(appt.scheduled_time);
+    if (!date) return acc;
     if (
       date.getDate() !== targetDate.getDate() ||
       date.getMonth() !== targetDate.getMonth() ||
@@ -35,7 +48,7 @@ export default function DayView({ appointments, currentDate }) {
               >
                 <strong>{a.source === "google_busy" ? "Ocupado (Google)" : a.user_name}</strong>
                 <div style={{ fontSize: "0.75rem" }}>
-                  {new Date(a.scheduled_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {formatTime(a.scheduled_time)}
                 </div>
               </div>
             ))}
