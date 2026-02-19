@@ -21,11 +21,24 @@ export default function Upload() {
       const res = await authFetch(
         `${import.meta.env.VITE_API_URL}/list_files?client_id=${clientId}`
       );
-      const data = await res.json();
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+      if (!res.ok) {
+        throw new Error(data?.detail || t("upload_list_error"));
+      }
       setUploadedFiles(data.files || []);
+      if (!message || messageType === "error") {
+        setMessage("");
+      }
     } catch (err) {
       console.error("Error al listar archivos:", err);
       setUploadedFiles([]);
+      setMessage(err.message || t("upload_list_error"));
+      setMessageType("error");
     } finally {
       setLoading(false);
     }
@@ -65,7 +78,7 @@ export default function Upload() {
         const detail = errorData?.detail || "";
         setLimitReached(true);
 
-        if (detail === "limit_reached") {
+        if (detail === "limit_reached" || detail === "document_limit_reached") {
           setMessage(t("limit_reached_error"));
         } else {
           setMessage(detail || t("unknown_upload_error"));
@@ -190,9 +203,13 @@ export default function Upload() {
             </p>
           )}
 
-          {uploadedFiles.length > 0 && (
-            <div className="ia-upload-section">
-              <h3 className="ia-upload-subtitle">{t("uploaded_files")}</h3>
+          <div className="ia-upload-section">
+            <h3 className="ia-upload-subtitle">{t("uploaded_files")}</h3>
+            {uploadedFiles.length === 0 ? (
+              <p style={{ color: "#7A7A7A", margin: 0 }}>
+                {t("no_uploaded_files")}
+              </p>
+            ) : (
               <ul className="ia-upload-file-list">
                 {uploadedFiles.map((f, idx) => (
                   <li key={idx} className="ia-upload-file-row">
@@ -209,8 +226,8 @@ export default function Upload() {
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="ia-upload-info">
             <h3 className="ia-upload-subtitle" style={{ marginBottom: 8 }}>

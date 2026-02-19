@@ -46,12 +46,12 @@ def _resolve_redirect_uri(request: Request) -> str | None:
     host = _request_host(request)
     dynamic_uri = _build_callback_from_request(request)
 
-    # Prefer explicit prod in non-local hosts even if ENV is misconfigured.
+    # Prefer explicit prod URI in non-local hosts to avoid host-dependent OAuth mismatches.
     if not _is_local_host(host):
-        return dynamic_uri or prod_uri or local_uri
+        return prod_uri or dynamic_uri or local_uri
     if env == "prod":
-        return dynamic_uri or prod_uri or local_uri
-    return local_uri or dynamic_uri or prod_uri
+        return prod_uri or dynamic_uri or local_uri
+    return local_uri or prod_uri or dynamic_uri
 
 
 @router.get("/api/auth/google_calendar/init")

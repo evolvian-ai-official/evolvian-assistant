@@ -42,8 +42,8 @@ def _resolve_redirect_uri(request: Request) -> str | None:
     host = _request_host(request)
     dynamic_uri = _build_callback_from_request(request)
     if not _is_local_host(host):
-        return dynamic_uri or prod_uri or local_uri
-    return local_uri or dynamic_uri or prod_uri
+        return prod_uri or dynamic_uri or local_uri
+    return local_uri or prod_uri or dynamic_uri
 
 
 # ✅ Real Google Calendar OAuth initializer

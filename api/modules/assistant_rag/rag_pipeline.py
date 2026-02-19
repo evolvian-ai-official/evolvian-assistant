@@ -8,6 +8,8 @@ import logging
 
 from typing import List, Dict, Optional, Union
 import uuid
+import re
+import unicodedata
 from api.config.config import DEFAULT_CHAT_MODEL
 from api.utils.paths import get_base_data_path
 
@@ -60,50 +62,118 @@ FALLBACK_BY_LANG = {
 
 
 
-def _guess_lang_es_en(text: str) -> str:
-    """
-    Heurística rápida y robusta para detectar ES / EN en mensajes cortos.
-    Optimizada para chat real (sin acentos, sin signos).
-    """
-    t = (text or "").strip().lower()
-    if not t:
-        return "en"
-
-    # 1️⃣ Señales fuertes de español
-    if any(c in t for c in "¿¡ñáéíóú"):
-        return "es"
-
-    # 0️⃣ Señales claras de inglés
-    if any(t.startswith(w + " ") or f" {w} " in t for w in [
-        "which", "what", "how", "why", "where", "when",
-        "is ", "are ", "does ", "do ", "can "
-    ]):
-        return "en"
-
-    # 2️⃣ Palabras funcionales MUY comunes en español (chat real)
-    es_words = {
-        "que", "es", "como", "para", "por", "porque", "cuando", "donde",
-        "cual", "cuanto", "cuantos",
-        "hola", "buenas", "dame", "quiero", "necesito",
-        "informacion", "información",
-        "precio", "coste", "costo",
-        "ayuda", "incluye", "incluyen",
-        "funciona"
-    }
-
-    # limpieza básica
-    tokens = set(
-        t.replace("?", "")
-         .replace("¿", "")
-         .replace("!", "")
-         .replace("¡", "")
-         .split()
+def _normalize_for_lang_detection(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return (
+        without_marks.replace("’", "'")
+        .replace("`", "'")
+        .replace("´", "'")
+        .lower()
     )
 
-    if tokens.intersection(es_words):
+
+def _guess_lang_es_en(text: str) -> Optional[str]:
+    """
+    Heurística rápida y robusta para detectar ES / EN en mensajes cortos.
+    Devuelve:
+    - "es" / "en" cuando hay evidencia razonable
+    - None cuando el texto es ambiguo
+    """
+    original = (text or "").strip()
+    if not original:
+        return None
+
+    t = _normalize_for_lang_detection(original)
+    if not t:
+        return None
+
+    # 1️⃣ Señales fuertes de español
+    if any(c in original for c in "¿¡ñáéíóúÁÉÍÓÚÑ"):
         return "es"
 
-    # 3️⃣ Default conservador
+    tokens = re.findall(r"[a-zA-Z']+", t)
+    if not tokens:
+        return None
+
+    es_words_strong = {
+        "hola", "buenas", "gracias", "quiero", "necesito", "tengo", "tienes",
+        "informacion", "servicios", "precio", "cita", "horario", "horarios",
+        "veterinaria", "puedes", "ayuda", "donde", "cuando", "como", "porque",
+    }
+    es_words_common = {
+        "de", "la", "el", "los", "las", "un", "una", "que", "para", "por",
+        "con", "del", "al", "en", "y", "se", "su",
+    }
+    en_words = {
+        "the", "and", "is", "are", "do", "does", "can", "could", "would",
+        "should", "please", "about", "have", "has", "what", "which", "where",
+        "when", "why", "how", "you", "your",
+    }
+
+    es_score = 0
+    en_score = 0
+    for tok in tokens:
+        if tok in es_words_strong:
+            es_score += 2
+        elif tok in es_words_common:
+            es_score += 1
+        if tok in en_words:
+            en_score += 2
+
+    # 2️⃣ Decisión por puntaje
+    if es_score >= 2 and es_score > en_score:
+        return "es"
+    if en_score >= 2 and en_score > es_score:
+        return "en"
+
+    # 3️⃣ Frases cortas comunes
+    if t.startswith(("hola", "buenas", "gracias")):
+        return "es"
+    if t.startswith(("hi", "hello", "thanks")):
+        return "en"
+
+    # 4️⃣ Ambiguo -> None para usar fallbacks más estables
+    return None
+
+
+def _client_language_fallback(client_id: str) -> Optional[str]:
+    client_lang = (get_language_for_client(client_id) or "").strip().lower()
+    if client_lang.startswith("es"):
+        return "es"
+    if client_lang.startswith("en"):
+        return "en"
+    return None
+
+
+def _resolve_user_language(client_id: str, user_text: str) -> str:
+    """
+    Decide el idioma del turno según el MENSAJE del usuario.
+    El idioma del cliente actúa como fallback cuando el texto es ambiguo.
+
+    Prioridad:
+    1) Heurística ES/EN sobre el mensaje (si hay evidencia)
+    2) langdetect (opcional)
+    3) client_settings.language
+    4) fallback 'en'
+    """
+
+    # 1️⃣ Heurística rápida (inputs cortos, chats)
+    heuristic = _guess_lang_es_en(user_text)
+    if heuristic in ("es", "en"):
+        return heuristic
+
+    # 2️⃣ Detección probabilística (backup, puede fallar en textos muy cortos)
+    detected = _safe_langdetect(user_text)
+    if detected in ("es", "en"):
+        return detected
+
+    # 3️⃣ Idioma configurado del cliente (fallback estable)
+    client_lang = _client_language_fallback(client_id)
+    if client_lang:
+        return client_lang
+
+    # 4️⃣ Último fallback
     return "en"
 
 
@@ -134,40 +204,6 @@ def _safe_langdetect(text: str) -> Optional[str]:
         return None
 
 
-def _resolve_user_language(client_id: str, user_text: str) -> str:
-    """
-    Decide el idioma del turno según el MENSAJE del usuario.
-    El idioma del cliente actúa solo como fallback.
-
-    Prioridad:
-    1) Heurística ES/EN sobre el mensaje
-    2) langdetect (opcional)
-    3) client_settings.language
-    4) fallback 'en'
-    """
-
-    # 1️⃣ Heurística rápida (inputs cortos, chats)
-    heuristic = _guess_lang_es_en(user_text)
-    if heuristic in ("es", "en"):
-        return heuristic
-
-    # 2️⃣ Detección probabilística (backup)
-    detected = _safe_langdetect(user_text)
-    if detected in ("es", "en"):
-        return detected
-
-    # 3️⃣ Idioma configurado del cliente (fallback)
-    client_lang = (get_language_for_client(client_id) or "").strip().lower()
-    if client_lang.startswith("es"):
-        return "es"
-    if client_lang.startswith("en"):
-        return "en"
-
-    # 4️⃣ Último fallback
-    return "en"
-
-
-
 def _translate_text(text: str, target_lang: str) -> str:
     """
     Traduce SOLO para retrieval.
@@ -180,7 +216,7 @@ def _translate_text(text: str, target_lang: str) -> str:
 
     # Detectar idioma del texto (heurístico, rápido y suficiente)
     detected_lang = _guess_lang_es_en(text)
-    if detected_lang == target_lang:
+    if detected_lang and detected_lang == target_lang:
         return text  # 🚫 No retraducir
 
     if target_lang not in ("es", "en"):

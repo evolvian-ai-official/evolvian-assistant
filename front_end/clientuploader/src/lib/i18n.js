@@ -143,7 +143,9 @@ es: {
   invalid_client_id: "No se puede subir archivo: client_id inválido.",
   limit_reached_error: "Has alcanzado el límite de tu plan.",
   unknown_upload_error: "Error desconocido al subir archivo.",
+  upload_list_error: "No se pudieron cargar los documentos subidos.",
   file_uploaded_success: "Archivo subido exitosamente",
+  no_uploaded_files: "Aún no hay documentos cargados.",
 
   readiness_tips_title: "Consejos para preparar tus documentos",
   tip_clear_formatting: "Asegúrate de limpiar el formato de tus documentos antes de subirlos (evita encabezados, tablas o estilos innecesarios).",
@@ -812,6 +814,7 @@ en: {
   please_select_file: "Please select a file.",
   invalid_client_id: "Cannot upload file: invalid client_id.",
   limit_reached_error: "You have reached the document limit for your plan.",
+  upload_list_error: "Could not load uploaded documents.",
   readiness_tips_title: "Tips to Prepare Your Documents",
   tip_clear_formatting: "Clean your file’s formatting before uploading (avoid headers, tables, or extra styles).",
   tip_supported_formats: "Supported formats: .PDF or .TXT. If your file is in Word, save it as PDF first.",
@@ -823,6 +826,7 @@ en: {
 
 
   unknown_upload_error: "Unknown error while uploading.",
+  no_uploaded_files: "No uploaded documents yet.",
 
   // History
   question_history: "Question History",

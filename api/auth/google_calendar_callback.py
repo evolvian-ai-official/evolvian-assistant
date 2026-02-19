@@ -24,8 +24,23 @@ def _request_host(request: Request) -> str:
     return (request.url.hostname or "").lower()
 
 
+def _request_scheme(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower()
+    return (request.url.scheme or "https").lower()
+
+
 def _is_local_host(host: str) -> bool:
     return host in {"localhost", "127.0.0.1"} or host.endswith(".local")
+
+
+def _build_callback_from_request(request: Request) -> str | None:
+    host = _request_host(request)
+    if not host:
+        return None
+    scheme = _request_scheme(request)
+    return f"{scheme}://{host}/api/auth/google_calendar/callback"
 
 
 def _resolve_redirect_uri(request: Request) -> str | None:
@@ -35,6 +50,27 @@ def _resolve_redirect_uri(request: Request) -> str | None:
     if not _is_local_host(host):
         return prod_uri or local_uri
     return local_uri or prod_uri
+
+
+def _allowed_google_redirect_uris(request: Request) -> set[str]:
+    allowed = {
+        (os.getenv("GOOGLE_REDIRECT_URI_LOCAL") or "").strip(),
+        (os.getenv("GOOGLE_REDIRECT_URI_PROD") or "").strip(),
+        (_build_callback_from_request(request) or "").strip(),
+    }
+    return {uri for uri in allowed if uri}
+
+
+def _resolve_token_exchange_redirect_uri(request: Request, state_payload: dict) -> str | None:
+    """
+    Token exchange must use the exact redirect_uri sent on OAuth init.
+    Use signed state value when it is an allowed callback URI.
+    """
+    expected_redirect_uri = _resolve_redirect_uri(request)
+    oauth_redirect_uri = str(state_payload.get("oauth_redirect_uri") or "").strip()
+    if oauth_redirect_uri and oauth_redirect_uri in _allowed_google_redirect_uris(request):
+        return oauth_redirect_uri
+    return expected_redirect_uri
 
 
 def _resolve_dashboard_redirect(request: Request) -> str:
@@ -103,13 +139,7 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
     return_to = _sanitize_return_to(request, state_payload.get("return_to"))
     dashboard_redirect_url = return_to or default_dashboard
 
-    expected_redirect_uri = _resolve_redirect_uri(request)
-    oauth_redirect_uri = state_payload.get("oauth_redirect_uri")
-    google_redirect_uri = (
-        oauth_redirect_uri
-        if oauth_redirect_uri and oauth_redirect_uri == expected_redirect_uri
-        else expected_redirect_uri
-    )
+    google_redirect_uri = _resolve_token_exchange_redirect_uri(request, state_payload)
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not google_redirect_uri or not client_id:
         logging.error("❌ Missing Google OAuth configuration or client_id")
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="oauth_config_missing")
@@ -146,7 +176,11 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
     logging.info(f"📥 Token exchange status: {token_resp.status_code}")
 
     if token_resp.status_code != 200:
-        logging.error("❌ Failed to get Google token")
+        logging.error(
+            "❌ Failed to get Google token | status=%s | body=%s",
+            token_resp.status_code,
+            token_resp.text[:500],
+        )
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="token_exchange_failed")
 
     token_json = token_resp.json()
