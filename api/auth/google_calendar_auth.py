@@ -3,6 +3,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import os
 import logging
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 from api.authz import authorize_client_request
 from api.oauth_state import encode_signed_state
 
@@ -42,16 +43,29 @@ def _build_callback_from_request(request: Request) -> str | None:
 def _resolve_redirect_uri(request: Request) -> str | None:
     local_uri = os.getenv("GOOGLE_REDIRECT_URI_LOCAL")
     prod_uri = os.getenv("GOOGLE_REDIRECT_URI_PROD")
+    forced_uri = os.getenv("GOOGLE_REDIRECT_URI_FORCE")
     env = os.getenv("ENV", "").strip().lower()
     host = _request_host(request)
     dynamic_uri = _build_callback_from_request(request)
 
-    # Prefer explicit prod URI in non-local hosts to avoid host-dependent OAuth mismatches.
+    if forced_uri:
+        return forced_uri
+
+    def _host_of(uri: str | None) -> str:
+        if not uri:
+            return ""
+        return (urlparse(uri).hostname or "").lower()
+
+    # In production prefer callback URI that matches the request host.
+    # This avoids redirecting OAuth callbacks to a frontend-only domain.
     if not _is_local_host(host):
-        return prod_uri or dynamic_uri or local_uri
+        for candidate in (prod_uri, dynamic_uri, local_uri):
+            if candidate and _host_of(candidate) == host:
+                return candidate
+        return dynamic_uri or prod_uri or local_uri
     if env == "prod":
         return prod_uri or dynamic_uri or local_uri
-    return local_uri or prod_uri or dynamic_uri
+    return local_uri or dynamic_uri or prod_uri
 
 
 @router.get("/api/auth/google_calendar/init")

@@ -276,9 +276,10 @@ app.mount("/assets", CORSMiddlewareStatic(directory=os.path.join(STATIC_DIR, "as
 
 # ✅ Frontend React
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "clientuploader/dist")
+frontend_dist_to_mount = None
 if os.path.exists(FRONTEND_DIST):
     print(f"🪄 Serving frontend from: {FRONTEND_DIST}")
-    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+    frontend_dist_to_mount = FRONTEND_DIST
 else:
     print(f"⚠️ clientuploader/dist not found at: {FRONTEND_DIST}")
 
@@ -450,6 +451,10 @@ def health_check():
 @app.get("/test_routes")
 def test_routes():
     return [route.path for route in app.routes]
+
+# Mount frontend last so it never intercepts API routes such as OAuth callbacks.
+if frontend_dist_to_mount:
+    app.mount("/", StaticFiles(directory=frontend_dist_to_mount, html=True), name="frontend")
 
 # ✅ Run local
 if __name__ == "__main__":

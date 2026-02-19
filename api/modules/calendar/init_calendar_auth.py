@@ -3,6 +3,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import os
 import urllib.parse
 import logging
+from urllib.parse import urlparse
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
 from api.oauth_state import encode_signed_state
@@ -39,11 +40,24 @@ def _build_callback_from_request(request: Request) -> str | None:
 def _resolve_redirect_uri(request: Request) -> str | None:
     local_uri = os.getenv("GOOGLE_REDIRECT_URI_LOCAL")
     prod_uri = os.getenv("GOOGLE_REDIRECT_URI_PROD")
+    forced_uri = os.getenv("GOOGLE_REDIRECT_URI_FORCE")
     host = _request_host(request)
     dynamic_uri = _build_callback_from_request(request)
+
+    if forced_uri:
+        return forced_uri
+
+    def _host_of(uri: str | None) -> str:
+        if not uri:
+            return ""
+        return (urlparse(uri).hostname or "").lower()
+
     if not _is_local_host(host):
-        return prod_uri or dynamic_uri or local_uri
-    return local_uri or prod_uri or dynamic_uri
+        for candidate in (prod_uri, dynamic_uri, local_uri):
+            if candidate and _host_of(candidate) == host:
+                return candidate
+        return dynamic_uri or prod_uri or local_uri
+    return local_uri or dynamic_uri or prod_uri
 
 
 # ✅ Real Google Calendar OAuth initializer
