@@ -161,6 +161,7 @@ export default function WelcomeModal({ onClose }) {
     country: "",
     company_size: "",
     channels: [],
+    timezone: "UTC",
   });
 
   const [agreeTerms, setAgreeTerms] = useState(true);
@@ -186,6 +187,39 @@ export default function WelcomeModal({ onClose }) {
         }
       } catch (error) {
         console.warn("Unable to load welcome settings", error);
+      }
+
+      try {
+        const profileRes = await authFetch(
+          `${import.meta.env.VITE_API_URL}/profile/${clientId}`
+        );
+        if (profileRes.ok) {
+          const profilePayload = await profileRes.json();
+          const profile = profilePayload?.profile || {};
+          const terms = profilePayload?.terms || {};
+
+          setFormData((prev) => ({
+            ...prev,
+            contact_name: profile.contact_name || prev.contact_name,
+            company_name: profile.company_name || prev.company_name,
+            phone: profile.phone || prev.phone,
+            industry: profile.industry || prev.industry,
+            role: profile.role || prev.role,
+            country: profile.country || prev.country,
+            company_size: profile.company_size || prev.company_size,
+            channels: Array.isArray(profile.channels) ? profile.channels : prev.channels,
+            timezone: profilePayload?.timezone || prev.timezone,
+          }));
+
+          if (typeof terms.accepted === "boolean") {
+            setAgreeTerms(Boolean(terms.accepted));
+          }
+          if (typeof terms.accepted_marketing === "boolean") {
+            setAgreeMarketing(Boolean(terms.accepted_marketing));
+          }
+        }
+      } catch (error) {
+        console.warn("Unable to load onboarding profile", error);
       }
 
     };
@@ -243,6 +277,7 @@ export default function WelcomeModal({ onClose }) {
         role: formData.role || null,
         country: formData.country || null,
         company_size: formData.company_size || null,
+        timezone: formData.timezone || "UTC",
       };
 
       const res = await authFetch(
@@ -270,6 +305,7 @@ export default function WelcomeModal({ onClose }) {
           body: JSON.stringify({
             client_id: clientId,
             language: selectedLanguage,
+            timezone: cleanedProfile.timezone || "UTC",
           }),
         }
       );

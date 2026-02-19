@@ -3,10 +3,32 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from datetime import datetime, timezone
+import os
 from api.modules.assistant_rag.supabase_client import supabase  # ✅ import corregido
 from api.authz import authorize_client_request
 
 router = APIRouter()
+
+
+def _parse_accepted_at(raw_value: str | None) -> datetime | None:
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _terms_valid_days() -> int:
+    raw = (os.getenv("TERMS_ACCEPTANCE_VALID_DAYS") or "0").strip()
+    try:
+        days = int(raw)
+    except ValueError:
+        return 0
+    return max(0, days)
 
 # 📦 Modelo para payload de aceptación
 class AcceptTermsPayload(BaseModel):
@@ -26,6 +48,8 @@ def check_accepted_terms(request: Request, client_id: str = Query(...)):
             supabase.table("client_terms_acceptance")
             .select("client_id, accepted_at, version, accepted")
             .eq("client_id", client_id)
+            .order("accepted_at", desc=True)
+            .limit(20)
             .execute()
         )
 
@@ -33,32 +57,35 @@ def check_accepted_terms(request: Request, client_id: str = Query(...)):
         if not response.data or len(response.data) == 0:
             return JSONResponse(content={"has_accepted": False, "reason": "not_found"})
 
-        record = response.data[0]
-        accepted = bool(record.get("accepted"))
-        accepted_at = record.get("accepted_at")
-        version = record.get("version", "v1")
+        records = response.data
+        accepted_record = next((r for r in records if bool(r.get("accepted"))), records[0])
+        accepted = bool(accepted_record.get("accepted"))
+        accepted_at = accepted_record.get("accepted_at")
+        version = accepted_record.get("version", "v1")
+        validity_days = _terms_valid_days()
 
-        # ⚙️ Si aceptó, verificar vigencia (30 días)
-        if accepted and accepted_at:
-            try:
-                accepted_dt = datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
-                days_since = (datetime.now(timezone.utc) - accepted_dt).days
+        if accepted and validity_days > 0:
+            accepted_dt = _parse_accepted_at(accepted_at)
+            if not accepted_dt:
+                # If a legacy timestamp can't be parsed, avoid locking users into repeated modal loops.
+                return JSONResponse(
+                    content={
+                        "has_accepted": True,
+                        "accepted_at": accepted_at,
+                        "version": version,
+                        "reason": "accepted_unparseable_timestamp",
+                    }
+                )
 
-                if days_since >= 30:
-                    return JSONResponse(
-                        content={
-                            "has_accepted": False,
-                            "reason": "expired",
-                            "accepted_at": accepted_at,
-                            "version": version,
-                        }
-                    )
-            except Exception:
+            days_since = (datetime.now(timezone.utc) - accepted_dt).days
+            if days_since >= validity_days:
                 return JSONResponse(
                     content={
                         "has_accepted": False,
-                        "reason": "invalid_timestamp",
+                        "reason": "expired",
+                        "accepted_at": accepted_at,
                         "version": version,
+                        "valid_days": validity_days,
                     }
                 )
 
@@ -133,31 +160,41 @@ def should_show_welcome(request: Request, client_id: str = Query(...)):
         authorize_client_request(request, client_id)
         response = (
             supabase.table("client_terms_acceptance")
-            .select("accepted_at, version")
+            .select("accepted_at, version, accepted")
             .eq("client_id", client_id)
+            .order("accepted_at", desc=True)
+            .limit(20)
             .execute()
         )
 
         now = datetime.now(timezone.utc)
+        validity_days = _terms_valid_days()
 
         # 🚀 Sin registro → mostrar modal
         if not response.data or len(response.data) == 0:
             return {"show": True, "reason": "no_record"}
 
-        record = response.data[0]
+        record = next((r for r in response.data if bool(r.get("accepted"))), response.data[0])
+        if not bool(record.get("accepted")):
+            return {"show": True, "reason": "not_accepted"}
+
         accepted_at = record.get("accepted_at")
 
         # 🚀 Sin fecha → mostrar modal
         if not accepted_at:
             return {"show": True, "reason": "missing_accepted_at"}
 
-        accepted_dt = datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
-        days_since = (now - accepted_dt).days
+        if validity_days <= 0:
+            return {"show": False, "reason": "accepted_no_expiry"}
 
-        if days_since >= 30:
-            return {"show": True, "reason": "expired", "days_since": days_since}
-        else:
-            return {"show": False, "days_remaining": 30 - days_since}
+        accepted_dt = _parse_accepted_at(accepted_at)
+        if not accepted_dt:
+            return {"show": False, "reason": "accepted_unparseable_timestamp"}
+
+        days_since = (now - accepted_dt).days
+        if days_since >= validity_days:
+            return {"show": True, "reason": "expired", "days_since": days_since, "valid_days": validity_days}
+        return {"show": False, "days_remaining": max(0, validity_days - days_since)}
 
     except HTTPException:
         raise

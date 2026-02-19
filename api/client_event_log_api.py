@@ -58,7 +58,7 @@ def log_client_event(payload: ClientEventPayload, request: Request):
 
         event_row = {
             "client_id": payload.client_id,
-            "role": "system",
+            "role": "assistant",
             "content": payload.event_name,
             "channel": "system",
             "source_type": "analytics_event",

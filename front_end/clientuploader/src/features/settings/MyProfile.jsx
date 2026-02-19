@@ -259,6 +259,7 @@ export default function MyProfile() {
           body: JSON.stringify({
             client_id: clientId,
             language: formData.language || "en",
+            timezone: formData.timezone || "UTC",
           }),
         });
 

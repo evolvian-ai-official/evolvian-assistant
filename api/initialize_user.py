@@ -47,7 +47,7 @@ def log_signup_event_once(client_id: str, auth_user_id: str, email: str):
     now = datetime.utcnow().isoformat()
     supabase.table("history").insert({
         "client_id": client_id,
-        "role": "system",
+        "role": "assistant",
         "content": "Funnel_Signup_Completed",
         "channel": "system",
         "source_type": "analytics_event",

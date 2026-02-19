@@ -181,7 +181,7 @@ def schedule_event(payload: dict):
             allowed, policy = begin_email_send_audit(
                 client_id=client_id,
                 to_email=recipient_email,
-                purpose="reminder",
+                purpose="transactional",
                 source="schedule_event_sendgrid_confirmation",
                 source_id=event.get("id"),
             )

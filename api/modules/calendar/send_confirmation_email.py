@@ -222,7 +222,7 @@ def send_confirmation_email(
     client_id: Optional[str] = None,
     user_name: Optional[str] = None,
     appointment_type: Optional[str] = None,
-    purpose: str = "reminder",
+    purpose: str = "transactional",
 ) -> bool:
     default_subject = subject or "✅ Confirmación de tu cita"
     sender_name = _safe_header_name(_get_client_sender_name(client_id))

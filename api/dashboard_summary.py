@@ -275,6 +275,33 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
             "last_used_at": datetime.utcnow().isoformat(),
         }
 
+        # 5.1️⃣ Reconcile documents count with document_metadata as source of truth.
+        try:
+            metadata_docs_res = _run_timed(
+                perf_ms,
+                "documents_count_metadata",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("document_metadata")
+                        .select("id", count="exact")
+                        .eq("client_id", client_id)
+                        .eq("is_active", True)
+                        .execute()
+                    ),
+                    op_name="dashboard.documents_metadata_count",
+                ),
+            )
+            metadata_docs_count = getattr(metadata_docs_res, "count", 0) or 0
+            usage["documents_uploaded"] = max(
+                int(usage["documents_uploaded"] or 0),
+                int(metadata_docs_count or 0),
+            )
+        except Exception as metadata_exc:
+            logging.warning(
+                "⚠️ No se pudo reconciliar documents_uploaded con metadata (non-blocking): %s",
+                metadata_exc,
+            )
+
         # Escritura de usage en modo best-effort para no tirar el endpoint
         try:
             _run_timed(
@@ -308,7 +335,10 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
                 "documents_count_storage",
                 lambda: count_bucket_documents(client_id),
             )
-            usage["documents_uploaded"] = bucket_count
+            usage["documents_uploaded"] = max(
+                int(usage["documents_uploaded"] or 0),
+                int(bucket_count or 0),
+            )
             try:
                 _run_timed(
                     perf_ms,

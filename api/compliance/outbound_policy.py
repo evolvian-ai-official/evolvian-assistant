@@ -89,7 +89,8 @@ def _load_policy_settings(client_id: str) -> PolicySettings:
         require_phone_consent=bool(row.get("require_phone_consent", False)),
         require_terms_consent=bool(row.get("require_terms_consent", False)),
         consent_renewal_days=renewal_days,
-        require_reminder_consent=_env_flag("EVOLVIAN_REQUIRE_CONSENT_FOR_REMINDERS", True),
+        # Reminder enforcement is opt-in strict mode. By default reminders are not blocked.
+        require_reminder_consent=_env_flag("EVOLVIAN_REQUIRE_CONSENT_FOR_REMINDERS", False),
         require_marketing_opt_in=_env_flag("EVOLVIAN_REQUIRE_MARKETING_OPT_IN", True),
         allow_transactional_without_consent=_env_flag(
             "EVOLVIAN_ALLOW_TRANSACTIONAL_WITHOUT_CONSENT", True
@@ -229,8 +230,6 @@ def evaluate_policy_decision(
                 return False, "missing_phone_in_consent_record", expires_at
             if not terms_ok:
                 return False, "missing_terms_acceptance_for_reminder", expires_at
-        elif settings.require_terms_consent and not terms_ok:
-            return False, "missing_terms_acceptance_for_reminder", expires_at
         return True, None, expires_at
 
     # transactional
@@ -306,6 +305,33 @@ def evaluate_outbound_policy(
     }
 
 
+def _insert_history_with_role_fallback(base_payload: dict[str, Any]) -> None:
+    preferred_role = str(
+        os.getenv("EVOLVIAN_HISTORY_AUDIT_ROLE", "assistant") or "assistant"
+    ).strip().lower()
+    roles_to_try: list[str] = []
+    if preferred_role:
+        roles_to_try.append(preferred_role)
+    for fallback_role in ("assistant", "user"):
+        if fallback_role not in roles_to_try:
+            roles_to_try.append(fallback_role)
+
+    last_error: Exception | None = None
+    for role in roles_to_try:
+        payload = dict(base_payload)
+        payload["role"] = role
+        try:
+            supabase.table("history").insert(payload).execute()
+            return
+        except Exception as error:
+            last_error = error
+            if "history_role_check" not in str(error).lower():
+                raise
+
+    if last_error:
+        raise last_error
+
+
 def log_outbound_policy_event(
     *,
     client_id: str,
@@ -332,11 +358,10 @@ def log_outbound_policy_event(
             "send_error": send_error,
             "policy": policy_result,
         }
-        supabase.table("history").insert(
+        _insert_history_with_role_fallback(
             {
                 "client_id": client_id,
                 "session_id": proof_id or None,
-                "role": "system",
                 "content": content,
                 "channel": channel,
                 "source_type": "compliance_outbound_policy",
@@ -346,7 +371,6 @@ def log_outbound_policy_event(
                 "metadata": metadata,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
-        ).execute()
+        )
     except Exception as error:
         logger.warning("⚠️ Could not persist outbound policy audit event: %s", error)
-

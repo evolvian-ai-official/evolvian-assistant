@@ -101,6 +101,33 @@ def test_reminder_can_pass_when_strict_disabled():
     assert reason is None
 
 
+def test_reminder_can_pass_when_strict_disabled_even_if_widget_toggles_on():
+    now = datetime.now(timezone.utc)
+    old_or_missing_consent = _consent(
+        consent_id=None,
+        consent_at=now - timedelta(days=200),
+        accepted_terms=False,
+        phone_present=False,
+    )
+    allowed, reason, _ = evaluate_policy_decision(
+        channel="whatsapp",
+        purpose="reminder",
+        settings=_settings(
+            require_reminder_consent=False,
+            require_email_consent=True,
+            require_phone_consent=True,
+            require_terms_consent=True,
+        ),
+        consent=old_or_missing_consent,
+        opt_out=None,
+        recipient_email=None,
+        recipient_phone="+15550001111",
+        now=now,
+    )
+    assert allowed is True
+    assert reason is None
+
+
 def test_transactional_allows_without_consent_by_default():
     now = datetime.now(timezone.utc)
     allowed, reason, _ = evaluate_policy_decision(

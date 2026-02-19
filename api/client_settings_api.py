@@ -117,6 +117,7 @@ class ClientSettingsPayload(BaseModel):
     subscription_end: Optional[str] = None
     cancellation_requested_at: Optional[str] = None
     subscription_cycles: Optional[int] = None
+    timezone: Optional[str] = None
 
     class Config:
         extra = "allow"  # ✅ Permite campos adicionales sin fallar
@@ -183,7 +184,11 @@ async def upsert_client_settings(request: Request):
             print(f"❌ Error al validar el payload con Pydantic: {e}")
             raise HTTPException(status_code=422, detail=f"Error de validación: {str(e)}")
 
-        payload_dict = {k: v for k, v in payload.dict().items() if v is not None}
+        if hasattr(payload, "model_dump"):
+            payload_data = payload.model_dump(exclude_unset=True)
+        else:
+            payload_data = payload.dict(exclude_unset=True)
+        payload_dict = {k: v for k, v in payload_data.items() if v is not None}
 
         # 🔹 Verificar plan válido
         plan_id = payload_dict.get("plan_id")
@@ -200,6 +205,7 @@ async def upsert_client_settings(request: Request):
                 .execute()
             )
             plan_id = current_plan_res.data["plan_id"] if current_plan_res.data else "free"
+        payload_dict.setdefault("plan_id", plan_id)
 
         # 🔒 Solo premium / white_label puede editar custom_prompt
         if plan_id not in ["premium", "white_label"]:

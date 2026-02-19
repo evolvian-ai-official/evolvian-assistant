@@ -27,7 +27,7 @@ class ProfileData(BaseModel):
     country: Optional[str] = None
     company_size: Optional[str] = None
     channels: Optional[List[str]] = []
-    timezone: Optional[str] = "UTC"
+    timezone: Optional[str] = None
 
 
 class TermsData(BaseModel):
@@ -61,10 +61,9 @@ async def complete_onboarding(
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
 
-        # 🔒 Validate timezone
-        timezone_value = payload.profile.timezone or "UTC"
-
-        if timezone_value not in available_timezones():
+        # 🔒 Validate timezone only when provided
+        timezone_value = (payload.profile.timezone or "").strip()
+        if timezone_value and timezone_value not in available_timezones():
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid timezone: {timezone_value}"
@@ -89,13 +88,17 @@ async def complete_onboarding(
             on_conflict="client_id"
         ).execute()
 
-        # 🔹 Update ONLY timezone in client_settings
-        supabase.table("client_settings").update(
-            {
-                "timezone": timezone_value,
-                "updated_at": now.isoformat(),
-            }
-        ).eq("client_id", client_id).execute()
+        # 🔹 Persist timezone only if the caller sent one.
+        #    This prevents old payloads (without timezone) from forcing UTC.
+        if timezone_value:
+            supabase.table("client_settings").upsert(
+                {
+                    "client_id": client_id,
+                    "timezone": timezone_value,
+                    "updated_at": now.isoformat(),
+                },
+                on_conflict="client_id"
+            ).execute()
 
         # 🔹 UPSERT client_terms_acceptance
         supabase.table("client_terms_acceptance").upsert(

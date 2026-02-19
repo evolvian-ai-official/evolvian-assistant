@@ -463,6 +463,58 @@ class CreateAppointmentPayload(BaseModel):
     send_reminders: bool = False
     reminders: Optional[Dict[str, Optional[str]]] = None
     replace_existing: bool = False
+    consent_accepted_terms: Optional[bool] = None
+    consent_accepted_email_marketing: Optional[bool] = None
+    consent_captured_at: Optional[datetime] = None
+    consent_user_agent: Optional[str] = None
+
+
+def _capture_inline_contact_consent(payload: CreateAppointmentPayload) -> str | None:
+    """
+    Persist consent provided during appointment creation (non-widget flows).
+    Returns consent record id when created.
+    """
+    if payload.consent_accepted_terms is None and payload.consent_accepted_email_marketing is None:
+        return None
+
+    email_value = (str(payload.user_email).strip().lower() if payload.user_email else None) or None
+    phone_value = (payload.user_phone or "").strip() or None
+    if not email_value and not phone_value:
+        logger.warning(
+            "⚠️ Inline consent skipped (missing subject) | client_id=%s",
+            str(payload.client_id),
+        )
+        return None
+
+    captured_at = payload.consent_captured_at
+    if captured_at is None:
+        captured_at = datetime.now(timezone.utc)
+    elif captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    else:
+        captured_at = captured_at.astimezone(timezone.utc)
+
+    record = {
+        "client_id": str(payload.client_id),
+        "email": email_value,
+        "phone": phone_value,
+        "accepted_terms": bool(payload.consent_accepted_terms),
+        "accepted_email_marketing": bool(payload.consent_accepted_email_marketing),
+        "consent_at": captured_at.isoformat(),
+        "ip_address": None,
+        "user_agent": (payload.consent_user_agent or "appointments_inline").strip()[:500],
+    }
+    result = supabase.table("widget_consents").insert(record).execute()
+    consent_row = result.data[0] if result and result.data else {}
+    consent_id = consent_row.get("id")
+    logger.info(
+        "🧾 Inline consent captured | client_id=%s | consent_id=%s | email=%s | phone=%s",
+        str(payload.client_id),
+        consent_id or "-",
+        email_value or "-",
+        phone_value or "-",
+    )
+    return str(consent_id) if consent_id else None
 
 
 # =========================
@@ -673,7 +725,7 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
                     len(templates),
                 )
 
-        send_confirmation_email(
+        email_sent = send_confirmation_email(
             email,
             date_str,
             hour_str,
@@ -682,8 +734,12 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
             client_id=client_id,
             user_name=appointment.get("user_name"),
             appointment_type=appointment.get("appointment_type"),
+            purpose="transactional",
         )
-        logger.info("✅ Appointment email confirmation sent to %s", email)
+        if email_sent:
+            logger.info("✅ Appointment email confirmation sent to %s", email)
+        else:
+            logger.warning("⚠️ Appointment email confirmation skipped/blocked for %s", email)
     except Exception as e:
         logger.error("❌ Failed sending appointment email confirmation: %s", e)
 
@@ -1062,6 +1118,16 @@ async def create_appointment(payload: CreateAppointmentPayload):
     appointment_id = appointment["id"]
 
     logger.info(f"✅ Appointment created: {appointment_id}")
+
+    try:
+        _capture_inline_contact_consent(payload)
+    except Exception as consent_error:
+        logger.warning(
+            "⚠️ Inline consent capture failed | client_id=%s | appointment_id=%s | error=%s",
+            str(payload.client_id),
+            appointment_id,
+            consent_error,
+        )
 
     # 🔔 Instant confirmation (NO cambiado)
     try:
