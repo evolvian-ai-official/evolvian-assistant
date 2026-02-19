@@ -303,9 +303,14 @@ export default function ShowAppointments({ refreshKey = 0 }) {
     return events;
   }, [googleBusyRanges]);
 
+  const calendarBaseAppointments = useMemo(
+    () => filteredAppointments.filter((appointment) => resolveStatus(appointment) !== "cancelled"),
+    [filteredAppointments]
+  );
+
   const calendarAppointments = useMemo(
-    () => [...filteredAppointments, ...googleBusyEvents],
-    [filteredAppointments, googleBusyEvents]
+    () => [...calendarBaseAppointments, ...googleBusyEvents],
+    [calendarBaseAppointments, googleBusyEvents]
   );
 
   /* =========================

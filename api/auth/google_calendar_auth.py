@@ -54,10 +54,12 @@ def _resolve_redirect_uri(request: Request) -> str | None:
     return local_uri or dynamic_uri or prod_uri
 
 
-def _encode_state(client_id: str, return_to: str | None) -> str:
+def _encode_state(client_id: str, return_to: str | None, oauth_redirect_uri: str | None = None) -> str:
     payload = {"client_id": client_id}
     if return_to:
         payload["return_to"] = return_to
+    if oauth_redirect_uri:
+        payload["oauth_redirect_uri"] = oauth_redirect_uri
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
 
@@ -82,7 +84,7 @@ def google_calendar_init(request: Request):
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "https://www.googleapis.com/auth/calendar",
-        "state": _encode_state(client_id_param, return_to),
+        "state": _encode_state(client_id_param, return_to, redirect_uri),
         "access_type": "offline",
         "prompt": "select_account consent",
     }

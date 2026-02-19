@@ -73,6 +73,8 @@ export default function CreateAppointment({ disabled = false }) {
   const [rulesLoading, setRulesLoading] = useState(false);
   const [googleBusyLoading, setGoogleBusyLoading] = useState(false);
   const [googleBusyRanges, setGoogleBusyRanges] = useState([]);
+  const [appointmentsBusyLoading, setAppointmentsBusyLoading] = useState(false);
+  const [confirmedAppointments, setConfirmedAppointments] = useState([]);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
   const [availableTimes, setAvailableTimes] = useState([]);
@@ -164,6 +166,29 @@ export default function CreateAppointment({ disabled = false }) {
 
     fetchGoogleBusyRanges();
   }, [showModal, clientId, calendarRules, appointmentsRefreshTick]);
+
+  useEffect(() => {
+    if (!showModal || !clientId) return;
+
+    const fetchConfirmedAppointments = async () => {
+      setAppointmentsBusyLoading(true);
+      try {
+        const res = await authFetch(`${API_BASE_URL}/appointments/show?client_id=${clientId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rows = Array.isArray(data) ? data : [];
+        const confirmed = rows.filter((appt) => String(appt?.status || "").toLowerCase() === "confirmed");
+        setConfirmedAppointments(confirmed);
+      } catch (err) {
+        console.error("Failed loading confirmed appointments", err);
+        setConfirmedAppointments([]);
+      } finally {
+        setAppointmentsBusyLoading(false);
+      }
+    };
+
+    fetchConfirmedAppointments();
+  }, [showModal, clientId, appointmentsRefreshTick]);
 
   useEffect(() => {
     if (!showModal || !clientId) return;
@@ -275,6 +300,18 @@ export default function CreateAppointment({ disabled = false }) {
     });
   };
 
+  const isBlockedByConfirmedAppointment = (slotDate, slotDurationMinutes) => {
+    const slotEnd = new Date(slotDate.getTime() + slotDurationMinutes * 60 * 1000);
+    return (confirmedAppointments || []).some((appointment) => {
+      const appointmentStart = new Date(appointment.scheduled_time);
+      if (Number.isNaN(appointmentStart.getTime())) return false;
+      const appointmentEnd = new Date(
+        appointmentStart.getTime() + slotDurationMinutes * 60 * 1000
+      );
+      return slotDate < appointmentEnd && slotEnd > appointmentStart;
+    });
+  };
+
   const computeAvailableTimes = (dateStr, rules) => {
     if (!dateStr || !rules) return [];
     const selected = new Date(`${dateStr}T00:00:00`);
@@ -315,6 +352,7 @@ export default function CreateAppointment({ disabled = false }) {
       const slotDate = new Date(`${dateStr}T${hh}:${mm}:00`);
       if (slotDate < minNoticeDate) continue;
       if (isBlockedByGoogle(slotDate, slot)) continue;
+      if (isBlockedByConfirmedAppointment(slotDate, slot)) continue;
       slots.push(`${hh}:${mm}`);
     }
     return slots;
@@ -368,7 +406,7 @@ export default function CreateAppointment({ disabled = false }) {
       setSelectedTime("");
       setForm((prev) => ({ ...prev, scheduled_time: "" }));
     }
-  }, [showModal, calendarRules, googleBusyRanges]);
+  }, [showModal, calendarRules, googleBusyRanges, confirmedAppointments]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -384,7 +422,7 @@ export default function CreateAppointment({ disabled = false }) {
       setSelectedTime("");
       setForm((prev) => ({ ...prev, scheduled_time: "" }));
     }
-  }, [showModal, selectedDate, calendarRules, googleBusyRanges]);
+  }, [showModal, selectedDate, calendarRules, googleBusyRanges, confirmedAppointments]);
 
   const _emailTemplates = templates.filter((t) => t.channel === "email");
   const whatsappTemplates = templates.filter((t) => t.channel === "whatsapp");
@@ -448,6 +486,7 @@ export default function CreateAppointment({ disabled = false }) {
     setAvailableTimes([]);
     setAvailableDates([]);
     setGoogleBusyRanges([]);
+    setConfirmedAppointments([]);
   };
 
   /* =========================
@@ -614,10 +653,12 @@ export default function CreateAppointment({ disabled = false }) {
               style={inputStyle}
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              disabled={rulesLoading || googleBusyLoading}
+              disabled={rulesLoading || googleBusyLoading || appointmentsBusyLoading}
             >
               <option value="">
-                {rulesLoading || googleBusyLoading ? "Cargando fechas..." : "Selecciona una fecha disponible"}
+                {rulesLoading || googleBusyLoading || appointmentsBusyLoading
+                  ? "Cargando fechas..."
+                  : "Selecciona una fecha disponible"}
               </option>
               {availableDates.map((date) => (
                 <option key={date.value} value={date.value}>
@@ -636,12 +677,12 @@ export default function CreateAppointment({ disabled = false }) {
                   scheduled_time: selectedDate && time ? `${selectedDate}T${time}` : "",
                 }));
               }}
-              disabled={!selectedDate || rulesLoading || googleBusyLoading}
+              disabled={!selectedDate || rulesLoading || googleBusyLoading || appointmentsBusyLoading}
             >
               <option value="">
                 {!selectedDate
                   ? "Selecciona una fecha"
-                  : rulesLoading || googleBusyLoading
+                  : rulesLoading || googleBusyLoading || appointmentsBusyLoading
                   ? "Cargando horarios..."
                   : "Selecciona una hora"}
               </option>
@@ -654,14 +695,22 @@ export default function CreateAppointment({ disabled = false }) {
             {googleBusyLoading && (
               <p style={reminderHint}>Sincronizando horarios ocupados desde Google Calendar...</p>
             )}
+            {appointmentsBusyLoading && (
+              <p style={reminderHint}>Validando horarios ocupados por citas ya confirmadas en Evolvian...</p>
+            )}
             {!googleBusyLoading && googleBusyRanges.length > 0 && (
               <p style={reminderHint}>
                 Se ocultaron automáticamente los horarios ocupados en Google Calendar.
               </p>
             )}
+            {!appointmentsBusyLoading && confirmedAppointments.length > 0 && (
+              <p style={reminderHint}>
+                También se ocultaron horarios ya ocupados por citas confirmadas en Evolvian.
+              </p>
+            )}
             {selectedDate && !rulesLoading && availableTimes.length === 0 && (
               <p style={reminderHint}>
-                No hay horarios disponibles para esa fecha según tu Calendar Setup y Google Calendar.
+                No hay horarios disponibles para esa fecha según tu Calendar Setup, Google Calendar y citas confirmadas en Evolvian.
               </p>
             )}
             {!rulesLoading && availableDates.length === 0 && (

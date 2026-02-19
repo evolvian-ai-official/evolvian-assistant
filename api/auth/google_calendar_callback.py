@@ -46,25 +46,29 @@ def _resolve_dashboard_redirect(request: Request) -> str:
     return local_url
 
 
-def _decode_state(raw_state: str) -> tuple[str, str | None]:
+def _decode_state(raw_state: str) -> tuple[str, str | None, str | None]:
     """
     Backward compatible:
-    - New format: base64url(JSON) {"client_id":"...","return_to":"..."}
+    - New format: base64url(JSON) {"client_id":"...","return_to":"...","oauth_redirect_uri":"..."}
     - Legacy format: plain client_id string
     """
     if not raw_state:
-        return "", None
+        return "", None, None
 
     try:
         padded = raw_state + "=" * (-len(raw_state) % 4)
         decoded = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
         payload = json.loads(decoded)
         if isinstance(payload, dict) and payload.get("client_id"):
-            return str(payload.get("client_id")), payload.get("return_to")
+            return (
+                str(payload.get("client_id")),
+                payload.get("return_to"),
+                payload.get("oauth_redirect_uri"),
+            )
     except Exception:
         pass
 
-    return raw_state, None
+    return raw_state, None, None
 
 
 def _redirect_with_status(base_url: str, success: bool, reason: str | None = None):
@@ -90,9 +94,9 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
     if not code or not state:
         return _redirect_with_status(default_dashboard, success=False, reason="missing_callback_params")
 
-    client_id, return_to = _decode_state(state)
+    client_id, return_to, oauth_redirect_uri = _decode_state(state)
     dashboard_redirect_url = return_to or default_dashboard
-    google_redirect_uri = _resolve_redirect_uri(request)
+    google_redirect_uri = oauth_redirect_uri or _resolve_redirect_uri(request)
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not google_redirect_uri or not client_id:
         logging.error("❌ Missing Google OAuth configuration or client_id")
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="oauth_config_missing")
