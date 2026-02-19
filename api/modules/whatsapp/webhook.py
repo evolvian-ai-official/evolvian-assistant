@@ -116,7 +116,7 @@ def _find_next_active_appointment(client_id: str, from_number: str) -> dict | No
                 .table("appointments")
                 .select("id, scheduled_time, status, user_phone")
                 .eq("client_id", client_id)
-                .in_("status", ["confirmed", "pending_confirmation"])
+                .in_("status", ["confirmed", "pending_confirmation", "pending"])
                 .eq("user_phone", phone)
                 .gte("scheduled_time", now_iso)
                 .order("scheduled_time", desc=False)
@@ -147,26 +147,75 @@ def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) -> tuple
     appointment_id = appointment["id"]
     now_iso = datetime.utcnow().isoformat()
 
-    supabase.table("appointments").update({
-        "status": "cancelled",
-        "updated_at": now_iso,
-    }).eq("id", appointment_id).eq("client_id", client_id).execute()
+    update_res = (
+        supabase
+        .table("appointments")
+        .update({
+            "status": "cancelled",
+            "updated_at": now_iso,
+        })
+        .eq("id", appointment_id)
+        .eq("client_id", client_id)
+        .execute()
+    )
 
-    supabase.table("appointment_reminders").update({
-        "status": "cancelled",
-        "updated_at": now_iso,
-    }).eq("appointment_id", appointment_id).eq("client_id", client_id).in_(
-        "status",
-        ["pending", "processing", "sending"]
-    ).execute()
+    verify_res = (
+        supabase
+        .table("appointments")
+        .select("id, status")
+        .eq("id", appointment_id)
+        .eq("client_id", client_id)
+        .maybe_single()
+        .execute()
+    )
 
-    supabase.table("appointment_usage").insert({
-        "client_id": client_id,
-        "appointment_id": appointment_id,
-        "channel": "whatsapp",
-        "action": "cancelled_from_whatsapp_button",
-        "created_at": now_iso,
-    }).execute()
+    updated_row = verify_res.data or {}
+    if updated_row.get("status") != "cancelled":
+        logger.error(
+            "❌ WhatsApp cancel did not persist | client_id=%s | appointment_id=%s | update_data=%s | verify_data=%s",
+            client_id,
+            appointment_id,
+            update_res.data,
+            verify_res.data,
+        )
+        return False, "⚠️ No pude confirmar la cancelación en el sistema. Intenta de nuevo."
+
+    try:
+        supabase.table("appointment_reminders").update({
+            "status": "cancelled",
+            "updated_at": now_iso,
+        }).eq("appointment_id", appointment_id).eq("client_id", client_id).in_(
+            "status",
+            ["pending", "processing", "sending"]
+        ).execute()
+    except Exception:
+        logger.exception(
+            "❌ Failed cancelling reminders from WhatsApp | client_id=%s | appointment_id=%s",
+            client_id,
+            appointment_id,
+        )
+
+    try:
+        supabase.table("appointment_usage").insert({
+            "client_id": client_id,
+            "appointment_id": appointment_id,
+            "channel": "whatsapp",
+            "action": "cancelled_from_whatsapp_button",
+            "created_at": now_iso,
+        }).execute()
+    except Exception:
+        logger.exception(
+            "❌ Failed logging WhatsApp cancellation usage | client_id=%s | appointment_id=%s",
+            client_id,
+            appointment_id,
+        )
+
+    logger.info(
+        "✅ WhatsApp appointment cancelled | client_id=%s | appointment_id=%s | user_phone=%s",
+        client_id,
+        appointment_id,
+        appointment.get("user_phone"),
+    )
 
     return True, "✅ Tu cita fue cancelada."
 

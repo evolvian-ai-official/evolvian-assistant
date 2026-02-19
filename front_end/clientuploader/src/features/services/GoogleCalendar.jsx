@@ -331,7 +331,10 @@ export default function GoogleCalendarSettings() {
 
   const handleConnectGoogleCalendar = () => {
     if (!clientId) return;
-    window.location.href = `${backendUrl}/api/auth/google_calendar/init?client_id=${encodeURIComponent(clientId)}`;
+    const returnTo = `${window.location.origin}/services/calendar`;
+    window.location.href =
+      `${backendUrl}/api/auth/google_calendar/init?client_id=${encodeURIComponent(clientId)}` +
+      `&return_to=${encodeURIComponent(returnTo)}`;
   };
 
   const handleDisconnectGoogleCalendar = async () => {
