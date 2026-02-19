@@ -4,8 +4,15 @@ from typing import Optional, List
 import uuid
 import logging
 
-from api.config.config import supabase
 from api.authz import authorize_client_request
+from api.config.config import supabase
+from api.modules.whatsapp.template_sync import (
+    build_client_template_name,
+    estimate_template_pricing,
+    get_client_country_code,
+    get_client_template_sync_map,
+    infer_template_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,7 @@ class MessageTemplateResponse(BaseModel):
     id: uuid.UUID
     channel: str
     type: str
+    is_active: bool = True
 
     # Email only
     body: Optional[str] = None
@@ -49,6 +57,15 @@ class MessageTemplateResponse(BaseModel):
     frequency: Optional[List[FrequencyRule]] = None
 
     is_meta_template: bool
+    template_category: Optional[str] = None
+    whatsapp_client_template_name: Optional[str] = None
+    whatsapp_template_status: Optional[str] = None
+    whatsapp_template_active: Optional[bool] = None
+    pricing_currency: Optional[str] = None
+    estimated_unit_cost: Optional[float] = None
+    billable: Optional[bool] = None
+    pricing_source: Optional[str] = None
+    pricing_disclaimer: Optional[str] = None
 
 
 # =========================
@@ -62,6 +79,7 @@ def get_message_templates(
         None,
         description="appointment_reminder | appointment_confirmation | appointment_cancellation"
     ),
+    include_inactive: bool = Query(False),
 ):
     """
     Returns active message templates for a client.
@@ -80,11 +98,13 @@ def get_message_templates(
             supabase
             .table("message_templates")
             .select(
-                "id, channel, type, body, frequency, template_name, label, meta_template_id"
+                "id, channel, type, is_active, body, frequency, template_name, label, meta_template_id"
             )
             .eq("client_id", str(client_id))
-            .eq("is_active", True)
         )
+
+        if not include_inactive:
+            query = query.eq("is_active", True)
 
         if type:
             query = query.eq("type", type)
@@ -96,6 +116,9 @@ def get_message_templates(
             raise HTTPException(status_code=500, detail="Database error")
 
         templates = res.data or []
+        client_id_str = str(client_id)
+        sync_map = get_client_template_sync_map(client_id_str)
+        country_code = get_client_country_code(client_id_str)
 
         formatted_templates: List[MessageTemplateResponse] = []
 
@@ -128,15 +151,60 @@ def get_message_templates(
                     )
 
             is_meta = bool(meta)
+            is_whatsapp = t.get("channel") == "whatsapp"
+            meta_template_id = str(t.get("meta_template_id") or "")
+
+            if is_whatsapp and not meta_template_id:
+                logger.warning(
+                    "⚠️ Skipping legacy WhatsApp template without canonical meta_template_id | template_id=%s",
+                    t.get("id"),
+                )
+                continue
+
+            if is_whatsapp and not meta:
+                logger.warning(
+                    "⚠️ Skipping WhatsApp template with missing canonical meta_approved_templates row | template_id=%s | meta_template_id=%s",
+                    t.get("id"),
+                    meta_template_id,
+                )
+                continue
+
+            sync_row = sync_map.get(meta_template_id) if meta_template_id else None
+            category = infer_template_category(t.get("type"))
+            pricing = estimate_template_pricing(
+                category=sync_row.get("category") if sync_row else category,
+                country_code=country_code,
+            )
+            estimated_unit_cost = (
+                sync_row.get("estimated_unit_cost")
+                if sync_row and sync_row.get("estimated_unit_cost") is not None
+                else pricing["unit_cost_estimate"]
+            )
+            pricing_currency = (
+                sync_row.get("pricing_currency")
+                if sync_row and sync_row.get("pricing_currency")
+                else pricing["currency"]
+            )
+            billable = (
+                bool(sync_row.get("billable"))
+                if sync_row and sync_row.get("billable") is not None
+                else pricing["billable"]
+            )
+            pricing_source = (
+                sync_row.get("pricing_source")
+                if sync_row and sync_row.get("pricing_source")
+                else pricing["pricing_source"]
+            )
 
             formatted_templates.append(
                 MessageTemplateResponse(
                     id=t["id"],
                     channel=t["channel"],
                     type=t["type"],
+                    is_active=bool(t.get("is_active", True)),
 
                     # 🔒 WhatsApp never exposes body
-                    body=None if t["channel"] == "whatsapp" else t.get("body"),
+                    body=None if is_whatsapp else t.get("body"),
 
                     template_name=t.get("template_name"),
 
@@ -148,7 +216,32 @@ def get_message_templates(
                     label=t.get("label"),
                     frequency=t.get("frequency"),
 
-                    is_meta_template=is_meta
+                    is_meta_template=is_meta,
+                    template_category=category if is_whatsapp else None,
+                    whatsapp_client_template_name=(
+                        sync_row.get("meta_template_name")
+                        if sync_row
+                        else (
+                            build_client_template_name(
+                                meta.get("template_name") if meta else (t.get("template_name") or "template"),
+                                client_id_str,
+                            )
+                            if is_whatsapp else None
+                        )
+                    ),
+                    whatsapp_template_status=(
+                        sync_row.get("status") if sync_row else ("not_synced" if is_whatsapp else None)
+                    ),
+                    whatsapp_template_active=(
+                        bool(sync_row.get("is_active"))
+                        if sync_row
+                        else (False if is_whatsapp else None)
+                    ),
+                    pricing_currency=pricing_currency if is_whatsapp else None,
+                    estimated_unit_cost=float(estimated_unit_cost or 0) if is_whatsapp else None,
+                    billable=billable if is_whatsapp else None,
+                    pricing_source=pricing_source if is_whatsapp else None,
+                    pricing_disclaimer=pricing["pricing_disclaimer"] if is_whatsapp else None,
                 )
             )
 

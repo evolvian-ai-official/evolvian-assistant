@@ -26,11 +26,13 @@ export default function Templates() {
           >
             <div>
               <h1 className="ia-header-title">📝 {t("templates_title")}</h1>
-              <p className="ia-header-subtitle">{t("templates_subtitle")}</p>
+              <p className="ia-header-subtitle">
+                Email templates are created here. WhatsApp templates are synced from Meta and tracked by status.
+              </p>
             </div>
 
             <button onClick={() => setShowModal(true)} className="ia-button ia-button-warning">
-              ➕ {t("create_template_button")}
+              ➕ Create Email Template
             </button>
           </div>
 

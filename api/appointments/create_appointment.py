@@ -534,11 +534,12 @@ async def send_appointment_confirmation(appointment: dict) -> None:
     res = (
         supabase
         .table("message_templates")
-        .select("id, meta_template_id")
+        .select("id, meta_template_id, template_name")
         .eq("client_id", client_id)
+        .eq("channel", "whatsapp")
         .eq("type", "appointment_confirmation")
         .eq("is_active", True)
-        .limit(1)
+        .limit(20)
         .execute()
     )
 
@@ -547,14 +548,14 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.info("ℹ️ No active appointment_confirmation template found")
         return
 
-    template = templates[0]
-    meta_template_id = template.get("meta_template_id")
-
-    if not meta_template_id:
-        logger.warning("⚠️ Confirmation template has no meta_template_id")
+    template = next((row for row in templates if row.get("meta_template_id")), None)
+    if not template:
+        logger.warning("⚠️ No canonical active appointment_confirmation template found (legacy rows ignored)")
         return
 
-    # 2️⃣ Resolve meta template
+    meta_template_id = template.get("meta_template_id")
+
+    # 2️⃣ Resolve canonical metadata
     meta_res = (
         supabase
         .table("meta_approved_templates")
@@ -564,10 +565,13 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         .single()
         .execute()
     )
-
     meta = meta_res.data
+
     if not meta:
-        logger.warning(f"⚠️ Meta template not found: {meta_template_id}")
+        logger.warning(
+            "⚠️ Meta template metadata not found | meta_template_id=%s",
+            meta_template_id,
+        )
         return
 
     template_name = meta.get("template_name")
@@ -1166,7 +1170,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
         templates_res = (
             supabase
             .table("message_templates")
-            .select("id, channel, frequency")
+            .select("id, channel, frequency, meta_template_id")
             .eq("client_id", str(payload.client_id))
             .eq("type", "appointment_reminder")
             .eq("is_active", True)
@@ -1176,6 +1180,12 @@ async def create_appointment(payload: CreateAppointmentPayload):
         templates = templates_res.data or []
 
         for template in templates:
+            if template.get("channel") == "whatsapp" and not template.get("meta_template_id"):
+                logger.warning(
+                    "⚠️ Skipping legacy WhatsApp reminder template without canonical meta_template_id | template_id=%s",
+                    template.get("id"),
+                )
+                continue
 
             raw_frequency = template.get("frequency")
             if not raw_frequency:

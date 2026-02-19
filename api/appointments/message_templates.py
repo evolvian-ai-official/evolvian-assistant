@@ -12,8 +12,16 @@ from api.compliance.email_marketing_standard import (
     is_marketing_template_type,
     validate_marketing_template_body,
 )
-from api.config.config import supabase
 from api.authz import authorize_client_request, get_current_user_id
+from api.config.config import supabase
+from api.modules.whatsapp.template_sync import (
+    build_client_template_name,
+    estimate_template_pricing,
+    get_client_country_code,
+    get_client_template_sync_map,
+    infer_template_category,
+    sync_canonical_templates_for_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +236,32 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
                     detail="Meta template type mismatch"
                 )
 
-            meta_template_name = meta_template.data["template_name"]
+            canonical_template_name = meta_template.data["template_name"]
+            client_id_str = str(payload.client_id)
+            sync_map = get_client_template_sync_map(client_id_str)
+            synced_template = sync_map.get(str(payload.meta_template_id))
+
+            if not synced_template:
+                sync_canonical_templates_for_client(client_id=client_id_str)
+                sync_map = get_client_template_sync_map(client_id_str)
+                synced_template = sync_map.get(str(payload.meta_template_id))
+
+            if synced_template:
+                if not synced_template.get("is_active"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Meta template is not active for this WhatsApp account. "
+                            "Please wait for approval or sync again."
+                        ),
+                    )
+                meta_template_name = (
+                    synced_template.get("meta_template_name")
+                    or build_client_template_name(canonical_template_name, client_id_str)
+                )
+            else:
+                # Graceful fallback for environments that still need migration rollout.
+                meta_template_name = canonical_template_name
 
         # --------------------------
         # EMAIL
@@ -426,7 +459,13 @@ def update_message_template(
 @router.delete("/{template_id}")
 def delete_message_template(template_id: uuid.UUID, request: Request):
     try:
-        _load_template_with_auth(request, template_id)
+        template_row = _load_template_with_auth(request, template_id)
+
+        if template_row.get("channel") == "whatsapp":
+            raise HTTPException(
+                status_code=409,
+                detail="WhatsApp templates are managed by Meta sync and cannot be deleted manually"
+            )
 
         res = (
             supabase
@@ -445,6 +484,7 @@ def delete_message_template(template_id: uuid.UUID, request: Request):
         return {
             "success": True,
             "message": "Template deactivated",
+            "template": res.data[0],
         }
 
     except HTTPException:
@@ -463,6 +503,7 @@ def get_message_templates(
     request: Request,
     client_id: uuid.UUID = Query(...),
     type: Optional[str] = Query(None),
+    include_inactive: bool = Query(False),
 ):
     try:
         authorize_client_request(request, str(client_id))
@@ -477,6 +518,7 @@ def get_message_templates(
                 label,
                 body,
                 template_name,
+                is_active,
                 frequency,
                 meta_template_id,
                 meta_approved_templates (
@@ -487,8 +529,10 @@ def get_message_templates(
                 )
             """)
             .eq("client_id", str(client_id))
-            .eq("is_active", True)
         )
+
+        if not include_inactive:
+            query = query.eq("is_active", True)
 
         if type:
             query = query.eq("type", type)
@@ -496,18 +540,67 @@ def get_message_templates(
         res = query.execute()
 
         templates = res.data or []
+        client_id_str = str(client_id)
+        sync_map = get_client_template_sync_map(client_id_str)
+        country_code = get_client_country_code(client_id_str)
 
         formatted = []
 
         for t in templates:
             meta = t.get("meta_approved_templates")
+            is_whatsapp = t.get("channel") == "whatsapp"
+            meta_template_id = str(t.get("meta_template_id") or "")
+
+            if is_whatsapp and not meta_template_id:
+                logger.warning(
+                    "⚠️ Skipping legacy WhatsApp template without canonical meta_template_id | template_id=%s",
+                    t.get("id"),
+                )
+                continue
+
+            if is_whatsapp and not meta:
+                logger.warning(
+                    "⚠️ Skipping WhatsApp template with missing canonical meta_approved_templates row | template_id=%s | meta_template_id=%s",
+                    t.get("id"),
+                    meta_template_id,
+                )
+                continue
+
+            sync_row = sync_map.get(meta_template_id) if meta_template_id else None
+
+            template_category = infer_template_category(t.get("type"))
+            pricing = estimate_template_pricing(
+                category=sync_row.get("category") if sync_row else template_category,
+                country_code=country_code,
+            )
+            estimated_unit_cost = (
+                sync_row.get("estimated_unit_cost")
+                if sync_row and sync_row.get("estimated_unit_cost") is not None
+                else pricing["unit_cost_estimate"]
+            )
+            billable = (
+                bool(sync_row.get("billable"))
+                if sync_row and sync_row.get("billable") is not None
+                else pricing["billable"]
+            )
+            pricing_currency = (
+                sync_row.get("pricing_currency")
+                if sync_row and sync_row.get("pricing_currency")
+                else pricing["currency"]
+            )
+            pricing_source = (
+                sync_row.get("pricing_source")
+                if sync_row and sync_row.get("pricing_source")
+                else pricing["pricing_source"]
+            )
 
             formatted.append({
                 "id": t["id"],
                 "channel": t["channel"],
                 "type": t["type"],
                 "label": t.get("label"),
-                "body": None if t["channel"] == "whatsapp" else t.get("body"),
+                "is_active": bool(t.get("is_active", True)),
+                "body": None if is_whatsapp else t.get("body"),
                 "template_name": t.get("template_name"),
                 "meta_template_name": meta.get("template_name") if meta else None,
                 "meta_parameter_count": meta.get("parameter_count") if meta else None,
@@ -516,6 +609,29 @@ def get_message_templates(
                 "frequency": t.get("frequency"),
                 "meta_template_id": t.get("meta_template_id"),
                 "is_meta_template": bool(meta),
+                "template_category": template_category,
+                "whatsapp_client_template_name": (
+                    sync_row.get("meta_template_name")
+                    if sync_row
+                    else (
+                        build_client_template_name(
+                            meta.get("template_name") if meta else (t.get("template_name") or "template"),
+                            client_id_str,
+                        )
+                        if is_whatsapp else None
+                    )
+                ),
+                "whatsapp_template_status": sync_row.get("status") if sync_row else ("not_synced" if is_whatsapp else None),
+                "whatsapp_template_active": (
+                    bool(sync_row.get("is_active"))
+                    if sync_row
+                    else (False if is_whatsapp else None)
+                ),
+                "pricing_currency": pricing_currency if is_whatsapp else None,
+                "estimated_unit_cost": float(estimated_unit_cost or 0) if is_whatsapp else None,
+                "billable": billable if is_whatsapp else None,
+                "pricing_source": pricing_source if is_whatsapp else None,
+                "pricing_disclaimer": pricing["pricing_disclaimer"] if is_whatsapp else None,
             })
 
         return formatted

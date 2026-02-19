@@ -425,7 +425,12 @@ export default function CreateAppointment({ disabled = false }) {
   }, [showModal, selectedDate, calendarRules, googleBusyRanges, confirmedAppointments]);
 
   const _emailTemplates = templates.filter((t) => t.channel === "email");
-  const whatsappTemplates = templates.filter((t) => t.channel === "whatsapp");
+  const whatsappTemplates = templates.filter(
+    (t) =>
+      t.channel === "whatsapp" &&
+      Boolean(t.meta_template_id) &&
+      (typeof t.whatsapp_template_active === "undefined" || t.whatsapp_template_active === true)
+  );
 
   /* =========================
      Derived validation (SAFE)
@@ -847,13 +852,23 @@ export default function CreateAppointment({ disabled = false }) {
                           </option>
                           {whatsappTemplates.map((tpl) => (
                             <option key={tpl.id} value={tpl.id}>
-                              
                               {tpl.meta_template_name || tpl.template_name || t("template")} — {tpl.label}
-
                             </option>
                           ))}
                         </select>
                       )}
+                    {reminderWhatsApp && whatsappTemplates.length > 0 && (
+                      <p style={{ ...reminderHint, marginTop: "0.35rem" }}>
+                        {(() => {
+                          const selected = whatsappTemplates.find((tpl) => tpl.id === whatsappTemplateId);
+                          if (!selected) return "Meta puede generar cargos por mensaje según categoría y país.";
+                          if (!selected.billable) return "Este template se estima sin cargo directo de Meta.";
+                          const amount = Number(selected.estimated_unit_cost || 0).toFixed(3);
+                          const currency = selected.pricing_currency || "USD";
+                          return `Costo estimado Meta: ~$${amount} ${currency} por mensaje.`;
+                        })()}
+                      </p>
+                    )}
                     {!whatsAppMetaConnected && (
                       <p style={reminderHint}>
                         Para usar recordatorios por WhatsApp, primero conecta Evolvian con Meta en WhatsApp Setup.

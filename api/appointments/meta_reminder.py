@@ -126,7 +126,49 @@ async def send_meta_reminder(reminder_id: str, request: Request):
     user_name = (appointment.get("user_name") or "Cliente").strip()
     appointment_details = build_appointment_details(appointment)
 
-    template_name = reminder.get("template_name") or "appointment_reminder_v1"
+    template_id = reminder.get("template_id")
+    if not template_id:
+        raise HTTPException(status_code=400, detail="Reminder missing template_id")
+
+    template_res = (
+        supabase
+        .table("message_templates")
+        .select("meta_template_id, template_name")
+        .eq("id", template_id)
+        .eq("client_id", reminder["client_id"])
+        .eq("channel", "whatsapp")
+        .eq("is_active", True)
+        .single()
+        .execute()
+    )
+    template = template_res.data
+    if not template:
+        raise HTTPException(status_code=404, detail="Reminder template not found or inactive")
+
+    meta_template_id = template.get("meta_template_id")
+    if not meta_template_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Legacy WhatsApp template is not allowed. Use canonical meta_approved_templates only.",
+        )
+
+    meta_res = (
+        supabase
+        .table("meta_approved_templates")
+        .select("template_name, language")
+        .eq("id", meta_template_id)
+        .eq("is_active", True)
+        .single()
+        .execute()
+    )
+    meta = meta_res.data
+    if not meta:
+        raise HTTPException(status_code=404, detail="Canonical Meta template not found")
+
+    template_name = meta.get("template_name") or template.get("template_name")
+    language_code = meta.get("language") or "es_MX"
+    if not template_name:
+        raise HTTPException(status_code=500, detail="Canonical template name missing")
 
     # -------------------------------------------------
     # 5️⃣ Send via Multi-Tenant Wrapper
@@ -135,7 +177,7 @@ async def send_meta_reminder(reminder_id: str, request: Request):
         client_id=reminder["client_id"],
         to_number=to_number,
         template_name=template_name,
-        language_code="es_MX",
+        language_code=language_code,
         parameters=[
             user_name,
             appointment_details,

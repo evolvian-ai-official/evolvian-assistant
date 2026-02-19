@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from api.modules.assistant_rag.supabase_client import supabase
+from api.modules.whatsapp.template_sync import sync_canonical_templates_for_client
 from datetime import datetime
 import uuid
 import re
@@ -136,11 +137,28 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
         if not insert_res.data:
             raise HTTPException(status_code=500, detail="Error creando canal")
 
+        sync_summary = None
+        if payload.provider == "meta":
+            try:
+                sync_summary = sync_canonical_templates_for_client(client_id=client_id)
+            except Exception as sync_error:
+                logger.exception(
+                    "⚠️ WhatsApp linked but template provisioning failed | client_id=%s | error=%s",
+                    client_id,
+                    sync_error,
+                )
+                sync_summary = {
+                    "success": False,
+                    "client_id": client_id,
+                    "errors": [f"template_sync_error:{sync_error}"],
+                }
+
         logger.info(f"✅ WhatsApp linked for client {client_id}")
 
         return {
             "success": True,
-            "connected": True
+            "connected": True,
+            "template_sync": sync_summary,
         }
 
     except HTTPException:

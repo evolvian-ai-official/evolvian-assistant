@@ -6,22 +6,12 @@ from babel.dates import format_datetime
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
-    send_whatsapp_message_for_client,
     send_whatsapp_template_for_client,
 )
 from api.internal_auth import require_internal_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-# =====================================================
-# Language map (client_settings → Babel locale)
-# =====================================================
-LANGUAGE_MAP = {
-    "es": "es_MX",
-    "en": "en_US",
-    "pt": "pt_BR",
-}
 
 # =====================================================
 # Timezone helper (multi-tenant safe)
@@ -297,127 +287,97 @@ async def execute_pending_reminders(request: Request):
                 # =====================================================
                 # META TEMPLATE FLOW
                 # =====================================================
-                if template.get("template_name"):
-
-                    template_name = template["template_name"]
-
-                    meta_res = (
-                        supabase
-                        .table("meta_approved_templates")
-                        .select("parameter_count, language, is_active")
-                        .eq("template_name", template_name)
-                        .eq("is_active", True)
-                        .single()
-                        .execute()
+                meta_template_id = template.get("meta_template_id")
+                if not meta_template_id:
+                    raise Exception(
+                        "Legacy WhatsApp reminder template is not allowed. "
+                        "Template must reference meta_approved_templates via meta_template_id."
                     )
 
-                    meta_template = meta_res.data
-                    if not meta_template:
-                        raise Exception(
-                            f"Meta approved template not found: {template_name}"
-                        )
+                template_name = template.get("template_name")
+                if not template_name:
+                    raise Exception("Template missing template_name")
 
-                    expected_params = meta_template["parameter_count"]
-                    language_code = meta_template["language"]
-                    locale_code = language_code
+                meta_res = (
+                    supabase
+                    .table("meta_approved_templates")
+                    .select("parameter_count, language, is_active")
+                    .eq("id", meta_template_id)
+                    .eq("is_active", True)
+                    .single()
+                    .execute()
+                )
 
-                    raw_user_name = appointment.get("user_name") or "Cliente"
-                    raw_type = appointment.get("appointment_type") or ""
-                    raw_time = appointment.get("scheduled_time")
-
-                    user_name = raw_user_name.strip() or "Cliente"
-
-                    details_parts = []
-
-                    if raw_type.strip():
-                        details_parts.append(raw_type.strip())
-
-                    if raw_time:
-                        formatted_time = format_scheduled_time(
-                            raw_time,
-                            client_id,
-                            locale_code,
-                        )
-                        if formatted_time.strip():
-                            details_parts.append(formatted_time)
-
-                    appointment_details = " - ".join(details_parts).strip()
-                    if not appointment_details:
-                        appointment_details = "Cita programada"
-
-                    parameters = build_reminder_parameters(
-                        expected_params,
-                        user_name=user_name,
-                        company_name=get_client_company_name(client_id),
-                        appointment_details=appointment_details,
-                        appointment_type=raw_type,
+                meta_template = meta_res.data
+                if not meta_template:
+                    raise Exception(
+                        "Meta approved template metadata not found: "
+                        f"template_name={template_name}, meta_template_id={meta_template_id}"
                     )
 
-                    if expected_params != len(parameters):
-                        raise Exception(
-                            f"Parameter count mismatch | expected={expected_params} | got={len(parameters)}"
-                        )
+                expected_params = meta_template["parameter_count"]
+                language_code = meta_template["language"]
+                locale_code = language_code
 
-                    logger.info(
-                        "📤 Sending META TEMPLATE | reminder_id=%s | template=%s | params=%s",
-                        reminder_id,
-                        template_name,
-                        parameters,
+                raw_user_name = appointment.get("user_name") or "Cliente"
+                raw_type = appointment.get("appointment_type") or ""
+                raw_time = appointment.get("scheduled_time")
+
+                user_name = raw_user_name.strip() or "Cliente"
+
+                details_parts = []
+
+                if raw_type.strip():
+                    details_parts.append(raw_type.strip())
+
+                if raw_time:
+                    formatted_time = format_scheduled_time(
+                        raw_time,
+                        client_id,
+                        locale_code,
+                    )
+                    if formatted_time.strip():
+                        details_parts.append(formatted_time)
+
+                appointment_details = " - ".join(details_parts).strip()
+                if not appointment_details:
+                    appointment_details = "Cita programada"
+
+                parameters = build_reminder_parameters(
+                    expected_params,
+                    user_name=user_name,
+                    company_name=get_client_company_name(client_id),
+                    appointment_details=appointment_details,
+                    appointment_type=raw_type,
+                )
+
+                if expected_params != len(parameters):
+                    raise Exception(
+                        f"Parameter count mismatch | expected={expected_params} | got={len(parameters)}"
                     )
 
-                    send_result = await send_whatsapp_template_for_client(
-                        client_id=client_id,
-                        to_number=phone,
-                        template_name=template_name,
-                        language_code=language_code,
-                        parameters=parameters,
-                        purpose="reminder",
-                        recipient_email=appointment.get("user_email"),
-                        policy_source="appointments_execute_reminders",
-                        policy_source_id=reminder_id,
-                    )
-                    send_ok = bool(send_result and send_result.get("success"))
-                    if not send_ok:
-                        raise Exception(
-                            f"Meta template send failed: {(send_result or {}).get('error', 'unknown error')}"
-                        )
+                logger.info(
+                    "📤 Sending META TEMPLATE | reminder_id=%s | template=%s | params=%s",
+                    reminder_id,
+                    template_name,
+                    parameters,
+                )
 
-                # =====================================================
-                # TEXT FALLBACK
-                # =====================================================
-                else:
-
-                    body = template.get("body")
-                    if not body:
-                        raise Exception("Text template missing body")
-
-                    settings_res = (
-                        supabase
-                        .table("client_settings")
-                        .select("language")
-                        .eq("client_id", client_id)
-                        .single()
-                        .execute()
-                    )
-
-                    client_language = settings_res.data.get("language", "es")
-                    locale_code = LANGUAGE_MAP.get(client_language, "es_MX")
-
-                    message_body = render_template(body, appointment, locale_code)
-
-                    logger.info(
-                        "📤 Sending TEXT fallback | reminder_id=%s",
-                        reminder_id,
-                    )
-
-                    send_ok = await send_whatsapp_message_for_client(
-                        client_id=client_id,
-                        to_number=phone,
-                        message=message_body,
-                        purpose="reminder",
-                        recipient_email=appointment.get("user_email"),
-                        policy_source="appointments_execute_reminders",
-                        policy_source_id=reminder_id,
+                send_result = await send_whatsapp_template_for_client(
+                    client_id=client_id,
+                    to_number=phone,
+                    template_name=template_name,
+                    language_code=language_code,
+                    parameters=parameters,
+                    purpose="reminder",
+                    recipient_email=appointment.get("user_email"),
+                    policy_source="appointments_execute_reminders",
+                    policy_source_id=reminder_id,
+                )
+                send_ok = bool(send_result and send_result.get("success"))
+                if not send_ok:
+                    raise Exception(
+                        f"Meta template send failed: {(send_result or {}).get('error', 'unknown error')}"
                     )
 
             # =====================================================

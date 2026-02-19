@@ -82,6 +82,12 @@ async def make_update_status(data: MakeUpdateStatus, request: Request):
                 channel = tpl["channel"]
                 frequency = tpl.get("frequency")
 
+                if channel == "whatsapp" and not tpl.get("meta_template_id"):
+                    print(
+                        f"⚠️ Skipping legacy WhatsApp template without canonical meta_template_id: {tpl['id']}"
+                    )
+                    continue
+
                 # ⚠️ Mejora: template sin frecuencia definida
                 if not frequency:
                     print(

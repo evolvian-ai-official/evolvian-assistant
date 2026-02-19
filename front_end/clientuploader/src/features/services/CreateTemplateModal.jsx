@@ -60,24 +60,19 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
   const { t } = useLanguage();
   const API = import.meta.env.VITE_API_URL;
 
-  const [channel, setChannel] = useState("whatsapp");
   const [type, setType] = useState("appointment_reminder");
-
   const [templateTypes, setTemplateTypes] = useState([]);
-  const [metaTemplates, setMetaTemplates] = useState([]);
-  const [selectedMetaTemplateId, setSelectedMetaTemplateId] = useState("");
-
   const [label, setLabel] = useState("");
   const [body, setBody] = useState("");
   const [includeFooterImage, setIncludeFooterImage] = useState(false);
   const [footerImageFile, setFooterImageFile] = useState(null);
   const [footerImageName, setFooterImageName] = useState("");
-
   const [reminders, setReminders] = useState([{ value: 1, unit: "hours" }]);
   const [loading, setLoading] = useState(false);
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth < 768 : false
   );
+
   const subjectInputRef = useRef(null);
   const bodyTextareaRef = useRef(null);
 
@@ -94,7 +89,6 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
       .then((data) => {
         const types = data || [];
         setTemplateTypes(types);
-
         const exists = types.some((tplType) => tplType.id === type);
         if (!exists && types.length > 0) {
           setType(types[0].id);
@@ -102,30 +96,6 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
       })
       .catch(() => setTemplateTypes([]));
   }, []);
-
-  useEffect(() => {
-    if (channel !== "whatsapp") {
-      setMetaTemplates([]);
-      return;
-    }
-
-    setSelectedMetaTemplateId("");
-
-    authFetch(`${API}/meta_approved_templates?type=${type}&channel=${channel}`)
-      .then((r) => r.json())
-      .then((data) => setMetaTemplates(data || []))
-      .catch(() => setMetaTemplates([]));
-  }, [type, channel]);
-
-  useEffect(() => {
-    if (channel !== "email") {
-      setIncludeFooterImage(false);
-      setFooterImageFile(null);
-      setFooterImageName("");
-    }
-  }, [channel]);
-
-  const selectedTemplate = metaTemplates.find((tpl) => tpl.id === selectedMetaTemplateId);
 
   const addReminder = () => setReminders([...reminders, { value: 1, unit: "hours" }]);
 
@@ -161,17 +131,12 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
       return;
     }
 
-    if (channel === "whatsapp" && !selectedMetaTemplateId) {
-      alert(t("template_select_meta"));
-      return;
-    }
-
-    if (channel === "email" && !body.trim()) {
+    if (!body.trim()) {
       alert(t("template_message_required"));
       return;
     }
 
-    if (channel === "email" && includeFooterImage && !footerImageFile) {
+    if (includeFooterImage && !footerImageFile) {
       alert("Select an image for the footer or disable the footer image option.");
       return;
     }
@@ -186,41 +151,37 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
 
     const payload = {
       client_id: clientId,
-      channel,
+      channel: "email",
       type,
       label: label || null,
       ...(frequency ? { frequency } : {}),
     };
 
-    if (channel === "whatsapp") {
-      payload.meta_template_id = selectedMetaTemplateId;
-    } else {
-      let finalBody = body.trim();
-      if (includeFooterImage && footerImageFile) {
-        const formData = new FormData();
-        formData.append("client_id", clientId);
-        formData.append("file", footerImageFile);
+    let finalBody = body.trim();
+    if (includeFooterImage && footerImageFile) {
+      const formData = new FormData();
+      formData.append("client_id", clientId);
+      formData.append("file", footerImageFile);
 
-        const uploadRes = await authFetch(`${API}/message_templates/footer_image`, {
-          method: "POST",
-          body: formData,
-        });
+      const uploadRes = await authFetch(`${API}/message_templates/footer_image`, {
+        method: "POST",
+        body: formData,
+      });
 
-        if (!uploadRes.ok) {
-          const text = await uploadRes.text();
-          throw new Error(text || "Footer image upload failed");
-        }
-
-        const uploadData = await uploadRes.json();
-        const footerImageUrl = uploadData?.url;
-        if (!footerImageUrl) {
-          throw new Error("Footer image URL not returned");
-        }
-
-        finalBody = appendFooterImageToBody(finalBody, footerImageUrl);
+      if (!uploadRes.ok) {
+        const text = await uploadRes.text();
+        throw new Error(text || "Footer image upload failed");
       }
-      payload.body = finalBody;
+
+      const uploadData = await uploadRes.json();
+      const footerImageUrl = uploadData?.url;
+      if (!footerImageUrl) {
+        throw new Error("Footer image URL not returned");
+      }
+
+      finalBody = appendFooterImageToBody(finalBody, footerImageUrl);
     }
+    payload.body = finalBody;
 
     try {
       setLoading(true);
@@ -269,15 +230,24 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
           overflowY: "auto",
         }}
       >
-        <h2 style={{ color: "#274472", marginTop: 0 }}>{t("template_create_title")}</h2>
+        <h2 style={{ color: "#274472", marginTop: 0 }}>Create Email Template</h2>
 
-        <label className="ia-form-label">{t("channel")}</label>
-        <select value={channel} onChange={(e) => setChannel(e.target.value)} className="ia-form-input">
-          <option value="whatsapp">WhatsApp</option>
-          <option value="email">Email</option>
-        </select>
+        <div
+          style={{
+            marginTop: "0.3rem",
+            marginBottom: "0.7rem",
+            padding: "0.55rem 0.65rem",
+            border: "1px solid #E6EEF8",
+            borderRadius: "8px",
+            backgroundColor: "#F8FBFF",
+            color: "#466286",
+            fontSize: "0.82rem",
+          }}
+        >
+          WhatsApp templates are managed by Meta sync and appear automatically in the list.
+        </div>
 
-        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("type")}</label>
+        <label className="ia-form-label">{t("type")}</label>
         <select value={type} onChange={(e) => setType(e.target.value)} className="ia-form-input">
           {templateTypes.map((tplType) => (
             <option key={tplType.id} value={tplType.id}>
@@ -286,128 +256,80 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
           ))}
         </select>
 
-        {channel === "whatsapp" && (
-          <>
-            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Meta template</label>
-            <select
-              value={selectedMetaTemplateId}
-              onChange={(e) => setSelectedMetaTemplateId(e.target.value)}
-              className="ia-form-input"
+        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Subject</label>
+        <input
+          ref={subjectInputRef}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          className="ia-form-input"
+          placeholder="e.g. Confirmación para {{user_name}}"
+        />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
+          {EMAIL_VARIABLES.map((variable) => (
+            <button
+              key={`subject-${variable.token}`}
+              type="button"
+              className="ia-button ia-button-ghost"
+              onClick={() =>
+                insertTokenAtCursor(label, setLabel, subjectInputRef, variable.token)
+              }
+              style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
             >
-              <option value="">{t("template_select_placeholder")}</option>
-              {metaTemplates.map((tpl) => (
-                <option key={tpl.id} value={tpl.id}>
-                  {tpl.template_name || t("template")}
-                </option>
-              ))}
-            </select>
+              {variable.label}
+            </button>
+          ))}
+        </div>
 
-            {selectedTemplate && (
-              <div
-                style={{
-                  marginTop: "0.6rem",
-                  padding: "0.75rem",
-                  backgroundColor: "#f7f7f7",
-                  borderRadius: "6px",
-                  fontSize: "0.85rem",
-                  border: "1px solid #EDEDED",
-                }}
-              >
-                <strong>{t("preview")}:</strong>
-                <p style={{ marginTop: "0.5rem", marginBottom: "0.4rem" }}>{selectedTemplate.preview_body}</p>
-                <small>
-                  {t("parameters_required")}: {selectedTemplate.parameter_count}
-                </small>
+        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Message body</label>
+        <textarea
+          ref={bodyTextareaRef}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={4}
+          className="ia-form-input"
+          style={{ resize: "vertical" }}
+          placeholder="Hola {{user_name}}, tu cita en {{company_name}} es el {{appointment_date}}."
+        />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
+          {EMAIL_VARIABLES.map((variable) => (
+            <button
+              key={`body-${variable.token}`}
+              type="button"
+              className="ia-button ia-button-ghost"
+              onClick={() =>
+                insertTokenAtCursor(body, setBody, bodyTextareaRef, variable.token)
+              }
+              style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
+            >
+              {variable.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="ia-form-label" style={{ marginTop: "0.7rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={includeFooterImage}
+            onChange={(e) => {
+              setIncludeFooterImage(e.target.checked);
+              if (!e.target.checked) {
+                setFooterImageFile(null);
+                setFooterImageName("");
+              }
+            }}
+          />
+          Add company image in footer (optional)
+        </label>
+
+        {includeFooterImage && (
+          <div style={{ marginTop: "0.3rem" }}>
+            <input type="file" accept="image/*" onChange={handleFooterImageChange} />
+            {footerImageName && (
+              <div style={{ fontSize: "0.78rem", color: "#5f6b7a", marginTop: "0.25rem" }}>
+                Selected: {footerImageName}
               </div>
             )}
-          </>
-        )}
-
-        {channel !== "email" && (
-          <>
-            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("label_optional")}</label>
-            <input value={label} onChange={(e) => setLabel(e.target.value)} className="ia-form-input" />
-          </>
-        )}
-
-        {channel === "email" && (
-          <>
-            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Subject</label>
-            <input
-              ref={subjectInputRef}
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              className="ia-form-input"
-              placeholder="e.g. Confirmación para {{user_name}}"
-            />
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
-              {EMAIL_VARIABLES.map((variable) => (
-                <button
-                  key={`subject-${variable.token}`}
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  onClick={() =>
-                    insertTokenAtCursor(label, setLabel, subjectInputRef, variable.token)
-                  }
-                  style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
-                >
-                  {variable.label}
-                </button>
-              ))}
-            </div>
-
-            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Message body</label>
-            <textarea
-              ref={bodyTextareaRef}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={4}
-              className="ia-form-input"
-              style={{ resize: "vertical" }}
-              placeholder="Hola {{user_name}}, tu cita en {{company_name}} es el {{appointment_date}}."
-            />
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
-              {EMAIL_VARIABLES.map((variable) => (
-                <button
-                  key={`body-${variable.token}`}
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  onClick={() =>
-                    insertTokenAtCursor(body, setBody, bodyTextareaRef, variable.token)
-                  }
-                  style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
-                >
-                  {variable.label}
-                </button>
-              ))}
-            </div>
-
-            <label className="ia-form-label" style={{ marginTop: "0.7rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <input
-                type="checkbox"
-                checked={includeFooterImage}
-                onChange={(e) => {
-                  setIncludeFooterImage(e.target.checked);
-                  if (!e.target.checked) {
-                    setFooterImageFile(null);
-                    setFooterImageName("");
-                  }
-                }}
-              />
-              Add company image in footer (optional)
-            </label>
-
-            {includeFooterImage && (
-              <div style={{ marginTop: "0.3rem" }}>
-                <input type="file" accept="image/*" onChange={handleFooterImageChange} />
-                {footerImageName && (
-                  <div style={{ fontSize: "0.78rem", color: "#5f6b7a", marginTop: "0.25rem" }}>
-                    Selected: {footerImageName}
-                  </div>
-                )}
-              </div>
-            )}
-          </>
+          </div>
         )}
 
         {type === "appointment_reminder" && (
@@ -470,7 +392,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
             {t("cancel")}
           </button>
           <button type="button" onClick={handleSubmit} disabled={loading} className="ia-button ia-button-primary">
-            {loading ? t("saving") : t("create")}
+            {loading ? t("saving") : "Create Email Template"}
           </button>
         </div>
       </div>

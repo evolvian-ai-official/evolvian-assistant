@@ -226,6 +226,11 @@ export default function TemplatesUpdateDelete({
   };
 
   const handleDelete = async () => {
+    if (isWhatsApp) {
+      alert("WhatsApp templates are managed by Meta sync and cannot be deleted here.");
+      return;
+    }
+
     const confirmDelete = window.confirm(t("template_delete_confirm"));
     if (!confirmDelete) return;
 
@@ -241,11 +246,26 @@ export default function TemplatesUpdateDelete({
         throw new Error(txt || "Delete failed");
       }
 
-      onSuccess?.();
+      let deletedPayload = null;
+      try {
+        deletedPayload = await res.json();
+      } catch {
+        deletedPayload = null;
+      }
+
+      onSuccess?.({
+        action: "deactivated",
+        templateId: initialData.id,
+        template: deletedPayload?.template || null,
+      });
       onClose();
     } catch (err) {
       console.error(err);
-      alert(t("template_delete_failed"));
+      const detail =
+        err instanceof Error && err.message
+          ? err.message
+          : t("template_delete_failed");
+      alert(`${t("template_delete_failed")}: ${detail}`);
     } finally {
       setLoading(false);
     }
@@ -454,9 +474,20 @@ export default function TemplatesUpdateDelete({
             flexDirection: isMobile ? "column-reverse" : "row",
           }}
         >
-          <button type="button" onClick={handleDelete} className="ia-button" style={{ marginRight: "auto", color: "#D9534F", background: "#fff", border: "1px solid #f4c5c0" }}>
-            🗑 {t("delete_template")}
-          </button>
+          {!isWhatsApp ? (
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="ia-button"
+              style={{ marginRight: "auto", color: "#D9534F", background: "#fff", border: "1px solid #f4c5c0" }}
+            >
+              🗑 {t("delete_template")}
+            </button>
+          ) : (
+            <small style={{ marginRight: "auto", color: "#667085", alignSelf: "center" }}>
+              Managed by Meta sync
+            </small>
+          )}
 
           <button type="button" onClick={onClose} className="ia-button ia-button-ghost">
             {t("cancel")}
