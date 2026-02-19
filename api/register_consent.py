@@ -2,9 +2,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+import logging
 from api.modules.assistant_rag.supabase_client import supabase
+from api.security.request_limiter import enforce_rate_limit, get_request_ip
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ===============================================
 # 📋 Modelo de entrada (corregido)
@@ -23,9 +26,15 @@ class ConsentInput(BaseModel):
 # ===============================================
 @router.post("/register_consent")
 async def register_consent(data: ConsentInput, request: Request):
-    print("📦 Payload recibido en /register_consent:", data.dict())
-
     try:
+        request_ip = get_request_ip(request)
+        enforce_rate_limit(
+            scope="register_consent_ip",
+            key=f"{data.public_client_id}:{request_ip}",
+            limit=30,
+            window_seconds=60,
+        )
+
         # 🧠 Buscar el cliente por public_client_id
         client_res = (
             supabase.table("clients")
@@ -50,26 +59,26 @@ async def register_consent(data: ConsentInput, request: Request):
             "phone": phone_value,
             "accepted_terms": bool(data.accepted_terms),
             "accepted_email_marketing": bool(data.accepted_email_marketing),
-            "consent_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-            "ip_address": request.client.host,
+            "consent_at": datetime.utcnow().isoformat(),
+            "ip_address": request.client.host if request.client else None,
             "user_agent": data.user_agent or request.headers.get("user-agent"),
         }
-
-        print("🧾 Payload final a insertar:", payload)
 
         # 💾 Insertar (o upsert opcional)
         result = supabase.table("widget_consents").insert(payload).execute()
 
         if not result or not result.data:
-            print("❌ Error Supabase insert:", result.error if result else "sin respuesta")
             raise HTTPException(status_code=500, detail="Failed to register consent")
 
-        print("✅ Consentimiento registrado correctamente:", result.data)
-        return {"message": "Consent registered successfully", "client_id": client_id}
+        consent_row = result.data[0] if isinstance(result.data, list) and result.data else {}
+        return {
+            "message": "Consent registered successfully",
+            "client_id": client_id,
+            "consent_token": consent_row.get("id"),
+        }
 
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        print(f"❌ Error en /register_consent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error en /register_consent")
+        raise HTTPException(status_code=500, detail="Failed to register consent")

@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 
 VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolvian2025")
 if VERIFY_TOKEN == "evolvian2025":
-    logger.warning("⚠️ Using default META_WHATSAPP_VERIFY_TOKEN. Configure env var in production.")
+    VERIFY_TOKEN = ""
+if not VERIFY_TOKEN:
+    logger.error("META_WHATSAPP_VERIFY_TOKEN is not configured.")
 
 CANCEL_KEYWORDS = ("cancelar", "cancel", "anular", "cancelacion", "cancelación")
 
@@ -225,12 +227,15 @@ def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) -> tuple
 # -------------------------------------------------------------------
 @router.get("/webhook")
 async def verify_webhook(request: Request):
+    if not VERIFY_TOKEN:
+        raise HTTPException(status_code=503, detail="Webhook verify token is not configured")
+
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
     if mode == "subscribe" and token == VERIFY_TOKEN:
-        print("✅ WhatsApp Webhook Verified")
+        logger.info("WhatsApp webhook verified")
         return int(challenge)
 
     raise HTTPException(status_code=403, detail="Verification failed")
@@ -244,7 +249,7 @@ async def incoming_message(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    print("🚀🚀🚀 WHATSAPP WEBHOOK HIT 🚀🚀🚀")
+    logger.info("Incoming WhatsApp webhook")
 
     try:
         raw_body = await request.body()
@@ -262,7 +267,7 @@ async def incoming_message(
     except Exception as e:
         # ⚠️ JAMÁS devolver 4xx/5xx a Meta por errores internos
         # o entrará en retry infinito
-        print("❌ WhatsApp webhook parse error:", str(e))
+        logger.exception("WhatsApp webhook parse error")
         return {"received": True}
 
 
@@ -279,7 +284,7 @@ async def process_whatsapp_payload(payload: dict):
         # 🛑 Ignorar callbacks de estado (sent, delivered, read)
         # -------------------------------------------------------------
         if "statuses" in value:
-            print("ℹ️ Status callback ignored")
+            logger.info("WhatsApp status callback ignored")
             return
 
         messages = value.get("messages")
@@ -306,14 +311,12 @@ async def process_whatsapp_payload(payload: dict):
             if not wa_message_id or not from_number or not user_text:
                 continue
 
-            print(f"📩 Incoming WA message [{message_type}]:", wa_message_id, user_text)
-
             # ---------------------------------------------------------
             # Resolver canal / cliente (MULTITENANT)
             # ---------------------------------------------------------
             channel = get_channel_by_wa_phone_id(phone_number_id)
             if not channel:
-                print("⚠️ Unknown channel")
+                logger.warning("Unknown WhatsApp channel for phone_number_id=%s", phone_number_id)
                 continue
 
             client_id = channel.get("client_id")

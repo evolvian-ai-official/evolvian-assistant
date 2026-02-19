@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse
 from datetime import datetime
 import re
@@ -9,6 +9,8 @@ from api.modules.assistant_rag.rag_pipeline import ask_question
 from api.modules.assistant_rag.supabase_client import supabase, save_history
 from api.modules.calendar.google_calendar import get_availability_from_google_calendar
 from api.modules.calendar_logic import save_appointment_if_valid
+from api.authz import authorize_client_request
+from api.internal_auth import has_valid_internal_token
 
 router = APIRouter()
 
@@ -41,6 +43,7 @@ def is_availability_request(text: str) -> bool:
 
 @router.post("/ask")
 async def ask(
+    request: Request,
     question: str = Form(...),
     client_id: str = Form(...),
     session_id: str = Form(None),
@@ -58,6 +61,9 @@ async def ask(
     """
 
     try:
+        if not has_valid_internal_token(request):
+            authorize_client_request(request, client_id)
+
         logging.info(
             f"❓ Pregunta recibida | client={client_id} | channel={channel} | text='{question}'"
         )

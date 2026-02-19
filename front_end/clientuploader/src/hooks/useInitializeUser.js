@@ -54,7 +54,10 @@ export function useInitializeUser() {
       try {
         const res = await fetch(`${API_URL}/initialize_user`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${currentSession.access_token}`,
+          },
           body: JSON.stringify({
             auth_user_id: currentSession.user.id,
             email: currentSession.user.email,

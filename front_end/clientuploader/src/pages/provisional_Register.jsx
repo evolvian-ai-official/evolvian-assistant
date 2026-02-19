@@ -36,11 +36,18 @@ export default function Register() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setStatus("✅ Cuenta creada. Revisa tu correo para confirmar tu cuenta.");
+        return;
+      }
 
       // Llama a /initialize_user
       await fetch(`${import.meta.env.VITE_API_URL}/initialize_user`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
           auth_user_id: session.user.id,
           email: session.user.email,

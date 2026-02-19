@@ -23,11 +23,14 @@ export default function Login() {
     checkSession();
   }, [navigate]);
 
-  const initializeUser = async (user) => {
+  const initializeUser = async (user, accessToken) => {
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/initialize_user`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({
           auth_user_id: user.id,
           email: user.email,
@@ -60,7 +63,7 @@ export default function Login() {
       return;
     }
 
-    await initializeUser(data.session.user);
+    await initializeUser(data.session.user, data.session.access_token);
   };
 
   const handleGoogleLogin = async () => {

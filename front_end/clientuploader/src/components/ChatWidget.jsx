@@ -14,6 +14,9 @@ const generateSessionId = () => {
   return `sid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const consentStorageKey = (publicClientId) =>
+  `evolvian_widget_consent_token:${publicClientId}`;
+
 const withAlpha = (color, alpha) => {
   if (!color) return `rgba(17, 24, 39, ${alpha})`;
 
@@ -199,14 +202,40 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     const checkConsentStatus = async () => {
       if (!publicClientId) return;
       try {
+        let consentToken = null;
+        try {
+          consentToken = localStorage.getItem(consentStorageKey(publicClientId));
+        } catch {
+          consentToken = null;
+        }
+
         const apiUrl =
           window.location.hostname === "localhost"
             ? "http://localhost:8001"
             : "https://evolvian-assistant.onrender.com";
 
-        const res = await fetch(`${apiUrl}/check_consent?public_client_id=${publicClientId}`);
+        const params = new URLSearchParams({ public_client_id: publicClientId });
+        if (consentToken) {
+          params.set("consent_token", consentToken);
+        }
+
+        const res = await fetch(`${apiUrl}/check_consent?${params.toString()}`);
         const data = await res.json();
         setHasConsent(!!data.valid);
+
+        if (data?.consent_token) {
+          try {
+            localStorage.setItem(consentStorageKey(publicClientId), data.consent_token);
+          } catch {
+            // ignore storage failures in embedded contexts
+          }
+        } else if (!data?.valid && consentToken) {
+          try {
+            localStorage.removeItem(consentStorageKey(publicClientId));
+          } catch {
+            // ignore storage failures
+          }
+        }
       } catch {
         setHasConsent(false);
       } finally {

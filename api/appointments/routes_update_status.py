@@ -1,20 +1,25 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from api.modules.assistant_rag.supabase_client import supabase
 from datetime import datetime, timedelta, timezone
+from api.authz import authorize_client_request
+from api.internal_auth import has_valid_internal_token
 
 router = APIRouter()
 
 class MakeUpdateStatus(BaseModel):
+    client_id: str
     appointment_id: str
     status: str
     notes: str | None = None
 
 
 @router.patch("/make_update_status")
-async def make_update_status(data: MakeUpdateStatus):
+async def make_update_status(data: MakeUpdateStatus, request: Request):
     try:
         now_utc = datetime.now(timezone.utc)
+        if not has_valid_internal_token(request):
+            authorize_client_request(request, data.client_id)
 
         # -------------------------------------------------
         # 1️⃣ Update appointment status
@@ -27,6 +32,7 @@ async def make_update_status(data: MakeUpdateStatus):
                 "updated_at": now_utc.isoformat()
             })
             .eq("id", data.appointment_id)
+            .eq("client_id", data.client_id)
             .execute()
         )
 

@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from typing import Optional, List
 import uuid
 import logging
 
 from api.config.config import supabase
+from api.authz import authorize_client_request
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class MessageTemplateResponse(BaseModel):
 # =========================
 @router.get("", response_model=List[MessageTemplateResponse])
 def get_message_templates(
+    request: Request,
     client_id: uuid.UUID = Query(..., description="Client ID"),
     type: Optional[str] = Query(
         None,
@@ -69,6 +71,7 @@ def get_message_templates(
     """
 
     try:
+        authorize_client_request(request, str(client_id))
 
         # --------------------------
         # 1️⃣ Fetch message templates

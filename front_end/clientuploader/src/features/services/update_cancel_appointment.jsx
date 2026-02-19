@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { authFetch } from "../../lib/authFetch";
 
 /* 🌐 API ENV */
 const API_BASE_URL =
@@ -107,7 +108,7 @@ export default function UpdateCancelAppointmentModal({
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/appointments/cancel`, {
+      const res = await authFetch(`${API_BASE_URL}/appointments/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

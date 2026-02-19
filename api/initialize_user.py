@@ -1,18 +1,21 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import random
 import string
+import logging
 from api.modules.assistant_rag.supabase_client import (
     get_or_create_user,
     get_or_create_client_id,
     supabase,
 )
+from api.authz import get_current_user_id
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class InitUserPayload(BaseModel):
-    auth_user_id: str
+    auth_user_id: str | None = None
     email: str
 
 def generate_unique_public_client_id(length=12):
@@ -23,10 +26,7 @@ def generate_unique_public_client_id(length=12):
         candidate = ''.join(random.choice(chars) for _ in range(length))
         existing = supabase.table("clients").select("id").eq("public_client_id", candidate).maybe_single().execute()
         if not existing or not existing.data:
-            print(f"🆕 public_client_id único generado en intento {attempt+1}: {candidate}")
             return candidate
-        else:
-            print(f"⚠️ Intento {attempt+1}: public_client_id {candidate} ya existe")
     raise Exception("❌ No se pudo generar un public_client_id único después de varios intentos.")
 
 
@@ -70,30 +70,25 @@ def log_signup_event_once(client_id: str, auth_user_id: str, email: str):
     }).execute()
 
 @router.post("/initialize_user")
-def initialize_user(payload: InitUserPayload):
+def initialize_user(payload: InitUserPayload, request: Request):
     try:
-        print("🚀 initialize_user ejecutándose...")
-        print(f"🔵 auth_user_id={payload.auth_user_id}, email={payload.email}")
+        auth_user_id = get_current_user_id(request)
+        if payload.auth_user_id and payload.auth_user_id != auth_user_id:
+            raise HTTPException(status_code=403, detail="forbidden_user_mismatch")
 
         # Crear o recuperar usuario
-        user_id = get_or_create_user(payload.auth_user_id, payload.email)
-        print(f"✅ User ID: {user_id}")
+        user_id = get_or_create_user(auth_user_id, payload.email)
 
         # Crear o recuperar cliente
         client_id = get_or_create_client_id(user_id, payload.email)
-        print(f"✅ Client ID: {client_id}")
 
         # Revisar public_client_id
         client_response = supabase.table("clients").select("public_client_id").eq("id", client_id).maybe_single().execute()
         public_client_id = client_response.data.get("public_client_id") if client_response and client_response.data else None
 
-        if public_client_id:
-            print(f"🔎 Public client ID existente: {public_client_id}")
-        else:
-            print("⚠️ No existe public_client_id, generando uno nuevo...")
+        if not public_client_id:
             public_client_id = generate_unique_public_client_id()
             supabase.table("clients").update({"public_client_id": public_client_id}).eq("id", client_id).execute()
-            print(f"🆕 Public client ID generado: {public_client_id}")
 
         # Verificar configuración del cliente
         try:
@@ -104,7 +99,6 @@ def initialize_user(payload: InitUserPayload):
                 .execute()
 
             if not settings_res or settings_res.data == {}:
-                print("⚠️ Configuración no encontrada, insertando plan 'free'")
                 supabase.table("client_settings").insert({
                     "client_id": client_id,
                     "assistant_name": "Evolvian",
@@ -115,16 +109,15 @@ def initialize_user(payload: InitUserPayload):
                 }).execute()
             else:
                 current_plan = settings_res.data.get("plan_id")
-                print(f"✅ Configuración encontrada: plan={current_plan}")
                 if not current_plan:
                     supabase.table("client_settings").update({"plan_id": "free"}).eq("client_id", client_id).execute()
 
-        except Exception as e:
-            print(f"❌ Error verificando client_settings: {e}")
+        except Exception:
+            logger.exception("Error verificando client_settings")
             raise HTTPException(status_code=500, detail="client_settings_error")
 
         # Verificar si es nuevo usuario
-        user_record = supabase.table("users").select("created_at, is_new_user").eq("id", payload.auth_user_id).maybe_single().execute()
+        user_record = supabase.table("users").select("created_at, is_new_user").eq("id", auth_user_id).maybe_single().execute()
         if not user_record or not user_record.data:
             raise Exception("No se encontró el usuario en tabla 'users'")
 
@@ -138,14 +131,14 @@ def initialize_user(payload: InitUserPayload):
 
         if now - created_at < timedelta(minutes=5):
             if not is_new_user:
-                supabase.table("users").update({"is_new_user": True}).eq("id", payload.auth_user_id).execute()
+                supabase.table("users").update({"is_new_user": True}).eq("id", auth_user_id).execute()
             is_new_user = True
 
         # 📈 Evento de embudo (signup) idempotente por cliente
         try:
-            log_signup_event_once(client_id, payload.auth_user_id, payload.email)
-        except Exception as event_err:
-            print(f"⚠️ No se pudo registrar Funnel_Signup_Completed: {event_err}")
+            log_signup_event_once(client_id, auth_user_id, payload.email)
+        except Exception:
+            logger.exception("No se pudo registrar Funnel_Signup_Completed")
 
         # Crear fila en client_usage si no existe
         usage_res = supabase.table("client_usage").select("client_id").eq("client_id", client_id).limit(1).execute()
@@ -156,7 +149,6 @@ def initialize_user(payload: InitUserPayload):
                 "documents_uploaded": 0,
                 "last_used_at": datetime.utcnow().isoformat()
             }).execute()
-            print(f"📈 Uso inicial creado para client_id: {client_id}")
 
         result = {
             "user_id": user_id,
@@ -164,9 +156,10 @@ def initialize_user(payload: InitUserPayload):
             "public_client_id": public_client_id,
             "is_new_user": is_new_user
         }
-        print(f"✅ initialize_user response: {result}")
         return result
 
-    except Exception as e:
-        print(f"❌ Error en /initialize_user: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error en /initialize_user")
+        raise HTTPException(status_code=500, detail="initialize_user_failed")

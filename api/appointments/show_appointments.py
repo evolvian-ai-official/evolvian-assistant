@@ -1,11 +1,12 @@
 # api/appointments/show_appointments.py
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from uuid import UUID
 import logging
 from datetime import datetime
 
 from api.config.config import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter(
     prefix="/appointments",
@@ -29,8 +30,9 @@ def _is_valid_datetime(value) -> bool:
         return False
 
 
-@router.get("/show")  # ⬅️ ESTO es lo que te está faltando
+@router.get("/show")
 def show_appointments(
+    request: Request,
     client_id: UUID = Query(..., description="Client ID")
 ):
     """
@@ -38,6 +40,8 @@ def show_appointments(
     """
 
     try:
+        authorize_client_request(request, str(client_id))
+
         response = (
             supabase
             .table("appointments")
@@ -61,7 +65,9 @@ def show_appointments(
 
         return clean_rows
 
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("Failed to fetch appointments")
         raise HTTPException(
             status_code=500,

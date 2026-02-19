@@ -2,8 +2,9 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from api.modules.assistant_rag.supabase_client import supabase  # ✅ import corregido
+from api.authz import authorize_client_request
 
 router = APIRouter()
 
@@ -14,12 +15,13 @@ class AcceptTermsPayload(BaseModel):
 
 # 🧭 GET — Verificar si el cliente ya aceptó los términos
 @router.get("/accepted_terms")
-def check_accepted_terms(client_id: str = Query(...)):
+def check_accepted_terms(request: Request, client_id: str = Query(...)):
     """
     Checks if the client has accepted the Terms & Conditions.
     Returns acceptance status, date, and version.
     """
     try:
+        authorize_client_request(request, client_id)
         response = (
             supabase.table("client_terms_acceptance")
             .select("client_id, accepted_at, version, accepted")
@@ -43,7 +45,6 @@ def check_accepted_terms(client_id: str = Query(...)):
                 days_since = (datetime.now(timezone.utc) - accepted_dt).days
 
                 if days_since >= 30:
-                    print(f"⚠️ Terms expired ({days_since} days old).")
                     return JSONResponse(
                         content={
                             "has_accepted": False,
@@ -53,7 +54,13 @@ def check_accepted_terms(client_id: str = Query(...)):
                         }
                     )
             except Exception:
-                print("⚠️ Invalid accepted_at format:", accepted_at)
+                return JSONResponse(
+                    content={
+                        "has_accepted": False,
+                        "reason": "invalid_timestamp",
+                        "version": version,
+                    }
+                )
 
         return JSONResponse(
             content={
@@ -63,8 +70,9 @@ def check_accepted_terms(client_id: str = Query(...)):
             }
         )
 
-    except Exception as e:
-        print("❌ Error checking T&C:", e)
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=500, detail="Error checking T&C")
 
 
@@ -76,6 +84,7 @@ async def accept_terms(payload: AcceptTermsPayload, request: Request):
     Stores timestamp, IP, and User-Agent for audit tracking.
     """
     try:
+        authorize_client_request(request, payload.client_id)
         now = datetime.now(timezone.utc).isoformat()
 
         ip = request.client.host if request.client else None
@@ -98,7 +107,6 @@ async def accept_terms(payload: AcceptTermsPayload, request: Request):
         )
 
         if response.data:
-            print(f"✅ Terms accepted by client {payload.client_id} ({ip})")
             return JSONResponse(
                 content={
                     "message": "✅ Terms accepted successfully",
@@ -108,19 +116,21 @@ async def accept_terms(payload: AcceptTermsPayload, request: Request):
 
         raise HTTPException(status_code=500, detail="Failed to save acceptance")
 
-    except Exception as e:
-        print("❌ Error saving T&C acceptance:", e)
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=500, detail="Error saving T&C acceptance")
 
 
 # 🔁 GET — Determinar si debe mostrarse el WelcomeModal
 @router.get("/should_show_welcome")
-def should_show_welcome(client_id: str = Query(...)):
+def should_show_welcome(request: Request, client_id: str = Query(...)):
     """
     Determines if the WelcomeModal should be shown again.
     The modal is displayed if there is no record or if 30+ days passed since last acceptance.
     """
     try:
+        authorize_client_request(request, client_id)
         response = (
             supabase.table("client_terms_acceptance")
             .select("accepted_at, version")
@@ -145,11 +155,11 @@ def should_show_welcome(client_id: str = Query(...)):
         days_since = (now - accepted_dt).days
 
         if days_since >= 30:
-            print(f"🔁 Showing WelcomeModal again — {days_since} days since acceptance.")
             return {"show": True, "reason": "expired", "days_since": days_since}
         else:
             return {"show": False, "days_remaining": 30 - days_since}
 
-    except Exception as e:
-        print("🔥 Error in should_show_welcome:", e)
-        return {"show": True, "error": str(e)}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error in should_show_welcome")

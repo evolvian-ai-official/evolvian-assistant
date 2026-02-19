@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import axios from "axios";
+import { getAuthHeaders } from "./lib/authFetch";
 
 function AdminHistory() {
   const [clientId, setClientId] = useState("");
@@ -14,10 +15,15 @@ function AdminHistory() {
       if (session?.user) {
         const { id, email } = session.user;
         try {
-          const res = await axios.post(`${import.meta.env.VITE_API_URL}/create_or_get_client`, {
-            auth_user_id: id,
-            email: email,
-          });
+          const headers = await getAuthHeaders();
+          const res = await axios.post(
+            `${import.meta.env.VITE_API_URL}/create_or_get_client`,
+            {
+              auth_user_id: id,
+              email: email,
+            },
+            { headers }
+          );
           setClientId(res.data.client_id);
         } catch (err) {
           console.error("❌ Error creando/obteniendo cliente:", err);

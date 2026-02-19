@@ -47,16 +47,20 @@ from api.widget_consents_api import router as widget_consents_router
 from api.terms_api import router as terms_router
 from api.clear_new_user_flag import router as clear_new_user_flag_router
 from api.client_profile_api import router as client_profile_router
-from api.accept_terms_api import router as accept_terms_router
 from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
+from api.public.contact import router as public_contact_router
+from api.public.privacy import router as public_privacy_router
+from api.internal.privacy_requests import router as internal_privacy_router
+from api.internal.retention_jobs import router as internal_retention_router
+from api.internal.incident_readiness import router as internal_incident_router
 from api.delete_file import router as delete_file_router
 
 # ✅ Stripe
 from api.stripe_webhook import router as stripe_router
-from api.stripe_create_checkout_session import router as stripe_checkout_router
+from api.create_checkout_session import router as stripe_checkout_router
 from api.stripe_cancel_subscription import router as stripe_cancel_router
 from api.stripe_change_plan import router as stripe_change_plan_router
 
@@ -104,11 +108,15 @@ app.include_router(widget_consents_router, prefix="/api")
 app.include_router(terms_router, prefix="/api")
 app.include_router(clear_new_user_flag_router, prefix="/api")
 app.include_router(client_profile_router, prefix="/api")
-app.include_router(accept_terms_router, prefix="/api")
 app.include_router(list_files_router, prefix="/api")
 app.include_router(list_chunks_router, prefix="/api")
 app.include_router(delete_chunks_router, prefix="/api")
 app.include_router(embed_router, prefix="/api")
+app.include_router(public_contact_router)
+app.include_router(public_privacy_router)
+app.include_router(internal_privacy_router)
+app.include_router(internal_retention_router)
+app.include_router(internal_incident_router)
 app.include_router(delete_file_router, prefix="/api", tags=["Files"])
 
 # ✅ Stripe

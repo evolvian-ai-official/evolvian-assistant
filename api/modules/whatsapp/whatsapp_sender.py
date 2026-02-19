@@ -3,6 +3,10 @@ import os
 import logging
 from typing import List, Optional
 
+from api.compliance.outbound_policy import (
+    evaluate_outbound_policy,
+    log_outbound_policy_event,
+)
 from api.modules.assistant_rag.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -95,12 +99,49 @@ async def send_whatsapp_message_for_client(
     client_id: str,
     to_number: str,
     message: str,
+    *,
+    purpose: str = "transactional",
+    recipient_email: str | None = None,
+    policy_source: str = "whatsapp_text",
+    policy_source_id: str | None = None,
 ) -> bool:
     """
     ✅ USAR PARA:
     - Chat RAG
     - Widget
     """
+
+    policy = evaluate_outbound_policy(
+        client_id=client_id,
+        channel="whatsapp",
+        purpose=purpose,
+        recipient_email=recipient_email,
+        recipient_phone=to_number,
+        source=policy_source,
+        source_id=policy_source_id,
+    )
+    if not policy.get("allowed"):
+        log_outbound_policy_event(
+            client_id=client_id,
+            policy_result=policy,
+            stage="pre_send",
+            send_status="blocked_policy",
+            send_error=str(policy.get("reason") or "policy_blocked"),
+        )
+        logger.warning(
+            "⛔ WhatsApp TEXT blocked by outbound policy | client_id=%s | reason=%s | proof_id=%s",
+            client_id,
+            policy.get("reason"),
+            policy.get("proof_id"),
+        )
+        return False
+
+    log_outbound_policy_event(
+        client_id=client_id,
+        policy_result=policy,
+        stage="pre_send",
+        send_status="allowed_policy",
+    )
 
     resp = (
         supabase
@@ -121,11 +162,19 @@ async def send_whatsapp_message_for_client(
 
     to_number = to_number.replace(" ", "").strip()
 
-    return await send_whatsapp_message(
+    sent = await send_whatsapp_message(
         to_number=to_number,
         text=message,
         channel=channel,  # ✅ dict, no lista
     )
+    log_outbound_policy_event(
+        client_id=client_id,
+        policy_result=policy,
+        stage="post_send",
+        send_status="sent" if sent else "failed",
+        send_error=None if sent else "provider_send_failed",
+    )
+    return sent
 
 
 # =====================================================
@@ -274,6 +323,10 @@ async def send_whatsapp_template_for_client(
     template_name: str,
     parameters: Optional[List[str]] = None,
     language_code: str = "es_MX",
+    purpose: str = "transactional",
+    recipient_email: str | None = None,
+    policy_source: str = "whatsapp_template",
+    policy_source_id: str | None = None,
 ) -> dict:
     """
     Multi-tenant Meta Template sender.
@@ -282,6 +335,47 @@ async def send_whatsapp_template_for_client(
     """
 
     try:
+        policy = evaluate_outbound_policy(
+            client_id=client_id,
+            channel="whatsapp",
+            purpose=purpose,
+            recipient_email=recipient_email,
+            recipient_phone=to_number,
+            source=policy_source,
+            source_id=policy_source_id,
+        )
+        if not policy.get("allowed"):
+            log_outbound_policy_event(
+                client_id=client_id,
+                policy_result=policy,
+                stage="pre_send",
+                send_status="blocked_policy",
+                send_error=str(policy.get("reason") or "policy_blocked"),
+            )
+            reason = str(policy.get("reason") or "policy_blocked")
+            logger.warning(
+                "⛔ Meta template blocked by outbound policy | client_id=%s | template=%s | reason=%s | proof_id=%s",
+                client_id,
+                template_name,
+                reason,
+                policy.get("proof_id"),
+            )
+            return {
+                "success": False,
+                "meta_message_id": None,
+                "status_code": None,
+                "error": f"policy_blocked:{reason}",
+                "raw": None,
+                "policy_proof_id": policy.get("proof_id"),
+            }
+
+        log_outbound_policy_event(
+            client_id=client_id,
+            policy_result=policy,
+            stage="pre_send",
+            send_status="allowed_policy",
+        )
+
         resp = (
             supabase
             .table("channels")
@@ -294,6 +388,13 @@ async def send_whatsapp_template_for_client(
         )
 
         if not resp.data:
+            log_outbound_policy_event(
+                client_id=client_id,
+                policy_result=policy,
+                stage="post_send",
+                send_status="failed",
+                send_error="whatsapp_channel_not_configured",
+            )
             logger.error(
                 "❌ WhatsApp not configured | client_id=%s",
                 client_id,
@@ -304,11 +405,12 @@ async def send_whatsapp_template_for_client(
                 "status_code": None,
                 "error": "WhatsApp channel not configured",
                 "raw": None,
+                "policy_proof_id": policy.get("proof_id"),
             }
 
         channel = resp.data[0]
 
-        return await send_meta_template(
+        send_result = await send_meta_template(
             to_number=to_number,
             template_name=template_name,
             language_code=language_code,
@@ -316,6 +418,16 @@ async def send_whatsapp_template_for_client(
             phone_number_id=channel["wa_phone_id"],
             access_token=channel["wa_token"],
         )
+        log_outbound_policy_event(
+            client_id=client_id,
+            policy_result=policy,
+            stage="post_send",
+            send_status="sent" if send_result.get("success") else "failed",
+            provider_message_id=send_result.get("meta_message_id"),
+            send_error=None if send_result.get("success") else send_result.get("error"),
+        )
+        send_result["policy_proof_id"] = policy.get("proof_id")
+        return send_result
 
     except Exception as e:
         logger.exception(
@@ -329,4 +441,5 @@ async def send_whatsapp_template_for_client(
             "status_code": None,
             "error": str(e),
             "raw": None,
+            "policy_proof_id": None,
         }

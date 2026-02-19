@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
 
 from api.config.config import supabase
+from api.security.request_limiter import enforce_rate_limit, get_request_ip
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class MetaApprovedTemplateResponse(BaseModel):
 # ======================================
 @router.get("", response_model=List[MetaApprovedTemplateResponse])
 def get_meta_approved_templates(
+    request: Request,
     type: Optional[str] = Query(None, description="Template functional type"),
     channel: Optional[str] = Query("whatsapp", description="Channel type")
 ):
@@ -43,6 +45,13 @@ def get_meta_approved_templates(
     logger.info(f"📥 Fetching Meta templates | type={type} | channel={channel}")
 
     try:
+        request_ip = get_request_ip(request)
+        enforce_rate_limit(
+            scope="meta_templates_ip",
+            key=request_ip,
+            limit=180,
+            window_seconds=60,
+        )
 
         # ======================================
         # Validate type dynamically (if provided)

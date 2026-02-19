@@ -1,0 +1,115 @@
+{
+  "generated_at": "2026-02-19T19:42:12.039880+00:00",
+  "source_csv": "docs/compliance/vendor_processor_inventory.csv",
+  "summary": {
+    "vendor_count": 9,
+    "dpa_status_counts": {
+      "pending_legal_confirmation": 9
+    },
+    "scc_status_counts": {
+      "not_applicable": 1,
+      "pending_legal_confirmation": 8
+    }
+  },
+  "vendors": [
+    {
+      "vendor": "Supabase",
+      "role": "processor",
+      "purpose": "Primary database, auth metadata, storage and event logs",
+      "data_categories": "Account identifiers; contact data; consent records; appointments; DSAR tickets; logs",
+      "regions_transfer_risk": "US-hosted deployment expected; verify region",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/config/config.py; api/modules/assistant_rag/supabase_client.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "OpenAI",
+      "role": "subprocessor",
+      "purpose": "LLM inference for assistant features",
+      "data_categories": "User prompts; contextual excerpts; metadata",
+      "regions_transfer_risk": "Cross-border transfer possible",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/modules/assistant_rag/llm.py; api/modules/assistant_rag/rag_pipeline.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "Stripe",
+      "role": "processor",
+      "purpose": "Payments and subscription lifecycle",
+      "data_categories": "Billing identifiers; subscription metadata; transaction state",
+      "regions_transfer_risk": "US/global processing",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/stripe_webhook.py; api/create_checkout_session.py; api/utils/stripe_plan_utils.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "Twilio",
+      "role": "processor",
+      "purpose": "Messaging webhook processing",
+      "data_categories": "Phone numbers; message metadata; delivery events",
+      "regions_transfer_risk": "Cross-border transfer possible",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/twilio_webhook.py; api/webhook_security.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "Meta WhatsApp",
+      "role": "processor",
+      "purpose": "WhatsApp outbound/inbound messaging",
+      "data_categories": "Phone numbers; message content/templates; delivery status",
+      "regions_transfer_risk": "Cross-border transfer possible",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/modules/whatsapp/whatsapp_sender.py; api/meta_webhook.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "Google APIs",
+      "role": "processor",
+      "purpose": "Gmail and Calendar integration",
+      "data_categories": "Email addresses; message content; calendar data",
+      "regions_transfer_risk": "Cross-border transfer possible",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/modules/email_integration/gmail_oauth.py; api/calendar_routes.py; api/modules/calendar/schedule_event.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "Resend",
+      "role": "subprocessor",
+      "purpose": "Transactional email delivery",
+      "data_categories": "Recipient email; message content; template metadata",
+      "regions_transfer_risk": "Cross-border transfer possible",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/modules/calendar/send_confirmation_email.py; api/modules/calendar/notify_business_owner.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "SendGrid (legacy)",
+      "role": "subprocessor",
+      "purpose": "Legacy fallback email delivery",
+      "data_categories": "Recipient email; message content",
+      "regions_transfer_risk": "Cross-border transfer possible",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "pending_legal_confirmation",
+      "technical_evidence": "api/modules/calendar/schedule_event.py",
+      "last_reviewed": "2026-02-19"
+    },
+    {
+      "vendor": "Render",
+      "role": "infrastructure_provider",
+      "purpose": "Application hosting/runtime",
+      "data_categories": "Application logs; runtime metadata",
+      "regions_transfer_risk": "US-hosted service expected",
+      "dpa_status": "pending_legal_confirmation",
+      "scc_status": "not_applicable",
+      "technical_evidence": "api/config/config.py; deployment environment",
+      "last_reviewed": "2026-02-19"
+    }
+  ]
+}

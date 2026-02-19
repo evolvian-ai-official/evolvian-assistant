@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
@@ -6,6 +6,7 @@ import uuid
 import logging
 
 from api.config.config import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class CancelAppointmentPayload(BaseModel):
 # Endpoint
 # =========================
 @router.post("/appointments/cancel", tags=["Appointments"])
-def cancel_appointment(payload: CancelAppointmentPayload):
+def cancel_appointment(payload: CancelAppointmentPayload, request: Request):
     """
     Soft-cancels an appointment:
     - Updates appointment.status = 'cancelled'
@@ -36,6 +37,7 @@ def cancel_appointment(payload: CancelAppointmentPayload):
 
     client_id = str(payload.client_id)
     appointment_id = str(payload.appointment_id)
+    authorize_client_request(request, client_id)
 
     # =========================
     # 1️⃣ Load appointment (ownership + status)

@@ -4,6 +4,7 @@ import axios from "axios";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { trackClientEvent } from "../../lib/tracking";
+import { getAuthHeaders } from "../../lib/authFetch";
 import "../../components/ui/internal-admin-responsive.css";
 
 const API = import.meta.env.VITE_API_URL;
@@ -53,9 +54,8 @@ export default function WhatsAppSetup() {
           return;
         }
 
-        const res = await axios.get(`${API}/whatsapp_status`, {
-          params: { auth_user_id: session.user.id },
-        });
+        const headers = await getAuthHeaders();
+        const res = await axios.get(`${API}/whatsapp_status`, { headers });
 
         if (res.data.connected) {
           setPhone(res.data.phone || "");
@@ -95,14 +95,18 @@ export default function WhatsAppSetup() {
       setSubmitting(true);
       setStatus({ message: "", type: "" });
 
-      await axios.post(`${API}/link_whatsapp`, {
-        auth_user_id: session.user.id,
-        email: session.user.email,
-        phone,
-        provider,
-        wa_phone_id: waPhoneId,
-        wa_token: waToken,
-      });
+      const headers = await getAuthHeaders();
+      await axios.post(
+        `${API}/link_whatsapp`,
+        {
+          email: session.user.email,
+          phone,
+          provider,
+          wa_phone_id: waPhoneId,
+          wa_token: waToken,
+        },
+        { headers }
+      );
 
       setIsLocked(true);
       setWaToken("");
@@ -136,9 +140,14 @@ export default function WhatsAppSetup() {
       setSubmitting(true);
       setStatus({ message: "", type: "" });
 
-      await axios.post(`${API}/unlink_whatsapp`, {
-        auth_user_id: session.user.id,
-      });
+      const headers = await getAuthHeaders();
+      await axios.post(
+        `${API}/unlink_whatsapp`,
+        {
+          auth_user_id: session.user.id,
+        },
+        { headers }
+      );
 
       setPhone("");
       setWaPhoneId("");

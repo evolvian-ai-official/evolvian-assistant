@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 import logging
 from datetime import datetime, timezone
 
@@ -6,6 +6,7 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
     send_whatsapp_template_for_client,
 )
+from api.internal_auth import require_internal_request
 
 router = APIRouter(
     prefix="/appointments/reminders",
@@ -49,7 +50,8 @@ def build_appointment_details(appointment: dict) -> str:
 # Endpoint
 # -------------------------
 @router.post("/{reminder_id}/send-meta")
-async def send_meta_reminder(reminder_id: str):
+async def send_meta_reminder(reminder_id: str, request: Request):
+    require_internal_request(request)
 
     # -------------------------------------------------
     # 1️⃣ Load Reminder
@@ -138,6 +140,10 @@ async def send_meta_reminder(reminder_id: str):
             user_name,
             appointment_details,
         ],
+        purpose="reminder",
+        recipient_email=appointment.get("user_email"),
+        policy_source="appointments_meta_reminder",
+        policy_source_id=reminder_id,
     )
 
     if not result["success"]:

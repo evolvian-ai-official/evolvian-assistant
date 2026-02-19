@@ -5,6 +5,11 @@
 import os
 import requests
 import logging
+
+from api.compliance.email_policy import (
+    begin_email_send_audit,
+    complete_email_send_audit,
+)
 from api.modules.assistant_rag.supabase_client import supabase
 
 logger = logging.getLogger(__name__)
@@ -16,7 +21,7 @@ def notify_business_owner(
     user_email: str,
     user_name: str,
     user_phone: str | None = None,
-):
+) -> bool:
     """
     Sends an automatic notification to the business owner when a new appointment is booked.
     It tries to retrieve the owner's email from:
@@ -28,7 +33,8 @@ def notify_business_owner(
 
     RESEND_API_KEY = os.getenv("RESEND_API_KEY")
     if not RESEND_API_KEY:
-        raise ValueError("RESEND_API_KEY is not defined")
+        logger.error("❌ RESEND_API_KEY is not defined")
+        return False
 
     owner_email = None
 
@@ -82,6 +88,16 @@ def notify_business_owner(
         owner_email = os.getenv("ADMIN_FALLBACK_EMAIL", "support@evolvianai.com")
         logger.warning(f"⚠️ Owner email not found; using fallback {owner_email}")
 
+    allowed, policy = begin_email_send_audit(
+        client_id=client_id,
+        to_email=owner_email,
+        purpose="transactional",
+        source="appointment_owner_notification",
+        source_id=slot_time,
+    )
+    if not allowed:
+        return False
+
     # === 4️⃣ Prepare email body ===
     phone_html = f"<li><strong>Customer phone:</strong> {user_phone}</li>" if user_phone else ""
 
@@ -113,8 +129,34 @@ def notify_business_owner(
         response = requests.post("https://api.resend.com/emails", headers=headers, json=body)
         if response.status_code >= 400:
             logger.error(f"❌ Failed to send email: {response.status_code} - {response.text}")
-            raise Exception(f"Resend error: {response.text}")
+            complete_email_send_audit(
+                client_id=client_id,
+                policy_result=policy,
+                success=False,
+                send_error=f"resend_http_{response.status_code}",
+            )
+            return False
 
+        provider_message_id = None
+        try:
+            payload = response.json()
+            provider_message_id = str(payload.get("id")) if isinstance(payload, dict) and payload.get("id") else None
+        except Exception:
+            provider_message_id = None
+        complete_email_send_audit(
+            client_id=client_id,
+            policy_result=policy,
+            success=True,
+            provider_message_id=provider_message_id,
+        )
         logger.info(f"✅ Notification successfully sent to {owner_email}")
+        return True
     except Exception as e:
         logger.error(f"❌ Error sending notification to {owner_email}: {e}")
+        complete_email_send_audit(
+            client_id=client_id,
+            policy_result=policy,
+            success=False,
+            send_error="resend_exception",
+        )
+        return False

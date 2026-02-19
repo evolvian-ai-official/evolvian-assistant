@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from api.modules.assistant_rag.supabase_client import supabase, save_history
 from api.modules.assistant_rag.rag_pipeline import ask_question
 from api.utils.usage_limiter import check_and_increment_usage
+from api.security.request_limiter import enforce_rate_limit, get_request_ip
 from datetime import datetime, timedelta
 
 # 🧠 Nuevo: importamos el intent router
@@ -620,6 +621,20 @@ async def chat_widget(request: Request):
         session_id = body["session_id"]
         message = body["message"]
         channel = body.get("channel", "chat")
+        request_ip = get_request_ip(request)
+
+        enforce_rate_limit(
+            scope="chat_widget_ip",
+            key=f"{public_client_id}:{request_ip}",
+            limit=120,
+            window_seconds=60,
+        )
+        enforce_rate_limit(
+            scope="chat_widget_session",
+            key=f"{public_client_id}:{session_id}",
+            limit=40,
+            window_seconds=60,
+        )
 
         print(f"💬 [{channel}] Message: '{message}' (public_client_id: {public_client_id}, session_id: {session_id})")
 

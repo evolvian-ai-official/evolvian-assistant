@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { authFetch } from "../../lib/authFetch";
 import "../../components/ui/internal-admin-responsive.css";
 
 const toMinutes = (value, unit) => {
@@ -88,7 +89,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
   }, []);
 
   useEffect(() => {
-    fetch(`${API}/message_templates/types`)
+    authFetch(`${API}/message_templates/types`)
       .then((r) => r.json())
       .then((data) => {
         const types = data || [];
@@ -110,7 +111,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
 
     setSelectedMetaTemplateId("");
 
-    fetch(`${API}/meta_approved_templates?type=${type}&channel=${channel}`)
+    authFetch(`${API}/meta_approved_templates?type=${type}&channel=${channel}`)
       .then((r) => r.json())
       .then((data) => setMetaTemplates(data || []))
       .catch(() => setMetaTemplates([]));
@@ -200,7 +201,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
         formData.append("client_id", clientId);
         formData.append("file", footerImageFile);
 
-        const uploadRes = await fetch(`${API}/message_templates/footer_image`, {
+        const uploadRes = await authFetch(`${API}/message_templates/footer_image`, {
           method: "POST",
           body: formData,
         });
@@ -224,7 +225,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
     try {
       setLoading(true);
 
-      const res = await fetch(`${API}/message_templates`, {
+      const res = await authFetch(`${API}/message_templates`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

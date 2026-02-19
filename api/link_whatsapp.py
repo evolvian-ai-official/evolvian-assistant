@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from api.modules.assistant_rag.supabase_client import supabase
 from datetime import datetime
 import uuid
 import re
 import logging
+from api.authz import get_current_user_id
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -60,7 +61,6 @@ def validate_e164(number: str) -> str:
 # =====================================================
 
 class WhatsAppLinkPayload(BaseModel):
-    auth_user_id: str
     email: EmailStr
     phone: str
     provider: str = "meta"
@@ -69,7 +69,7 @@ class WhatsAppLinkPayload(BaseModel):
 
 
 class WhatsAppUnlinkPayload(BaseModel):
-    auth_user_id: str
+    auth_user_id: str | None = None
 
 
 # =====================================================
@@ -77,9 +77,10 @@ class WhatsAppUnlinkPayload(BaseModel):
 # =====================================================
 
 @router.post("/link_whatsapp")
-def link_whatsapp(payload: WhatsAppLinkPayload):
+def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
     try:
         logger.info("🔗 Linking WhatsApp channel")
+        auth_user_id = get_current_user_id(request)
 
         # 1️⃣ Validate provider
         if payload.provider not in ["meta", "twilio"]:
@@ -93,7 +94,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload):
                 )
 
         # 2️⃣ Secure client lookup
-        client_id = get_client_id_from_user(payload.auth_user_id)
+        client_id = get_client_id_from_user(auth_user_id)
 
         # 3️⃣ Validate phone
         number = validate_e164(payload.phone)
@@ -155,11 +156,14 @@ def link_whatsapp(payload: WhatsAppLinkPayload):
 # =====================================================
 
 @router.post("/unlink_whatsapp")
-def unlink_whatsapp(payload: WhatsAppUnlinkPayload):
+def unlink_whatsapp(payload: WhatsAppUnlinkPayload, request: Request):
     try:
         logger.info("🛑 Unlinking WhatsApp channel")
+        auth_user_id = get_current_user_id(request)
+        if payload.auth_user_id and payload.auth_user_id != auth_user_id:
+            raise HTTPException(status_code=403, detail="forbidden_user_mismatch")
 
-        client_id = get_client_id_from_user(payload.auth_user_id)
+        client_id = get_client_id_from_user(auth_user_id)
         now = datetime.utcnow().isoformat()
 
         update_res = supabase.table("channels") \
@@ -186,6 +190,8 @@ def unlink_whatsapp(payload: WhatsAppUnlinkPayload):
             "connected": False
         }
 
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("❌ unlink_whatsapp internal error")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -196,8 +202,9 @@ def unlink_whatsapp(payload: WhatsAppUnlinkPayload):
 # =====================================================
 
 @router.get("/whatsapp_status")
-def whatsapp_status(auth_user_id: str):
+def whatsapp_status(request: Request):
     try:
+        auth_user_id = get_current_user_id(request)
         client_id = get_client_id_from_user(auth_user_id)
 
         channel_res = (
@@ -219,6 +226,8 @@ def whatsapp_status(auth_user_id: str):
 
         return {"connected": False}
 
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("❌ whatsapp_status internal error")
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from api.modules.assistant_rag.supabase_client import supabase
 from datetime import datetime
+from api.authz import authorize_client_request
+from api.internal_auth import has_valid_internal_token
 
 router = APIRouter() #d
 
@@ -15,9 +17,12 @@ class MakeRegisterAppointment(BaseModel):
     calendar_event_id: str | None = None
 
 @router.post("/make_register")
-async def make_register_appointment(data: MakeRegisterAppointment):
+async def make_register_appointment(data: MakeRegisterAppointment, request: Request):
 
     try:
+        if not has_valid_internal_token(request):
+            authorize_client_request(request, data.client_id)
+
         result = supabase.table("appointments").insert({
             "client_id": data.client_id,
             "user_name": data.user_name,
@@ -37,6 +42,8 @@ async def make_register_appointment(data: MakeRegisterAppointment):
             "status": "created"
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print("Error make_register:", e)
         raise HTTPException(status_code=500, detail=str(e))

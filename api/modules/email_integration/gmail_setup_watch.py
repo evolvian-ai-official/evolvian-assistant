@@ -3,7 +3,7 @@ import os
 from datetime import timezone
 from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from googleapiclient.discovery import build
@@ -12,8 +12,6 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport import requests as google_requests
 
 from api.modules.assistant_rag.supabase_client import supabase
-
-router = APIRouter(prefix="/gmail_poll", tags=["Gmail Polling (sin Pub/Sub)"])
 
 GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID")
 GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET")
@@ -153,8 +151,7 @@ def _fetch_and_handle_message(service, message_id: str) -> Dict[str, Any]:
 def _update_last_history_id(channel_id: str, new_history_id: str):
     supabase.table("channels").update({"gmail_last_history_id": str(new_history_id)}).eq("id", channel_id).execute()
 
-# ---------- Endpoints ----------
-@router.post("/poll_once")
+# ---------- Internal helpers ----------
 async def poll_once(client_id: str):
     try:
         ch = _select_active_gmail_channel_by_client(client_id)
@@ -206,7 +203,6 @@ async def poll_once(client_id: str):
         print(f"🔥 Error en poll_once: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@router.post("/poll_all")
 async def poll_all():
     try:
         res = (

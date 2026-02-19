@@ -2,13 +2,18 @@ import os
 import re
 import unicodedata
 import requests
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, Request
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, List
 import uuid
 import logging
 
+from api.compliance.email_marketing_standard import (
+    is_marketing_template_type,
+    validate_marketing_template_body,
+)
 from api.config.config import supabase
+from api.authz import authorize_client_request, get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,27 @@ def sanitize_filename(filename: str) -> str:
     name = unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode()
     name = re.sub(r"[^\w.\-]", "_", name)
     return name.lower()
+
+
+def _load_template_with_auth(request: Request, template_id: uuid.UUID) -> dict:
+    template_row = (
+        supabase
+        .table("message_templates")
+        .select("id, client_id, channel, type")
+        .eq("id", str(template_id))
+        .maybe_single()
+        .execute()
+    )
+
+    if not template_row.data:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    client_id = str(template_row.data.get("client_id") or "")
+    if not client_id:
+        raise HTTPException(status_code=404, detail="Template owner not found")
+
+    authorize_client_request(request, client_id)
+    return template_row.data
 
 
 # =====================================================
@@ -79,10 +105,13 @@ class UpdateTemplatePayload(BaseModel):
 # =====================================================
 @router.post("/footer_image")
 async def upload_footer_image(
+    request: Request,
     client_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
 ):
     try:
+        authorize_client_request(request, str(client_id))
+
         content_type = (file.content_type or "").lower()
         if not content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail="Only image files are allowed")
@@ -140,8 +169,9 @@ async def upload_footer_image(
 # =====================================================
 
 @router.post("")
-def create_message_template(payload: CreateTemplatePayload):
+def create_message_template(payload: CreateTemplatePayload, request: Request):
     try:
+        authorize_client_request(request, str(payload.client_id))
 
 
         # =====================================================
@@ -211,6 +241,17 @@ def create_message_template(payload: CreateTemplatePayload):
                     detail="body is required for email templates"
                 )
 
+            if is_marketing_template_type(payload.type):
+                valid_body, missing_tokens = validate_marketing_template_body(payload.body)
+                if not valid_body:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Marketing email templates must include required tokens: "
+                            + ", ".join(missing_tokens)
+                        ),
+                    )
+
             body = payload.body
 
         else:
@@ -275,8 +316,10 @@ def create_message_template(payload: CreateTemplatePayload):
 
 
 @router.get("/types")
-def get_template_types():
+def get_template_types(request: Request):
     try:
+        get_current_user_id(request)
+
         res = (
             supabase
             .table("template_types")
@@ -287,6 +330,8 @@ def get_template_types():
 
         return res.data or []
 
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Failed to fetch template types")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -299,6 +344,7 @@ def get_template_types():
 
 @router.put("/{template_id}")
 def update_message_template(
+    request: Request,
     template_id: uuid.UUID,
     payload: UpdateTemplatePayload,
 ):
@@ -312,22 +358,9 @@ def update_message_template(
                 detail="No fields provided to update"
             )
 
-        existing = (
-            supabase
-            .table("message_templates")
-            .select("channel")
-            .eq("id", str(template_id))
-            .single()
-            .execute()
-        )
-
-        if not existing.data:
-            raise HTTPException(
-                status_code=404,
-                detail="Template not found"
-            )
-
-        channel = existing.data["channel"]
+        existing = _load_template_with_auth(request, template_id)
+        channel = existing["channel"]
+        template_type = existing.get("type")
 
         # 🔒 WhatsApp body locked
         if channel == "whatsapp" and "body" in update_data:
@@ -335,6 +368,17 @@ def update_message_template(
                 status_code=400,
                 detail="WhatsApp templates cannot update body"
             )
+
+        if channel == "email" and "body" in update_data and is_marketing_template_type(template_type):
+            valid_body, missing_tokens = validate_marketing_template_body(update_data.get("body"))
+            if not valid_body:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Marketing email templates must include required tokens: "
+                        + ", ".join(missing_tokens)
+                    ),
+                )
 
         # Frequency validation
         if "frequency" in update_data:
@@ -380,8 +424,9 @@ def update_message_template(
 # =====================================================
 
 @router.delete("/{template_id}")
-def delete_message_template(template_id: uuid.UUID):
+def delete_message_template(template_id: uuid.UUID, request: Request):
     try:
+        _load_template_with_auth(request, template_id)
 
         res = (
             supabase
@@ -415,10 +460,12 @@ def delete_message_template(template_id: uuid.UUID):
 
 @router.get("")
 def get_message_templates(
+    request: Request,
     client_id: uuid.UUID = Query(...),
     type: Optional[str] = Query(None),
 ):
     try:
+        authorize_client_request(request, str(client_id))
 
         query = (
             supabase
@@ -473,6 +520,8 @@ def get_message_templates(
 
         return formatted
 
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Unexpected error fetching templates")
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -62,7 +62,7 @@ export default function Dashboard() {
 
     const checkTermsAcceptance = async () => {
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${import.meta.env.VITE_API_URL}/accepted_terms?client_id=${clientId}`
         );
         const data = await res.json();

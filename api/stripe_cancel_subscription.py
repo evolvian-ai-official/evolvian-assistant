@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 import stripe
 import os
 from dotenv import load_dotenv
-from api.modules.assistant_rag.supabase_client import update_client_plan_by_id
+from api.authz import authorize_client_request
 
 load_dotenv()
 router = APIRouter()
@@ -17,6 +17,7 @@ async def cancel_subscription(request: Request):
 
         if not subscription_id or not client_id:
             raise HTTPException(status_code=400, detail="Missing parameters")
+        authorize_client_request(request, client_id)
 
         # ✅ Cancelar al final del período
         stripe.Subscription.modify(
@@ -31,6 +32,8 @@ async def cancel_subscription(request: Request):
     except stripe.error.StripeError as e:
         print("❌ Error de Stripe:", str(e))
         raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         print("🔥 Error general:", str(e))
         raise HTTPException(status_code=500, detail=str(e))

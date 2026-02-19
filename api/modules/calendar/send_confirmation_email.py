@@ -6,6 +6,10 @@ from typing import Optional
 from datetime import datetime
 from email.mime.text import MIMEText
 
+from api.compliance.email_policy import (
+    begin_email_send_audit,
+    complete_email_send_audit,
+)
 from api.config.config import supabase
 from api.modules.email_integration.gmail_oauth import get_gmail_service
 
@@ -150,7 +154,7 @@ def _send_via_client_gmail(
     html_body: str,
     content_source: str,
     template_id: Optional[str],
-) -> bool:
+) -> tuple[bool, Optional[str]]:
     try:
         try:
             channel_res = (
@@ -181,7 +185,7 @@ def _send_via_client_gmail(
             )
         channel = (channel_res.data or [None])[0]
         if not channel or not channel.get("gmail_access_token"):
-            return False
+            return False, None
 
         service = get_gmail_service(channel)
 
@@ -193,7 +197,8 @@ def _send_via_client_gmail(
         msg["from"] = f"{sender_name} <{sender_email}>" if sender_email else sender_name
 
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+        result = service.users().messages().send(userId="me", body={"raw": raw}).execute()
+        gmail_message_id = str(result.get("id")) if isinstance(result, dict) and result.get("id") else None
 
         logger.info(
             "✅ Confirmation email sent via client Gmail | client_id=%s | from=%s | source=%s | template_id=%s",
@@ -202,10 +207,10 @@ def _send_via_client_gmail(
             content_source,
             template_id or "-",
         )
-        return True
+        return True, gmail_message_id
     except Exception as e:
         logger.warning("⚠️ Gmail send fallback to Resend | client_id=%s | error=%s", client_id, e)
-        return False
+        return False, None
 
 
 def send_confirmation_email(
@@ -217,7 +222,8 @@ def send_confirmation_email(
     client_id: Optional[str] = None,
     user_name: Optional[str] = None,
     appointment_type: Optional[str] = None,
-):
+    purpose: str = "reminder",
+) -> bool:
     default_subject = subject or "✅ Confirmación de tu cita"
     sender_name = _safe_header_name(_get_client_sender_name(client_id))
     default_html = html_body or f"""
@@ -258,8 +264,25 @@ def send_confirmation_email(
         template_id or "-",
     )
 
+    policy = None
     if client_id:
-        sent_by_gmail = _send_via_client_gmail(
+        allowed, policy = begin_email_send_audit(
+            client_id=client_id,
+            to_email=to_email,
+            purpose=purpose,
+            source="appointment_confirmation_email",
+            source_id=template_id,
+        )
+        if not allowed:
+            return False
+    else:
+        logger.warning(
+            "⚠️ Sending confirmation email without client_id; outbound policy audit skipped | to=%s",
+            to_email,
+        )
+
+    if client_id:
+        sent_by_gmail, gmail_message_id = _send_via_client_gmail(
             client_id=client_id,
             to_email=to_email,
             subject=final_subject,
@@ -268,11 +291,24 @@ def send_confirmation_email(
             template_id=template_id,
         )
         if sent_by_gmail:
-            return
+            complete_email_send_audit(
+                client_id=client_id,
+                policy_result=policy,
+                success=True,
+                provider_message_id=gmail_message_id,
+            )
+            return True
 
     if not RESEND_API_KEY:
         logger.error("❌ RESEND_API_KEY no está definido.")
-        return
+        if client_id:
+            complete_email_send_audit(
+                client_id=client_id,
+                policy_result=policy,
+                success=False,
+                send_error="resend_api_key_missing",
+            )
+        return False
 
     response = requests.post(
         "https://api.resend.com/emails",
@@ -290,10 +326,32 @@ def send_confirmation_email(
 
     if response.status_code != 200:
         logger.error(f"❌ Error al enviar correo: {response.status_code} - {response.text}")
+        if client_id:
+            complete_email_send_audit(
+                client_id=client_id,
+                policy_result=policy,
+                success=False,
+                send_error=f"resend_http_{response.status_code}",
+            )
+        return False
     else:
+        provider_message_id = None
+        try:
+            payload = response.json()
+            provider_message_id = str(payload.get("id")) if isinstance(payload, dict) and payload.get("id") else None
+        except Exception:
+            provider_message_id = None
+        if client_id:
+            complete_email_send_audit(
+                client_id=client_id,
+                policy_result=policy,
+                success=True,
+                provider_message_id=provider_message_id,
+            )
         logger.info(
             "✅ Correo de confirmación enviado por Resend | to=%s | source=%s | template_id=%s",
             to_email,
             content_source,
             template_id or "-",
         )
+        return True

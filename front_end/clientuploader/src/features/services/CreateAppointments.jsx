@@ -103,7 +103,7 @@ export default function CreateAppointment({ disabled = false }) {
     const fetchTemplates = async () => {
       setTemplatesLoading(true);
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `${API_BASE_URL}/message_templates?client_id=${clientId}&type=appointment_reminder`
         );
         const data = await res.json();
@@ -514,7 +514,7 @@ export default function CreateAppointment({ disabled = false }) {
     if (!replaceExisting) setDuplicateExistingAppt(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/create_appointment`, {
+      const res = await authFetch(`${API_BASE_URL}/create_appointment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

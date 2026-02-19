@@ -3,15 +3,19 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from supabase import create_client
 from dotenv import load_dotenv
+
+from api.compliance.email_policy import (
+    begin_email_send_audit,
+    complete_email_send_audit,
+)
 
 # ============================================================
 # 🔧 Configuración
 # ============================================================
 load_dotenv()
-router = APIRouter(tags=["Calendar"])
 logger = logging.getLogger("schedule_event")
 
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
@@ -55,7 +59,6 @@ def refresh_access_token(client_id: str, refresh_token: str) -> str:
 # ============================================================
 # 📅 Agendar evento en Google Calendar
 # ============================================================
-@router.post("/schedule_event")
 def schedule_event(payload: dict):
     """
     Creates a new event in Google Calendar and stores it in Supabase.
@@ -173,34 +176,75 @@ def schedule_event(payload: dict):
         logger.info("💾 Appointment saved in Supabase")
 
         # 7️⃣ Send confirmation email (if SendGrid active)
-        if SENDGRID_API_KEY:
-            from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail
-
-            message = Mail(
-                from_email="no-reply@evolvian.com",
-                to_emails=user_email or owner_email,
-                subject="✅ Your appointment is confirmed",
-                html_content=f"""
-                    <div style="font-family:sans-serif; color:#222">
-                      <h2>Hi {user_name},</h2>
-                      <p>Your appointment has been confirmed for:</p>
-                      <p><strong>{start_dt.strftime('%A, %B %d %Y at %I:%M %p')}</strong></p>
-                      <p>This event has also been added to your Google Calendar.</p>
-                      <br/>
-                      <p>Thank you for scheduling with <strong>Evolvian AI</strong>.</p>
-                    </div>
-                """,
+        recipient_email = (user_email or owner_email or "").strip().lower()
+        if recipient_email:
+            allowed, policy = begin_email_send_audit(
+                client_id=client_id,
+                to_email=recipient_email,
+                purpose="reminder",
+                source="schedule_event_sendgrid_confirmation",
+                source_id=event.get("id"),
             )
-            try:
-                sg = SendGridAPIClient(api_key=SENDGRID_API_KEY)
-                sg.send(message)
-                supabase.table("appointments").update({"email_sent": True}).eq("calendar_event_id", event["id"]).execute()
-                logger.info("📧 Confirmation email sent successfully to user")
-            except Exception as e:
-                logger.error(f"❌ Error sending confirmation email: {e}")
+            if allowed:
+                if SENDGRID_API_KEY:
+                    from sendgrid import SendGridAPIClient
+                    from sendgrid.helpers.mail import Mail
+
+                    message = Mail(
+                        from_email="no-reply@evolvian.com",
+                        to_emails=recipient_email,
+                        subject="✅ Your appointment is confirmed",
+                        html_content=f"""
+                            <div style="font-family:sans-serif; color:#222">
+                              <h2>Hi {user_name},</h2>
+                              <p>Your appointment has been confirmed for:</p>
+                              <p><strong>{start_dt.strftime('%A, %B %d %Y at %I:%M %p')}</strong></p>
+                              <p>This event has also been added to your Google Calendar.</p>
+                              <br/>
+                              <p>Thank you for scheduling with <strong>Evolvian AI</strong>.</p>
+                            </div>
+                        """,
+                    )
+                    try:
+                        sg = SendGridAPIClient(api_key=SENDGRID_API_KEY)
+                        send_resp = sg.send(message)
+                        provider_message_id = None
+                        if hasattr(send_resp, "headers"):
+                            provider_message_id = (
+                                send_resp.headers.get("X-Message-Id")
+                                or send_resp.headers.get("X-Message-ID")
+                            )
+                        complete_email_send_audit(
+                            client_id=client_id,
+                            policy_result=policy,
+                            success=True,
+                            provider_message_id=provider_message_id,
+                        )
+                        (
+                            supabase.table("appointments")
+                            .update({"email_sent": True})
+                            .eq("calendar_event_id", event["id"])
+                            .execute()
+                        )
+                        logger.info("📧 Confirmation email sent successfully to user")
+                    except Exception as e:
+                        complete_email_send_audit(
+                            client_id=client_id,
+                            policy_result=policy,
+                            success=False,
+                            send_error="sendgrid_exception",
+                        )
+                        logger.error(f"❌ Error sending confirmation email: {e}")
+                else:
+                    complete_email_send_audit(
+                        client_id=client_id,
+                        policy_result=policy,
+                        success=False,
+                        send_error="sendgrid_api_key_missing",
+                    )
+                    logger.warning("⚠️ SENDGRID_API_KEY not configured, skipping email send")
         else:
-            logger.warning("⚠️ SENDGRID_API_KEY not configured, skipping email send")
+            logger.warning("⚠️ Missing recipient email for confirmation send in schedule_event")
 
         return {"status": "scheduled", "event": event}
 

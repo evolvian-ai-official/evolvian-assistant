@@ -6,7 +6,6 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from dotenv import load_dotenv
 import os
-import jwt
 import importlib.util, sys
 import subprocess
 
@@ -25,17 +24,7 @@ supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 if not supabase_key:
     print("❌ SUPABASE_SERVICE_ROLE_KEY missing in .env")
 else:
-    print(f"🔑 SUPABASE key prefix: {supabase_key[:10]}...")
-    try:
-        decoded = jwt.decode(supabase_key, options={"verify_signature": False})
-        role = decoded.get("role")
-        print("🔐 Supabase Key Role:", role)
-        if role != "service_role":
-            print("⚠️ Using key with role:", role)
-        else:
-            print("✅ Supabase service role key verified")
-    except Exception as e:
-        print("❌ Error decoding key:", str(e))
+    print("✅ SUPABASE_SERVICE_ROLE_KEY configured")
 
 # ======================================
 # ✅ Core Routers
@@ -56,12 +45,16 @@ from api.terms_api import router as terms_router
 from api.clear_new_user_flag import router as clear_new_user_flag_router
 from api.client_profile_api import router as client_profile_router
 from api.client_event_log_api import router as client_event_log_router
-from api.accept_terms_api import router as accept_terms_router
 from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
 from api.public.plans import router as public_plans_router
+from api.public.contact import router as public_contact_router
+from api.public.privacy import router as public_privacy_router
+from api.internal.privacy_requests import router as internal_privacy_router
+from api.internal.retention_jobs import router as internal_retention_router
+from api.internal.incident_readiness import router as internal_incident_router
 from api.routes import reset  # Cron
 from api.routes import embed
 from api.channels import router as channels_router
@@ -137,7 +130,6 @@ get_client_by_email_router = None
 register_email_channel = None
 gmail_webhook = None
 gmail_oauth = None
-gmail_setup_watch = None
 gmail_poll = None
 init_calendar_auth = None
 calendar_status = None
@@ -183,20 +175,6 @@ try:
     print("✅ gmail_oauth imported")
 except Exception as e:
     print(f"⚠️ gmail_oauth import failed: {e}")
-
-try:
-    gmail_watch_path = os.path.join(os.path.dirname(__file__), "api/modules/email_integration/gmail_setup_watch.py")
-    if os.path.exists(gmail_watch_path):
-        spec = importlib.util.spec_from_file_location("gmail_setup_watch", gmail_watch_path)
-        gmail_watch_module = importlib.util.module_from_spec(spec)
-        sys.modules["gmail_setup_watch"] = gmail_watch_module
-        spec.loader.exec_module(gmail_watch_module)
-        gmail_setup_watch = gmail_watch_module
-        print("✅ gmail_setup_watch imported (Render fix)")
-    else:
-        print(f"⚠️ gmail_setup_watch.py not found at: {gmail_watch_path}")
-except Exception as e:
-    print(f"⚠️ gmail_setup_watch import failed: {e}")
 
 try:
     from api.modules.email_integration import gmail_poll as _gmail_poll
@@ -310,9 +288,11 @@ routers = [
     initialize_user_router, client_settings_router, link_whatsapp_router,
     chat_widget_router, check_email_router, dashboard_summary_router,
     user_flags_router, terms_router, client_event_log_router,
-    clear_new_user_flag_router, client_profile_router, accept_terms_router,
+    clear_new_user_flag_router, client_profile_router,
     list_files_router, list_chunks_router, delete_chunks_router,
-    embed_router, public_plans_router, stripe_router, checkout_router,
+    embed_router, public_plans_router, public_contact_router, public_privacy_router,
+    internal_privacy_router, internal_retention_router, internal_incident_router,
+    stripe_router, checkout_router,
     stripe_cancel_router, stripe_change_plan_router,
     reactivate_subscription_router, channels_router, register_consent_router, check_consent_router,
     blog_router,

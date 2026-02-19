@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from api.internal_auth import require_internal_request
 
 router = APIRouter()
 
@@ -9,7 +10,8 @@ class ReminderPayload(BaseModel):
     message: str
 
 @router.post("/send_reminder")
-async def send_whatsapp_reminder(payload: ReminderPayload):
+async def send_whatsapp_reminder(payload: ReminderPayload, request: Request):
+    require_internal_request(request)
     print("📨 Incoming WhatsApp reminder request:", payload)
 
     return {

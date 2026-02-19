@@ -3,11 +3,11 @@ from fastapi.responses import RedirectResponse
 import os
 import logging
 import requests
-import base64
-import json
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from ..modules.assistant_rag.supabase_client import supabase
+from api.oauth_state import decode_signed_state
 
 # ✅ Prefijo /api para que coincida con las rutas del frontend
 router = APIRouter(prefix="/api", tags=["Calendar"])
@@ -46,29 +46,28 @@ def _resolve_dashboard_redirect(request: Request) -> str:
     return local_url
 
 
-def _decode_state(raw_state: str) -> tuple[str, str | None, str | None]:
-    """
-    Backward compatible:
-    - New format: base64url(JSON) {"client_id":"...","return_to":"...","oauth_redirect_uri":"..."}
-    - Legacy format: plain client_id string
-    """
-    if not raw_state:
-        return "", None, None
+def _allowed_return_hosts(request: Request) -> set[str]:
+    hosts = {_request_host(request)}
+    for env_key in ("DASHBOARD_REDIRECT_URL_LOCAL", "DASHBOARD_REDIRECT_URL_PROD"):
+        parsed = urlparse((os.getenv(env_key) or "").strip())
+        if parsed.hostname:
+            hosts.add(parsed.hostname.lower())
+    return hosts
 
-    try:
-        padded = raw_state + "=" * (-len(raw_state) % 4)
-        decoded = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
-        payload = json.loads(decoded)
-        if isinstance(payload, dict) and payload.get("client_id"):
-            return (
-                str(payload.get("client_id")),
-                payload.get("return_to"),
-                payload.get("oauth_redirect_uri"),
-            )
-    except Exception:
-        pass
 
-    return raw_state, None, None
+def _sanitize_return_to(request: Request, return_to: str | None) -> str | None:
+    if not return_to:
+        return None
+
+    parsed = urlparse(return_to)
+    if not parsed.scheme and not parsed.netloc:
+        # Relative URL on same host.
+        return return_to if return_to.startswith("/") else None
+
+    hostname = (parsed.hostname or "").lower()
+    if hostname and hostname in _allowed_return_hosts(request):
+        return return_to
+    return None
 
 
 def _redirect_with_status(base_url: str, success: bool, reason: str | None = None):
@@ -94,9 +93,23 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
     if not code or not state:
         return _redirect_with_status(default_dashboard, success=False, reason="missing_callback_params")
 
-    client_id, return_to, oauth_redirect_uri = _decode_state(state)
+    try:
+        max_age = int(os.getenv("GOOGLE_OAUTH_STATE_TTL_SECONDS", "900"))
+        state_payload = decode_signed_state(state, max_age_seconds=max_age)
+    except HTTPException:
+        return _redirect_with_status(default_dashboard, success=False, reason="invalid_oauth_state")
+
+    client_id = str(state_payload.get("client_id") or "")
+    return_to = _sanitize_return_to(request, state_payload.get("return_to"))
     dashboard_redirect_url = return_to or default_dashboard
-    google_redirect_uri = oauth_redirect_uri or _resolve_redirect_uri(request)
+
+    expected_redirect_uri = _resolve_redirect_uri(request)
+    oauth_redirect_uri = state_payload.get("oauth_redirect_uri")
+    google_redirect_uri = (
+        oauth_redirect_uri
+        if oauth_redirect_uri and oauth_redirect_uri == expected_redirect_uri
+        else expected_redirect_uri
+    )
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not google_redirect_uri or not client_id:
         logging.error("❌ Missing Google OAuth configuration or client_id")
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="oauth_config_missing")
@@ -131,10 +144,9 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="token_exchange_network_error")
 
     logging.info(f"📥 Token exchange status: {token_resp.status_code}")
-    logging.info(f"📥 Token exchange response: {token_resp.text}")
 
     if token_resp.status_code != 200:
-        logging.error(f"❌ Failed to get Google token: {token_resp.text}")
+        logging.error("❌ Failed to get Google token")
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="token_exchange_failed")
 
     token_json = token_resp.json()
@@ -157,7 +169,7 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="google_calendar_api_error")
 
     if calendar_resp.status_code != 200:
-        logging.error(f"❌ Error retrieving calendar list: {calendar_resp.text}")
+        logging.error("❌ Error retrieving calendar list")
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="calendar_list_failed")
 
     calendars = calendar_resp.json().get("items", [])
@@ -197,7 +209,6 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
             "is_active": True,
         }
 
-        logging.info(f"💾 Saving calendar integration: {data}")
         supabase.table("calendar_integrations").upsert(data, on_conflict="client_id").execute()
         logging.info(f"✅ Calendar tokens saved successfully for client {client_id}")
     except Exception:

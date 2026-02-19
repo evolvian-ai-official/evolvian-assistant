@@ -92,7 +92,7 @@ export default function ShowAppointments({ refreshKey = 0 }) {
 
     setLoading(true);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE_URL}/appointments/show?client_id=${clientId}`
       );
 

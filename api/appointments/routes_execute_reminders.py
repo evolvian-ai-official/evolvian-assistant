@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import logging
@@ -9,6 +9,7 @@ from api.modules.whatsapp.whatsapp_sender import (
     send_whatsapp_message_for_client,
     send_whatsapp_template_for_client,
 )
+from api.internal_auth import require_internal_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -206,7 +207,8 @@ def build_reminder_parameters(
 # Endpoint
 # =====================================================
 @router.post("/reminders/execute")
-async def execute_pending_reminders():
+async def execute_pending_reminders(request: Request):
+    require_internal_request(request)
 
     now = datetime.now(timezone.utc)
     logger.info("⏱️ REMINDER EXECUTION START | now=%s", now.isoformat())
@@ -369,6 +371,10 @@ async def execute_pending_reminders():
                         template_name=template_name,
                         language_code=language_code,
                         parameters=parameters,
+                        purpose="reminder",
+                        recipient_email=appointment.get("user_email"),
+                        policy_source="appointments_execute_reminders",
+                        policy_source_id=reminder_id,
                     )
                     send_ok = bool(send_result and send_result.get("success"))
                     if not send_ok:
@@ -408,6 +414,10 @@ async def execute_pending_reminders():
                         client_id=client_id,
                         to_number=phone,
                         message=message_body,
+                        purpose="reminder",
+                        recipient_email=appointment.get("user_email"),
+                        policy_source="appointments_execute_reminders",
+                        policy_source_id=reminder_id,
                     )
 
             # =====================================================

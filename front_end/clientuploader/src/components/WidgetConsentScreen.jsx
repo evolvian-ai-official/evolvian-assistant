@@ -2,6 +2,9 @@
 import { useState, useEffect } from "react";
 import ChatWidget from "./ChatWidget";
 
+const consentStorageKey = (publicClientId) =>
+  `evolvian_widget_consent_token:${publicClientId}`;
+
 export default function WidgetConsentScreen({
   publicClientId,
   requireEmailConsent = false,
@@ -102,7 +105,15 @@ export default function WidgetConsentScreen({
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      await res.json();
+      const responseData = await res.json();
+      const consentToken = responseData?.consent_token;
+      if (consentToken) {
+        try {
+          localStorage.setItem(consentStorageKey(publicClientId), consentToken);
+        } catch {
+          // ignore storage failures in embedded contexts
+        }
+      }
       setConsentGiven(true);
     } catch (error) {
       console.warn("Consent registration failed", error);

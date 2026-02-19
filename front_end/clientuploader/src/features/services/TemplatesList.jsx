@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "../../contexts/LanguageContext";
 import TemplatesUpdateDelete from "../services/Templates_update_delete";
+import { authFetch } from "../../lib/authFetch";
 import "../../components/ui/internal-admin-responsive.css";
 
 const truncate = (text = "", max = 220) => {
@@ -32,7 +33,7 @@ export default function TemplatesList({ clientId, type, refreshKey }) {
       params.append("client_id", clientId);
       if (type) params.append("type", type);
 
-      const res = await fetch(`${API}/message_templates?${params.toString()}`);
+      const res = await authFetch(`${API}/message_templates?${params.toString()}`);
       if (!res.ok) throw new Error();
 
       const list = await res.json();

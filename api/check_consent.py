@@ -6,16 +6,24 @@
 # y el consentimiento está expirado o ausente, devuelve valid=False.
 # ============================================================
 
-from fastapi import APIRouter, HTTPException, Query
-from datetime import datetime, timedelta
+from fastapi import APIRouter, HTTPException, Query, Request
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+import logging
 from api.modules.assistant_rag.supabase_client import supabase
+from api.security.request_limiter import enforce_rate_limit, get_request_ip
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/check_consent")
 async def check_consent(
-    public_client_id: str = Query(..., description="Public client identifier")
+    request: Request,
+    public_client_id: str = Query(..., description="Public client identifier"),
+    consent_token: Optional[str] = Query(None, description="Consent token issued by /register_consent"),
+    email: Optional[str] = Query(None, description="Optional email fallback lookup"),
+    phone: Optional[str] = Query(None, description="Optional phone fallback lookup"),
 ):
     """
     Verifica si el consentimiento del usuario (widget_consents) sigue siendo válido.
@@ -24,6 +32,14 @@ async def check_consent(
       - valid: False si alguno de los requerimientos está activo y el consentimiento está vencido o ausente
     """
     try:
+        request_ip = get_request_ip(request)
+        enforce_rate_limit(
+            scope="check_consent_ip",
+            key=f"{public_client_id}:{request_ip}",
+            limit=90,
+            window_seconds=60,
+        )
+
         # 1️⃣ Obtener client_id
         client_res = (
             supabase.table("clients")
@@ -33,7 +49,6 @@ async def check_consent(
         )
 
         if not client_res.data:
-            print(f"⚠️ Cliente no encontrado para public_client_id={public_client_id}")
             raise HTTPException(status_code=404, detail="Client not found")
 
         client_id = client_res.data[0]["id"]
@@ -63,34 +78,78 @@ async def check_consent(
 
         # 🧩 Si ningún tipo de consentimiento es requerido → válido automáticamente
         if not any([require_email, require_phone, require_terms]):
-            print("ℹ️ Ningún tipo de consentimiento requerido → válido automáticamente")
             return {"valid": True, "reason": "no_requirements"}
 
-        # 3️⃣ Buscar último consentimiento registrado
-        consent_res = (
-            supabase.table("widget_consents")
-            .select("consent_at")
-            .eq("client_id", client_id)
-            .order("consent_at", desc=True)
-            .limit(1)
-            .execute()
-        )
+        # 3️⃣ Resolver consentimiento por token (per-session/per-user)
+        consent_row = None
+        if consent_token:
+            consent_res = (
+                supabase.table("widget_consents")
+                .select("id, consent_at, email, phone, accepted_terms, accepted_email_marketing")
+                .eq("client_id", client_id)
+                .eq("id", consent_token)
+                .limit(1)
+                .execute()
+            )
+            consent_row = (consent_res.data or [None])[0]
+
+        # 4️⃣ Fallback legacy: email/phone si no hay token
+        if not consent_row and (email or phone):
+            query = (
+                supabase.table("widget_consents")
+                .select("id, consent_at, email, phone, accepted_terms, accepted_email_marketing")
+                .eq("client_id", client_id)
+                .order("consent_at", desc=True)
+                .limit(1)
+            )
+            if email:
+                query = query.eq("email", email.strip())
+            if phone:
+                query = query.eq("phone", phone.strip())
+            fallback = query.execute()
+            consent_row = (fallback.data or [None])[0]
 
         # ❌ Sin registro
-        if not consent_res.data or len(consent_res.data) == 0:
-            print(f"⚠️ No hay consentimiento registrado para {public_client_id}")
+        if not consent_row:
             return {
                 "valid": False,
-                "reason": "no_consent_record",
+                "reason": "no_consent_record_for_subject",
                 "require_email": require_email,
                 "require_phone": require_phone,
                 "require_terms": require_terms,
             }
 
-        # 🧠 Validar registro
-        consent_at_str = consent_res.data[0].get("consent_at")
+        # 5️⃣ Validar campos requeridos explícitos
+        if require_email and not (consent_row.get("email") or "").strip():
+            return {
+                "valid": False,
+                "reason": "missing_required_email_consent",
+                "require_email": require_email,
+                "require_phone": require_phone,
+                "require_terms": require_terms,
+            }
+
+        if require_phone and not (consent_row.get("phone") or "").strip():
+            return {
+                "valid": False,
+                "reason": "missing_required_phone_consent",
+                "require_email": require_email,
+                "require_phone": require_phone,
+                "require_terms": require_terms,
+            }
+
+        if require_terms and not bool(consent_row.get("accepted_terms")):
+            return {
+                "valid": False,
+                "reason": "missing_required_terms_consent",
+                "require_email": require_email,
+                "require_phone": require_phone,
+                "require_terms": require_terms,
+            }
+
+        # 6️⃣ Validar fecha de consentimiento
+        consent_at_str = consent_row.get("consent_at")
         if not consent_at_str:
-            print(f"⚠️ Registro de consentimiento inválido (sin fecha) para {public_client_id}")
             return {
                 "valid": False,
                 "reason": "invalid_record",
@@ -101,9 +160,10 @@ async def check_consent(
 
         # ⏳ Parsear fecha y calcular vencimiento
         try:
-            consent_at = datetime.fromisoformat(consent_at_str.replace("Z", ""))
+            consent_at = datetime.fromisoformat(consent_at_str.replace("Z", "+00:00"))
+            if consent_at.tzinfo is None:
+                consent_at = consent_at.replace(tzinfo=timezone.utc)
         except Exception:
-            print(f"⚠️ Error parseando fecha {consent_at_str}")
             return {
                 "valid": False,
                 "reason": "invalid_date_format",
@@ -113,30 +173,30 @@ async def check_consent(
             }
 
         expires_at = consent_at + timedelta(days=renewal_days)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # ✅ Consentimiento vigente
         if now < expires_at:
-            remaining_days = (expires_at - now).days
-            print(f"✅ Consentimiento vigente ({remaining_days} días restantes)")
+            remaining_days = max((expires_at - now).days, 0)
             return {
                 "valid": True,
                 "reason": "active",
                 "consent_at": consent_at.isoformat(),
                 "expires_at": expires_at.isoformat(),
                 "remaining_days": remaining_days,
+                "consent_token": consent_row.get("id"),
                 "require_email": require_email,
                 "require_phone": require_phone,
                 "require_terms": require_terms,
             }
 
         # ❌ Consentimiento vencido (al menos uno activo)
-        print(f"⚠️ Consentimiento vencido o faltante → mostrar pantalla")
         return {
             "valid": False,
             "reason": "expired",
             "consent_at": consent_at.isoformat(),
             "expires_at": expires_at.isoformat(),
+            "consent_token": consent_row.get("id"),
             "require_email": require_email,
             "require_phone": require_phone,
             "require_terms": require_terms,
@@ -144,6 +204,6 @@ async def check_consent(
 
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"❌ Error inesperado en /check_consent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Unexpected error in /check_consent")
+        raise HTTPException(status_code=500, detail="check_consent_failed")

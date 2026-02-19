@@ -17,6 +17,7 @@ from api.modules.whatsapp.whatsapp_sender import (
 )
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.authz import authorize_client_request
+from api.internal_auth import has_valid_internal_token
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -564,6 +565,10 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         template_name=template_name,
         language_code=language_code,
         parameters=parameters,
+        purpose="transactional",
+        recipient_email=appointment.get("user_email"),
+        policy_source="appointments_confirmation",
+        policy_source_id=str(appointment.get("id") or ""),
     )
 
     if not result["success"]:
@@ -1062,6 +1067,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
     try:
         # Ensure fields are present even if insert response is partial.
         appointment_for_confirmation = {
+            "id": appointment.get("id") or appointment_id,
             "client_id": appointment.get("client_id") or str(payload.client_id),
             "user_name": appointment.get("user_name") or payload.user_name,
             "user_email": appointment.get("user_email") or payload.user_email,
@@ -1158,12 +1164,17 @@ async def create_appointment(payload: CreateAppointmentPayload):
 
 
 @router.post("/create_appointment", tags=["Appointments"])
-async def create_appointment_http(payload: CreateAppointmentPayload):
+async def create_appointment_http(payload: CreateAppointmentPayload, request: Request):
     """
     HTTP wrapper for appointment creation.
     Keeps internal function return shape for non-HTTP callers while returning
     proper HTTP status codes to frontend/API consumers.
     """
+    # Dashboard/API calls must prove tenant ownership. Internal automation
+    # can bypass bearer auth via the dedicated internal token.
+    if not has_valid_internal_token(request):
+        authorize_client_request(request, str(payload.client_id))
+
     result = await create_appointment(payload)
 
     if not isinstance(result, dict):

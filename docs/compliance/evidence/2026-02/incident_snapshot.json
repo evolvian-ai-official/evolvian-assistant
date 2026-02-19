@@ -1,0 +1,44 @@
+{
+  "snapshot_at": "2026-02-19T19:42:12.532049+00:00",
+  "window_hours": 24,
+  "max_rows": 1000,
+  "secret_checks": [
+    {
+      "env": "SUPABASE_SERVICE_ROLE_KEY",
+      "configured": true
+    },
+    {
+      "env": "EVOLVIAN_INTERNAL_TASK_TOKEN",
+      "configured": false
+    },
+    {
+      "env": "META_APP_SECRET",
+      "configured": false
+    },
+    {
+      "env": "TWILIO_AUTH_TOKEN",
+      "configured": false
+    },
+    {
+      "env": "RESEND_API_KEY",
+      "configured": true
+    }
+  ],
+  "secret_health": "fail",
+  "history_failures": {
+    "scanned_rows": 0,
+    "failed_rows": 0,
+    "failed_by_channel": {},
+    "errors": [
+      "[Errno 8] nodename nor servname provided, or not known"
+    ]
+  },
+  "dsar_overdue": {
+    "scanned_rows": 0,
+    "open_count": 0,
+    "overdue_count": 0,
+    "errors": [
+      "[Errno 8] nodename nor servname provided, or not known"
+    ]
+  }
+}

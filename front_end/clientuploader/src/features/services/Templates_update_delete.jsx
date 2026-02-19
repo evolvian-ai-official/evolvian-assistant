@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { authFetch } from "../../lib/authFetch";
 import "../../components/ui/internal-admin-responsive.css";
 
 const toMinutes = (value, unit) => {
@@ -180,7 +181,7 @@ export default function TemplatesUpdateDelete({
           formData.append("client_id", clientId || "");
           formData.append("file", footerImageFile);
 
-          const uploadRes = await fetch(`${import.meta.env.VITE_API_URL}/message_templates/footer_image`, {
+          const uploadRes = await authFetch(`${import.meta.env.VITE_API_URL}/message_templates/footer_image`, {
             method: "POST",
             body: formData,
           });
@@ -203,7 +204,7 @@ export default function TemplatesUpdateDelete({
         payload.template_name = templateName;
       }
 
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`, {
+      const res = await authFetch(`${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -231,7 +232,7 @@ export default function TemplatesUpdateDelete({
     try {
       setLoading(true);
 
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`, {
+      const res = await authFetch(`${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`, {
         method: "DELETE",
       });
 

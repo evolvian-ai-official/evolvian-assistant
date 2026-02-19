@@ -6,6 +6,8 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.modules.calendar.notify_business_owner import notify_business_owner
 from api.modules.calendar_logic import get_availability_from_google_calendar as get_availability
+from api.authz import authorize_client_request
+from api.internal_auth import has_valid_internal_token
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,6 +28,15 @@ async def book_calendar(request: Request):
         logger.info(f"📩 Received book_calendar request: {payload}")
 
         client_id = payload.get("client_id")
+        if not client_id:
+            return JSONResponse(
+                content={"success": False, "message": "Missing client_id."},
+                status_code=400,
+            )
+
+        if not has_valid_internal_token(request):
+            authorize_client_request(request, str(client_id))
+
         user_email = payload.get("user_email")
         user_name = payload.get("user_name")
         scheduled_time = datetime.fromisoformat(payload.get("scheduled_time"))

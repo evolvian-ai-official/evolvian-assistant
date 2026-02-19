@@ -3,10 +3,9 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import os
 import urllib.parse
 import logging
-import base64
-import json
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.oauth_state import encode_signed_state
 
 router = APIRouter(tags=["Calendar"])
 
@@ -47,16 +46,6 @@ def _resolve_redirect_uri(request: Request) -> str | None:
     return local_uri or dynamic_uri or prod_uri
 
 
-def _encode_state(client_id: str, return_to: str | None, oauth_redirect_uri: str | None = None) -> str:
-    payload = {"client_id": client_id}
-    if return_to:
-        payload["return_to"] = return_to
-    if oauth_redirect_uri:
-        payload["oauth_redirect_uri"] = oauth_redirect_uri
-    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
-
-
 # ✅ Real Google Calendar OAuth initializer
 @router.get("/auth/google_calendar/init")
 def google_calendar_init(
@@ -75,7 +64,16 @@ def google_calendar_init(
     scopes = ["https://www.googleapis.com/auth/calendar"]
     scope_param = urllib.parse.quote(" ".join(scopes), safe="")
     redirect_uri_param = urllib.parse.quote(REDIRECT_URI, safe="")
-    state = urllib.parse.quote(_encode_state(client_id, return_to, REDIRECT_URI), safe="")
+    state = urllib.parse.quote(
+        encode_signed_state(
+            {
+                "client_id": client_id,
+                "return_to": return_to,
+                "oauth_redirect_uri": REDIRECT_URI,
+            }
+        ),
+        safe="",
+    )
 
     auth_url = (
         "https://accounts.google.com/o/oauth2/v2/auth"

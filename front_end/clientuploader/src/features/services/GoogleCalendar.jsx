@@ -329,12 +329,22 @@ export default function GoogleCalendarSettings() {
     fetchGoogleConnectionStatus();
   }, [clientId]);
 
-  const handleConnectGoogleCalendar = () => {
+  const handleConnectGoogleCalendar = async () => {
     if (!clientId) return;
     const returnTo = `${window.location.origin}/services/calendar`;
-    window.location.href =
-      `${backendUrl}/api/auth/google_calendar/init?client_id=${encodeURIComponent(clientId)}` +
-      `&return_to=${encodeURIComponent(returnTo)}`;
+    try {
+      const res = await authFetch(
+        `${backendUrl}/api/auth/google_calendar/init?client_id=${encodeURIComponent(clientId)}` +
+          `&return_to=${encodeURIComponent(returnTo)}` +
+          `&as_json=true`
+      );
+      if (!res.ok) throw new Error("google_oauth_init_failed");
+      const data = await res.json();
+      if (!data?.auth_url) throw new Error("missing_auth_url");
+      window.location.href = data.auth_url;
+    } catch {
+      toast({ title: t("error"), description: t("google_calendar_connect_error"), variant: "destructive" });
+    }
   };
 
   const handleDisconnectGoogleCalendar = async () => {

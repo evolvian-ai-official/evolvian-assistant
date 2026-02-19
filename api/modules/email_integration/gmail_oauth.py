@@ -14,7 +14,13 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport import requests as google_requests
 
+from api.compliance.email_policy import (
+    begin_email_send_audit,
+    complete_email_send_audit,
+)
+from api.compliance.email_marketing_standard import ensure_marketing_footer
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter(prefix="/gmail_oauth", tags=["Gmail OAuth"])
 
@@ -89,9 +95,10 @@ def _oauth_redirect(request: Request, **query):
 #   - Guardamos 'state' vinculado al client_id (en channels como fila temporal)
 # ---------------------------------------------------------
 @router.get("/authorize", response_model=None)
-async def authorize(client_id: str):
+async def authorize(request: Request, client_id: str):
     if not GMAIL_CLIENT_ID or not GMAIL_CLIENT_SECRET or not GMAIL_REDIRECT_URI:
         raise HTTPException(status_code=500, detail="Faltan variables de entorno Gmail OAuth.")
+    authorize_client_request(request, client_id)
 
     flow = Flow.from_client_config(
         {
@@ -311,10 +318,56 @@ def get_gmail_service(channel: dict):
 # 4️⃣ Enviar correo Gmail (usa el canal correcto del cliente)
 # ---------------------------------------------------------
 @router.post("/send_reply", response_model=None)
-async def send_reply(payload: dict):
+async def send_reply(payload: dict, request: Request):
     client_id = payload.get("client_id")
     if not client_id:
         raise HTTPException(status_code=400, detail="Falta client_id")
+    to_email = str(payload.get("to_email") or "").strip().lower()
+    if not to_email:
+        raise HTTPException(status_code=400, detail="Falta to_email")
+
+    purpose = str(payload.get("purpose") or "transactional").strip().lower() or "transactional"
+    policy_source = str(payload.get("policy_source") or "gmail_oauth_send_reply").strip()
+    source_id = (
+        str(payload.get("source_id") or payload.get("thread_id") or "").strip() or None
+    )
+    html_body = str(payload.get("html") or "")
+
+    if purpose == "marketing":
+        campaign_id = str(payload.get("campaign_id") or "").strip()
+        campaign_owner_email = str(payload.get("campaign_owner_email") or "").strip().lower()
+        unsubscribe_url = str(payload.get("unsubscribe_url") or "").strip()
+        company_postal_address = str(payload.get("company_postal_address") or "").strip()
+
+        if not campaign_id:
+            raise HTTPException(status_code=400, detail="campaign_id is required for marketing email")
+        if not campaign_owner_email or "@" not in campaign_owner_email:
+            raise HTTPException(
+                status_code=400,
+                detail="campaign_owner_email is required for marketing email",
+            )
+        if not unsubscribe_url or not unsubscribe_url.lower().startswith(("https://", "http://")):
+            raise HTTPException(
+                status_code=400,
+                detail="unsubscribe_url (http/https) is required for marketing email",
+            )
+        if not company_postal_address:
+            raise HTTPException(
+                status_code=400,
+                detail="company_postal_address is required for marketing email",
+            )
+
+        html_body = ensure_marketing_footer(
+            html_body=html_body,
+            unsubscribe_url=unsubscribe_url,
+            campaign_owner_email=campaign_owner_email,
+            company_postal_address=company_postal_address,
+        )
+
+        if not source_id:
+            source_id = campaign_id
+
+    authorize_client_request(request, client_id)
 
     # Filtra el canal correcto
     res = (
@@ -332,8 +385,25 @@ async def send_reply(payload: dict):
 
     service = get_gmail_service(channel)
 
-    msg = MIMEText(payload.get("html") or "", "html")
-    msg["to"] = payload.get("to_email")
+    allowed, policy = begin_email_send_audit(
+        client_id=client_id,
+        to_email=to_email,
+        purpose=purpose,
+        source=policy_source,
+        source_id=source_id,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "OUTBOUND_POLICY_BLOCKED",
+                "reason": policy.get("reason"),
+                "proof_id": policy.get("proof_id"),
+            },
+        )
+
+    msg = MIMEText(html_body, "html")
+    msg["to"] = to_email
     msg["subject"] = payload.get("subject")
     msg["from"] = channel.get("value") or ""  # ← nuevo: fija el remitente del canal
 
@@ -345,9 +415,21 @@ async def send_reply(payload: dict):
 
     try:
         result = service.users().messages().send(userId="me", body=body).execute()
+        complete_email_send_audit(
+            client_id=client_id,
+            policy_result=policy,
+            success=True,
+            provider_message_id=(result or {}).get("id") if isinstance(result, dict) else None,
+        )
         print(f"✅ Correo enviado correctamente. ID: {result.get('id')}")
         return JSONResponse({"status": "sent", "message_id": result.get("id")})
     except Exception as e:
+        complete_email_send_audit(
+            client_id=client_id,
+            policy_result=policy,
+            success=False,
+            send_error="gmail_send_exception",
+        )
         print(f"🔥 Error enviando correo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -356,7 +438,8 @@ async def send_reply(payload: dict):
 # 5️⃣ Smoke test (opcional) — valida perfil con el canal del cliente
 # ---------------------------------------------------------
 @router.get("/smoke", response_model=None)
-async def smoke(client_id: str):
+async def smoke(request: Request, client_id: str):
+    authorize_client_request(request, client_id)
     res = (
         supabase.table("channels")
         .select("*")

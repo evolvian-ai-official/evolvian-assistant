@@ -126,7 +126,7 @@ export default function EmailSetup() {
 
   const handleConnect = async () => {
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${import.meta.env.VITE_API_URL}/gmail_oauth/authorize?client_id=${clientId}`
       );
       if (res.status === 404) {

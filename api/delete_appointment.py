@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 import requests
 import logging
 from api.modules.assistant_rag.supabase_client import supabase
+from api.authz import authorize_client_request
 
 router = APIRouter(tags=["Calendar"])
 logger = logging.getLogger("delete_appointment")
@@ -10,6 +11,7 @@ logger = logging.getLogger("delete_appointment")
 
 @router.delete("/calendar/appointment/{appointment_id}")
 def delete_appointment(
+    request: Request,
     appointment_id: str = Path(..., description="UUID of the appointment to delete"),
     client_id: str = Query(..., description="Client ID for authentication"),
 ):
@@ -24,6 +26,7 @@ def delete_appointment(
     logger.info(f"🗑️ Deleting appointment {appointment_id} for client_id={client_id}")
 
     try:
+        authorize_client_request(request, client_id)
         # 1️⃣ Fetch the appointment
         appt_res = (
             supabase.table("appointments")

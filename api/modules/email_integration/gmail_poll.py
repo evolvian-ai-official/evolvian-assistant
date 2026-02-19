@@ -5,7 +5,7 @@ import json
 import requests
 from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from googleapiclient.discovery import build
@@ -14,6 +14,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport import requests as google_requests
 
 from api.modules.assistant_rag.supabase_client import supabase
+from api.internal_auth import require_internal_request
 
 router = APIRouter(prefix="/gmail_poll", tags=["Gmail Automation"])
 
@@ -142,12 +143,13 @@ def _send_webhook(email: str, history_id: Optional[str]):
 # 🚀 Poll principal (para CRON)
 # ------------------------------------------------------------
 @router.post("/check")
-async def check_new_emails():
+async def check_new_emails(request: Request):
     """
     Revisa cambios en Gmail por cliente usando historyId.
     - Un webhook por canal cuando hay nuevos cambios.
     - Resiliente a startHistoryId expirado: re-bootstrap.
     """
+    require_internal_request(request)
     print("🚀 Gmail poll (historyId) iniciando...")
 
     try:

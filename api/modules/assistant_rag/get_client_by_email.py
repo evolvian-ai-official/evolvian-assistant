@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from api.modules.assistant_rag.supabase_client import supabase
+from api.internal_auth import require_internal_request
 
 router = APIRouter(
     prefix="/get_client_by_email",
@@ -7,11 +8,15 @@ router = APIRouter(
 )
 
 @router.get("")
-async def get_client_by_email(email: str = Query(..., description="Email registrado en el canal del cliente")):
+async def get_client_by_email(
+    request: Request,
+    email: str = Query(..., description="Email registrado en el canal del cliente"),
+):
     """
     Retorna el client_id y metadatos asociados a un email registrado como canal.
     Este endpoint es usado por n8n y los flujos de automatización.
     """
+    require_internal_request(request)
     print(f"📧 Buscando cliente asociado al email: {email}")
 
     if not email:
@@ -36,6 +41,8 @@ async def get_client_by_email(email: str = Query(..., description="Email registr
         client_id = channel["client_id"]
         print(f"🔗 Canal encontrado. client_id={client_id}")
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Error consultando canales: {e}")
         raise HTTPException(status_code=500, detail="Error interno buscando el canal de email")
@@ -66,6 +73,8 @@ async def get_client_by_email(email: str = Query(..., description="Email registr
             "provider": channel["provider"]
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Error obteniendo datos del cliente: {e}")
         raise HTTPException(status_code=500, detail="Error interno consultando cliente")

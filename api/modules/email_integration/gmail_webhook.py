@@ -10,9 +10,13 @@ from email.mime.text import MIMEText
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
+from api.compliance.email_policy import (
+    begin_email_send_audit,
+    complete_email_send_audit,
+)
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.email_integration.gmail_oauth import get_gmail_service  # ✅ ruta corregida
-from api.modules.assistant_rag.chat_email import chat_email  # Pipeline RAG Evolvian
+from api.modules.assistant_rag.chat_email import process_chat_email_payload  # Pipeline RAG Evolvian
 
 # ==========================================================
 # 📬 Gmail Webhook — Evolvian AI (versión sin Pub/Sub, compatible con payload Evolvian o Pub/Sub)
@@ -202,16 +206,18 @@ async def process_gmail_message(email_address: str, history_id: str | None):
             target_thread_id = thread_id
 
         # 7️⃣ Ejecutar pipeline RAG Evolvian (con timeout)
-        fake_request = Request(scope={"type": "http"})
-        fake_request._body = json.dumps({
-            "from_email": email_address,
-            "subject": subject,
-            "message": snippet,
-            "provider": "gmail",
-        }).encode("utf-8")
-
         try:
-            result = await asyncio.wait_for(chat_email(fake_request), timeout=30)
+            result = await asyncio.wait_for(
+                process_chat_email_payload(
+                    {
+                        "from_email": email_address,
+                        "subject": subject,
+                        "message": snippet,
+                        "provider": "gmail",
+                    }
+                ),
+                timeout=30,
+            )
             answer = result.get("answer", "Gracias por tu mensaje. Pronto te responderemos.")
         except asyncio.TimeoutError:
             print("⏱️ chat_email excedió 30s, respuesta por defecto.")
@@ -231,11 +237,35 @@ async def process_gmail_message(email_address: str, history_id: str | None):
         raw_b64 = base64.urlsafe_b64encode(reply.as_bytes()).decode("utf-8")
         reply_body = {"raw": raw_b64, "threadId": target_thread_id}
 
-        try:
-            service.users().messages().send(userId="me", body=reply_body).execute()
-            print(f"✅ Respuesta enviada a {from_email} (hilo {target_thread_id})")
-        except Exception as e:
-            print(f"⚠️ Error enviando respuesta Gmail: {e}")
+        allowed, policy = begin_email_send_audit(
+            client_id=client_id,
+            to_email=from_email,
+            purpose="transactional",
+            source="gmail_webhook_auto_reply",
+            source_id=message_id,
+        )
+        if allowed:
+            try:
+                send_result = service.users().messages().send(userId="me", body=reply_body).execute()
+                complete_email_send_audit(
+                    client_id=client_id,
+                    policy_result=policy,
+                    success=True,
+                    provider_message_id=(send_result or {}).get("id")
+                    if isinstance(send_result, dict)
+                    else None,
+                )
+                print(f"✅ Respuesta enviada a {from_email} (hilo {target_thread_id})")
+            except Exception as e:
+                complete_email_send_audit(
+                    client_id=client_id,
+                    policy_result=policy,
+                    success=False,
+                    send_error="gmail_send_exception",
+                )
+                print(f"⚠️ Error enviando respuesta Gmail: {e}")
+        else:
+            print(f"⛔ Respuesta bloqueada por política outbound. to={from_email} proof={policy.get('proof_id')}")
 
         # 9️⃣ Marcar como leído (si correspondía)
         try:

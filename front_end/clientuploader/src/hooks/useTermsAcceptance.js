@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { authFetch } from "../lib/authFetch";
 
 export function useTermsAcceptance(clientId) {
   const [hasAccepted, setHasAccepted] = useState(null); // null = loading
@@ -8,7 +9,7 @@ export function useTermsAcceptance(clientId) {
 
     const checkAcceptance = async () => {
       try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL}/accepted_terms?client_id=${clientId}`);
+        const res = await authFetch(`${import.meta.env.VITE_API_URL}/accepted_terms?client_id=${clientId}`);
         const data = await res.json();
         setHasAccepted(data.has_accepted); // ✅ usa la clave que devuelve el backend
       } catch (err) {
@@ -22,7 +23,7 @@ export function useTermsAcceptance(clientId) {
 
   const acceptTerms = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/accept_terms`, {
+      const res = await authFetch(`${import.meta.env.VITE_API_URL}/accept_terms`, {
 
         method: "POST",
         headers: { "Content-Type": "application/json" },
