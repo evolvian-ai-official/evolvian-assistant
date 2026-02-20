@@ -745,9 +745,46 @@ def _upsert_client_template_record(row: dict) -> None:
             .upsert(row, on_conflict="client_id,meta_template_id")
             .execute()
         )
+        return
+    except Exception as upsert_error:
+        logger.warning(
+            "⚠️ Upsert client_whatsapp_templates failed; falling back to update/insert "
+            "(likely missing unique index on client_id,meta_template_id) | "
+            "client_id=%s | meta_template_id=%s | error=%s",
+            row.get("client_id"),
+            row.get("meta_template_id"),
+            upsert_error,
+        )
+
+    # Fallback path for environments where unique constraints were not applied.
+    try:
+        updated = (
+            supabase
+            .table("client_whatsapp_templates")
+            .update(row)
+            .eq("client_id", row.get("client_id"))
+            .eq("meta_template_id", row.get("meta_template_id"))
+            .execute()
+        )
+        if (updated.data or []):
+            return
     except Exception:
         logger.exception(
-            "❌ Failed upserting client_whatsapp_templates (is migration applied?) | client_id=%s | meta_template_id=%s",
+            "⚠️ Fallback update failed for client_whatsapp_templates | client_id=%s | meta_template_id=%s",
+            row.get("client_id"),
+            row.get("meta_template_id"),
+        )
+
+    try:
+        (
+            supabase
+            .table("client_whatsapp_templates")
+            .insert(row)
+            .execute()
+        )
+    except Exception:
+        logger.exception(
+            "❌ Fallback insert failed for client_whatsapp_templates | client_id=%s | meta_template_id=%s",
             row.get("client_id"),
             row.get("meta_template_id"),
         )

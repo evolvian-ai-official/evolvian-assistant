@@ -6,7 +6,6 @@ from api.authz import authorize_client_request
 from api.config.config import supabase
 from api.modules.whatsapp.template_sync import (
     get_client_template_sync_map,
-    refresh_client_template_statuses,
     sync_canonical_templates_for_client,
 )
 
@@ -39,7 +38,12 @@ def sync_templates(payload: SyncTemplatesPayload, request: Request):
 def refresh_templates_status(payload: SyncTemplatesPayload, request: Request):
     try:
         authorize_client_request(request, payload.client_id)
-        summary = refresh_client_template_statuses(client_id=payload.client_id)
+        # "refresh" must also provision missing rows for canonical templates.
+        # Otherwise clients with empty/stale client_whatsapp_templates stay "not_synced".
+        summary = sync_canonical_templates_for_client(
+            client_id=payload.client_id,
+            force_refresh=payload.force_refresh,
+        )
         return summary
     except HTTPException:
         raise
