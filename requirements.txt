@@ -44,6 +44,7 @@ websocket-client
 python-jose==3.5.0
 bcrypt==4.3.0
 PyJWT==2.10.1
+cryptography>=42.0.0
 
 # Utils
 python-dotenv==1.1.0
@@ -64,4 +65,3 @@ pytz
 email-validator
 
 Babel==2.15.0
-

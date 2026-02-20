@@ -8,6 +8,7 @@ from api.compliance.outbound_policy import (
     log_outbound_policy_event,
 )
 from api.modules.assistant_rag.supabase_client import supabase
+from api.security.whatsapp_token_crypto import decrypt_whatsapp_token
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ async def send_whatsapp_message(
             channel = channel["data"][0]
 
         wa_phone_id = channel.get("wa_phone_id")
-        wa_token = channel.get("wa_token")
+        wa_token = decrypt_whatsapp_token(channel.get("wa_token"))
 
     # Fallback ENV (legacy / local)
     if not wa_phone_id:
@@ -158,7 +159,8 @@ async def send_whatsapp_message_for_client(
         logger.error("❌ WhatsApp no configurado | client_id=%s", client_id)
         return False
 
-    channel = resp.data[0]  # ✅ FIX CLAVE
+    channel = dict(resp.data[0] or {})  # ✅ FIX CLAVE
+    channel["wa_token"] = decrypt_whatsapp_token(channel.get("wa_token"))
 
     to_number = to_number.replace(" ", "").strip()
 
@@ -408,7 +410,8 @@ async def send_whatsapp_template_for_client(
                 "policy_proof_id": policy.get("proof_id"),
             }
 
-        channel = resp.data[0]
+        channel = dict(resp.data[0] or {})
+        channel["wa_token"] = decrypt_whatsapp_token(channel.get("wa_token"))
 
         send_result = await send_meta_template(
             to_number=to_number,

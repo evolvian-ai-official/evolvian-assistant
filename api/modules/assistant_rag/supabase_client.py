@@ -7,6 +7,7 @@ from datetime import datetime
 from api.config.config import supabase
 from supabase import create_client, Client
 from typing import Optional, List
+from api.security.whatsapp_token_crypto import decrypt_whatsapp_token
 
 
 # Configurar Stripe
@@ -361,9 +362,10 @@ def get_whatsapp_credentials(client_id: str) -> dict:
             raise Exception("❌ No se encontraron credenciales de WhatsApp para este cliente.")
 
         print("✅ Credenciales WhatsApp encontradas.")
+        wa_token = decrypt_whatsapp_token(response.data.get("wa_token"))
         return {
             "wa_phone_id": response.data["wa_phone_id"],
-            "wa_token": response.data["wa_token"]
+            "wa_token": wa_token
         }
 
     except Exception as e:
@@ -390,7 +392,9 @@ def get_channel_by_wa_phone_id(wa_phone_id: str):
             return None
 
         print("✅ Canal WhatsApp encontrado")
-        return res.data
+        data = dict(res.data or {})
+        data["wa_token"] = decrypt_whatsapp_token(data.get("wa_token"))
+        return data
 
     except Exception as e:
         print(f"❌ Error en get_channel_by_wa_phone_id: {e}")
@@ -452,7 +456,10 @@ async def get_client_whatsapp_config(client_id: str):
             .maybe_single() \
             .execute()
 
-        return res.data
+        data = dict(res.data or {}) if res and res.data else None
+        if data:
+            data["wa_token"] = decrypt_whatsapp_token(data.get("wa_token"))
+        return data
     except Exception as e:
         print(f"❌ Failed to fetch WhatsApp config for client {client_id}: {e}")
         return None

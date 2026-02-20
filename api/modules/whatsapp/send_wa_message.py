@@ -2,6 +2,7 @@ import requests
 from typing import List, Optional
 
 from api.modules.assistant_rag.supabase_client import supabase
+from api.security.whatsapp_token_crypto import decrypt_whatsapp_token
 
 
 # =====================================================
@@ -129,7 +130,7 @@ def send_whatsapp_message_for_client(
         return False
 
     wa_phone_id = resp.data.get("wa_phone_id")
-    wa_token = resp.data.get("wa_token")
+    wa_token = decrypt_whatsapp_token(resp.data.get("wa_token"))
 
     if not wa_phone_id or not wa_token:
         print(

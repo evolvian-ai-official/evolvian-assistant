@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from api.config.config import supabase
+from api.security.whatsapp_token_crypto import decrypt_whatsapp_token
 
 logger = logging.getLogger(__name__)
 
@@ -363,6 +364,52 @@ def resolve_waba_id_from_phone(*, wa_phone_id: str, wa_token: str) -> Optional[s
     return None
 
 
+def validate_waba_access(*, waba_id: str, wa_token: str) -> bool:
+    normalized_waba_id = str(waba_id or "").strip()
+    if not normalized_waba_id:
+        return False
+    try:
+        response = _meta_request(
+            "GET",
+            normalized_waba_id,
+            token=wa_token,
+            params={"fields": "id"},
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "⚠️ WABA access validation failed | waba_id=%s | %s",
+                normalized_waba_id,
+                _format_meta_error(response),
+            )
+            return False
+
+        payload = response.json()
+        remote_id = str((payload or {}).get("id") or "").strip()
+        return remote_id == normalized_waba_id
+    except Exception:
+        logger.exception("❌ validate_waba_access failed | waba_id=%s", normalized_waba_id)
+        return False
+
+
+def validate_waba_phone_binding(
+    *,
+    waba_id: str,
+    wa_phone_id: str,
+    wa_token: str,
+) -> bool:
+    normalized_waba_id = str(waba_id or "").strip()
+    normalized_phone_id = str(wa_phone_id or "").strip()
+    if not normalized_waba_id or not normalized_phone_id:
+        return False
+    if not validate_waba_access(waba_id=normalized_waba_id, wa_token=wa_token):
+        return False
+    return _waba_has_phone_number(
+        waba_id=normalized_waba_id,
+        wa_phone_id=normalized_phone_id,
+        wa_token=wa_token,
+    )
+
+
 def _ensure_body_placeholders(text: str, parameter_count: int) -> str:
     body = (text or "").strip()
     if not body:
@@ -485,24 +532,39 @@ def get_active_whatsapp_channel(client_id: str) -> Optional[dict]:
             .execute()
         )
     except Exception:
-        # Backward-compatible fallback when wa_waba_id column is not yet migrated.
-        response = (
-            supabase
-            .table("channels")
-            .select("id, wa_phone_id, wa_token")
-            .eq("client_id", client_id)
-            .eq("type", "whatsapp")
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        )
+        # Backward-compatible fallback when only wa_waba_id exists.
+        try:
+            response = (
+                supabase
+                .table("channels")
+                .select("id, wa_phone_id, wa_token, wa_waba_id")
+                .eq("client_id", client_id)
+                .eq("type", "whatsapp")
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            response = (
+                supabase
+                .table("channels")
+                .select("id, wa_phone_id, wa_token")
+                .eq("client_id", client_id)
+                .eq("type", "whatsapp")
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
 
     rows = response.data or []
     if not rows:
         return None
 
     row = dict(rows[0] or {})
+    if not row.get("wa_business_account_id") and row.get("wa_waba_id"):
+        row["wa_business_account_id"] = row.get("wa_waba_id")
     row.setdefault("wa_business_account_id", None)
+    row["wa_token"] = decrypt_whatsapp_token(row.get("wa_token"))
 
     return row
 

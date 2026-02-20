@@ -4,7 +4,9 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.template_sync import (
     resolve_waba_id_from_phone,
     sync_canonical_templates_for_client,
+    validate_waba_phone_binding,
 )
+from api.security.whatsapp_token_crypto import encrypt_whatsapp_token
 from datetime import datetime
 import uuid
 import re
@@ -71,6 +73,7 @@ class WhatsAppLinkPayload(BaseModel):
     provider: str = "meta"
     wa_phone_id: str | None = None
     wa_token: str | None = None
+    wa_business_account_id: str | None = None
 
 
 class WhatsAppUnlinkPayload(BaseModel):
@@ -106,18 +109,48 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
         now = datetime.utcnow().isoformat()
         resolved_waba_id = None
 
-        # 4️⃣ Resolve WABA (manteniendo tu lógica actual)
+        # 4️⃣ Resolve or accept provided WABA id
         if payload.provider == "meta":
-            resolved_waba_id = resolve_waba_id_from_phone(
+            provided_waba_id = str(payload.wa_business_account_id or "").strip()
+            if provided_waba_id:
+                if not re.match(r"^\d{8,24}$", provided_waba_id):
+                    raise HTTPException(status_code=400, detail="wa_business_account_id inválido")
+                resolved_waba_id = provided_waba_id
+            else:
+                resolved_waba_id = resolve_waba_id_from_phone(
+                    wa_phone_id=str(payload.wa_phone_id or ""),
+                    wa_token=str(payload.wa_token or ""),
+                )
+                if not resolved_waba_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "No pudimos validar wa_business_account_id con el wa_phone_id/token proporcionados. "
+                            "Verifica credenciales de Meta o envía wa_business_account_id."
+                        ),
+                    )
+
+            if not validate_waba_phone_binding(
+                waba_id=str(resolved_waba_id or ""),
                 wa_phone_id=str(payload.wa_phone_id or ""),
                 wa_token=str(payload.wa_token or ""),
-            )
-            if not resolved_waba_id:
-                logger.warning(
-                    "⚠️ Could not resolve waba_id during link_whatsapp | client_id=%s | phone_id=%s",
-                    client_id,
-                    payload.wa_phone_id,
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "No se pudo validar el vínculo wa_business_account_id + wa_phone_id con ese token. "
+                        "Revisa permisos de Meta (WhatsApp Business Management)."
+                    ),
                 )
+
+        encrypted_wa_token = None
+        if payload.provider == "meta":
+            try:
+                encrypted_wa_token = encrypt_whatsapp_token(str(payload.wa_token or ""))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Meta requiere wa_token válido")
+            except RuntimeError as crypto_error:
+                raise HTTPException(status_code=500, detail=str(crypto_error))
 
         # 5️⃣ Deactivate previous WhatsApp channel
         supabase.table("channels") \
@@ -140,7 +173,7 @@ def link_whatsapp(payload: WhatsAppLinkPayload, request: Request):
             "value": number,
             "provider": payload.provider,
             "wa_phone_id": payload.wa_phone_id,
-            "wa_token": payload.wa_token,  # NEVER RETURN
+            "wa_token": encrypted_wa_token,  # encrypted at rest
             "is_active": True,
             "created_at": now,
             "updated_at": now,
@@ -279,15 +312,26 @@ def whatsapp_status(request: Request):
         auth_user_id = get_current_user_id(request)
         client_id = get_client_id_from_user(auth_user_id)
 
-        channel_res = (
-            supabase.table("channels")
-            .select("value, provider, wa_phone_id, wa_business_account_id")
-            .eq("client_id", client_id)
-            .eq("type", "whatsapp")
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        )
+        try:
+            channel_res = (
+                supabase.table("channels")
+                .select("value, provider, wa_phone_id, wa_business_account_id")
+                .eq("client_id", client_id)
+                .eq("type", "whatsapp")
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            channel_res = (
+                supabase.table("channels")
+                .select("value, provider, wa_phone_id")
+                .eq("client_id", client_id)
+                .eq("type", "whatsapp")
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
 
         if channel_res.data:
             return {
@@ -295,7 +339,7 @@ def whatsapp_status(request: Request):
                 "phone": channel_res.data[0]["value"],
                 "provider": channel_res.data[0]["provider"],
                 "wa_phone_id": channel_res.data[0]["wa_phone_id"],
-                "wa_business_account_id": channel_res.data[0]["wa_business_account_id"],
+                "wa_business_account_id": channel_res.data[0].get("wa_business_account_id"),
             }
 
         return {"connected": False}

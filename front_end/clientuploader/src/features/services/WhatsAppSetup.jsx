@@ -12,6 +12,7 @@ const API = import.meta.env.VITE_API_URL;
 const isValidPhone = (phone) => /^\+\d{11,15}$/.test(phone);
 const isValidPhoneId = (id) => /^\d{10,20}$/.test(id);
 const isValidToken = (token) => /^EA[A-Za-z0-9]{16,}$/.test(token);
+const isValidWabaId = (id) => !id || /^\d{8,24}$/.test(id);
 
 export default function WhatsAppSetup() {
   const { t } = useLanguage();
@@ -25,6 +26,7 @@ export default function WhatsAppSetup() {
   const [phone, setPhone] = useState("");
   const [waPhoneId, setWaPhoneId] = useState("");
   const [waToken, setWaToken] = useState("");
+  const [waBusinessAccountId, setWaBusinessAccountId] = useState("");
 
   const [isLocked, setIsLocked] = useState(false);
   const [status, setStatus] = useState({ message: "", type: "" });
@@ -33,6 +35,7 @@ export default function WhatsAppSetup() {
     phone: false,
     waPhoneId: false,
     waToken: false,
+    waBusinessAccountId: false,
   });
 
   useEffect(() => {
@@ -60,6 +63,7 @@ export default function WhatsAppSetup() {
         if (res.data.connected) {
           setPhone(res.data.phone || "");
           setWaPhoneId(res.data.wa_phone_id || "");
+          setWaBusinessAccountId(res.data.wa_business_account_id || "");
           setProvider(res.data.provider || "meta");
           setIsLocked(true);
         }
@@ -91,6 +95,11 @@ export default function WhatsAppSetup() {
       return;
     }
 
+    if (!isValidWabaId(waBusinessAccountId)) {
+      setStatus({ message: "WABA ID inválido", type: "error" });
+      return;
+    }
+
     try {
       setSubmitting(true);
       setStatus({ message: "", type: "" });
@@ -104,6 +113,7 @@ export default function WhatsAppSetup() {
           provider,
           wa_phone_id: waPhoneId,
           wa_token: waToken,
+          wa_business_account_id: waBusinessAccountId || null,
         },
         { headers }
       );
@@ -152,6 +162,7 @@ export default function WhatsAppSetup() {
       setPhone("");
       setWaPhoneId("");
       setWaToken("");
+      setWaBusinessAccountId("");
       setIsLocked(false);
       setStatus({ message: t("wa_disconnected"), type: "success" });
     } catch (err) {
@@ -177,6 +188,10 @@ export default function WhatsAppSetup() {
       return <p className="ia-help-error">{t("wa_error_token")}</p>;
     }
 
+    if (field === "waBusinessAccountId" && !isValidWabaId(value)) {
+      return <p className="ia-help-error">WABA ID inválido</p>;
+    }
+
     return null;
   };
 
@@ -192,7 +207,11 @@ export default function WhatsAppSetup() {
   }
 
   const disableConnect =
-    submitting || !isValidPhone(phone) || !isValidPhoneId(waPhoneId) || !isValidToken(waToken);
+    submitting ||
+    !isValidPhone(phone) ||
+    !isValidPhoneId(waPhoneId) ||
+    !isValidToken(waToken) ||
+    !isValidWabaId(waBusinessAccountId);
 
   return (
     <div className="ia-page">
@@ -250,6 +269,19 @@ export default function WhatsAppSetup() {
                 onBlur={() => setTouched((prev) => ({ ...prev, waPhoneId: true }))}
               />
               {showError("waPhoneId", waPhoneId)}
+            </div>
+
+            <div className="ia-form-field">
+              <label className="ia-form-label">WABA ID (optional, recommended)</label>
+              <input
+                className="ia-form-input"
+                type="text"
+                value={waBusinessAccountId}
+                disabled={isLocked}
+                onChange={(e) => setWaBusinessAccountId(e.target.value)}
+                onBlur={() => setTouched((prev) => ({ ...prev, waBusinessAccountId: true }))}
+              />
+              {showError("waBusinessAccountId", waBusinessAccountId)}
             </div>
 
             {!isLocked && (
