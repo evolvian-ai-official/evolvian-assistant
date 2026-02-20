@@ -118,7 +118,7 @@ export default function CreateAppointment({ disabled = false }) {
       setTemplatesLoading(true);
       try {
         const res = await authFetch(
-          `${API_BASE_URL}/message_templates?client_id=${clientId}&type=appointment_reminder`
+          `${API_BASE_URL}/message_templates?client_id=${clientId}&type=appointment_reminder&include_inactive=true`
         );
         const data = await res.json();
         setTemplates(Array.isArray(data) ? data : []);

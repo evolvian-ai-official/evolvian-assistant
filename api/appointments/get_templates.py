@@ -12,6 +12,7 @@ from api.modules.whatsapp.template_sync import (
     get_client_country_code,
     get_client_template_sync_map,
     infer_template_category,
+    sync_canonical_templates_for_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,25 +92,28 @@ def get_message_templates(
     try:
         authorize_client_request(request, str(client_id))
 
+        def run_templates_query():
+            query = (
+                supabase
+                .table("message_templates")
+                .select(
+                    "id, channel, type, is_active, body, frequency, template_name, label, meta_template_id"
+                )
+                .eq("client_id", str(client_id))
+            )
+
+            if not include_inactive:
+                query = query.eq("is_active", True)
+
+            if type:
+                query = query.eq("type", type)
+
+            return query.order("template_name").execute()
+
         # --------------------------
         # 1️⃣ Fetch message templates
         # --------------------------
-        query = (
-            supabase
-            .table("message_templates")
-            .select(
-                "id, channel, type, is_active, body, frequency, template_name, label, meta_template_id"
-            )
-            .eq("client_id", str(client_id))
-        )
-
-        if not include_inactive:
-            query = query.eq("is_active", True)
-
-        if type:
-            query = query.eq("type", type)
-
-        res = query.order("template_name").execute()
+        res = run_templates_query()
 
         if not hasattr(res, "data"):
             logger.error("Supabase returned malformed response")
@@ -117,6 +121,26 @@ def get_message_templates(
 
         templates = res.data or []
         client_id_str = str(client_id)
+        has_whatsapp_binding = any(
+            row.get("channel") == "whatsapp" and row.get("meta_template_id")
+            for row in templates
+        )
+
+        if not has_whatsapp_binding:
+            try:
+                bootstrap = sync_canonical_templates_for_client(
+                    client_id=client_id_str,
+                    force_refresh=False,
+                )
+                if bootstrap.get("synced"):
+                    res = run_templates_query()
+                    templates = res.data or []
+            except Exception:
+                logger.exception(
+                    "⚠️ WhatsApp template bootstrap sync failed in get_message_templates | client_id=%s",
+                    client_id_str,
+                )
+
         sync_map = get_client_template_sync_map(client_id_str)
         country_code = get_client_country_code(client_id_str)
 

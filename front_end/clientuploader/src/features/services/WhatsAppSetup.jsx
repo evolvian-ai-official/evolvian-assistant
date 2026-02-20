@@ -13,6 +13,13 @@ const isValidPhone = (phone) => /^\+\d{11,15}$/.test(phone);
 const isValidPhoneId = (id) => /^\d{10,20}$/.test(id);
 const isValidToken = (token) => /^EA[A-Za-z0-9]{16,}$/.test(token);
 const isValidWabaId = (id) => /^\d{8,24}$/.test(id);
+const maskSensitive = (value, visibleStart = 3, visibleEnd = 3) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.length <= visibleStart + visibleEnd) return "•".repeat(Math.max(raw.length, 4));
+  const maskedLength = Math.max(4, raw.length - visibleStart - visibleEnd);
+  return `${raw.slice(0, visibleStart)}${"•".repeat(maskedLength)}${raw.slice(-visibleEnd)}`;
+};
 
 export default function WhatsAppSetup() {
   const { t } = useLanguage();
@@ -212,6 +219,9 @@ export default function WhatsAppSetup() {
     !isValidPhoneId(waPhoneId) ||
     !isValidToken(waToken) ||
     !isValidWabaId(waBusinessAccountId);
+  const displayedPhone = isLocked ? maskSensitive(phone, 4, 3) : phone;
+  const displayedWaPhoneId = isLocked ? maskSensitive(waPhoneId, 3, 3) : waPhoneId;
+  const displayedWabaId = isLocked ? maskSensitive(waBusinessAccountId, 3, 3) : waBusinessAccountId;
 
   return (
     <div className="ia-page">
@@ -249,7 +259,7 @@ export default function WhatsAppSetup() {
               <input
                 className="ia-form-input"
                 type="text"
-                value={phone}
+                value={displayedPhone}
                 placeholder="+5215512345678"
                 disabled={isLocked}
                 onChange={(e) => setPhone(e.target.value)}
@@ -263,7 +273,7 @@ export default function WhatsAppSetup() {
               <input
                 className="ia-form-input"
                 type="text"
-                value={waPhoneId}
+                value={displayedWaPhoneId}
                 disabled={isLocked}
                 onChange={(e) => setWaPhoneId(e.target.value)}
                 onBlur={() => setTouched((prev) => ({ ...prev, waPhoneId: true }))}
@@ -276,7 +286,7 @@ export default function WhatsAppSetup() {
               <input
                 className="ia-form-input"
                 type="text"
-                value={waBusinessAccountId}
+                value={displayedWabaId}
                 placeholder={t("wa_placeholder_waba_id")}
                 disabled={isLocked}
                 onChange={(e) => setWaBusinessAccountId(e.target.value)}
