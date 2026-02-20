@@ -12,6 +12,7 @@ from api.modules.whatsapp.template_sync import (
     get_client_template_sync_map,
     infer_template_category,
     refresh_client_template_statuses,
+    sync_canonical_templates_for_client,
 )
 from api.security.request_limiter import enforce_rate_limit, get_request_ip
 
@@ -119,7 +120,19 @@ def get_meta_approved_templates(
             authorize_client_request(request, client_id)
 
             if refresh_status:
-                refresh_client_template_statuses(client_id=client_id)
+                if channel == "whatsapp":
+                    summary = sync_canonical_templates_for_client(
+                        client_id=client_id,
+                        force_refresh=False,
+                    )
+                    if not summary.get("success"):
+                        logger.warning(
+                            "⚠️ Meta template sync returned warnings | client_id=%s | errors=%s",
+                            client_id,
+                            summary.get("errors"),
+                        )
+                else:
+                    refresh_client_template_statuses(client_id=client_id)
 
         # ======================================
         # Query canonical catalog
@@ -147,6 +160,23 @@ def get_meta_approved_templates(
             return templates
 
         sync_map = get_client_template_sync_map(client_id)
+        if channel == "whatsapp" and templates and not sync_map:
+            logger.info(
+                "ℹ️ client_whatsapp_templates empty; attempting bootstrap sync | client_id=%s",
+                client_id,
+            )
+            bootstrap = sync_canonical_templates_for_client(
+                client_id=client_id,
+                force_refresh=False,
+            )
+            if not bootstrap.get("success"):
+                logger.warning(
+                    "⚠️ Bootstrap sync returned warnings | client_id=%s | errors=%s",
+                    client_id,
+                    bootstrap.get("errors"),
+                )
+            sync_map = get_client_template_sync_map(client_id)
+
         country_code = get_client_country_code(client_id)
         formatted: list[MetaApprovedTemplateResponse] = []
 

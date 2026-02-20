@@ -121,6 +121,8 @@ def get_message_templates(
         country_code = get_client_country_code(client_id_str)
 
         formatted_templates: List[MessageTemplateResponse] = []
+        legacy_whatsapp_skipped = 0
+        missing_canonical_skipped = 0
 
         # --------------------------
         # 2️⃣ Resolve Meta manually
@@ -155,18 +157,11 @@ def get_message_templates(
             meta_template_id = str(t.get("meta_template_id") or "")
 
             if is_whatsapp and not meta_template_id:
-                logger.warning(
-                    "⚠️ Skipping legacy WhatsApp template without canonical meta_template_id | template_id=%s",
-                    t.get("id"),
-                )
+                legacy_whatsapp_skipped += 1
                 continue
 
             if is_whatsapp and not meta:
-                logger.warning(
-                    "⚠️ Skipping WhatsApp template with missing canonical meta_approved_templates row | template_id=%s | meta_template_id=%s",
-                    t.get("id"),
-                    meta_template_id,
-                )
+                missing_canonical_skipped += 1
                 continue
 
             sync_row = sync_map.get(meta_template_id) if meta_template_id else None
@@ -243,6 +238,19 @@ def get_message_templates(
                     pricing_source=pricing_source if is_whatsapp else None,
                     pricing_disclaimer=pricing["pricing_disclaimer"] if is_whatsapp else None,
                 )
+            )
+
+        if legacy_whatsapp_skipped:
+            logger.info(
+                "ℹ️ Skipped %s legacy WhatsApp templates without canonical meta_template_id | client_id=%s",
+                legacy_whatsapp_skipped,
+                client_id_str,
+            )
+        if missing_canonical_skipped:
+            logger.warning(
+                "⚠️ Skipped %s WhatsApp templates with missing canonical meta_approved_templates row | client_id=%s",
+                missing_canonical_skipped,
+                client_id_str,
             )
 
         return formatted_templates
