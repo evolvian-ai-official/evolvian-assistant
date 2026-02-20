@@ -7,6 +7,9 @@ import logging
 
 from api.config.config import supabase
 from api.authz import authorize_client_request
+from api.appointments.cancellation_notifications import (
+    send_appointment_cancellation_notification,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -25,7 +28,7 @@ class CancelAppointmentPayload(BaseModel):
 # Endpoint
 # =========================
 @router.post("/appointments/cancel", tags=["Appointments"])
-def cancel_appointment(payload: CancelAppointmentPayload, request: Request):
+async def cancel_appointment(payload: CancelAppointmentPayload, request: Request):
     """
     Soft-cancels an appointment:
     - Updates appointment.status = 'cancelled'
@@ -45,7 +48,7 @@ def cancel_appointment(payload: CancelAppointmentPayload, request: Request):
     res = (
         supabase
         .table("appointments")
-        .select("id, status")
+        .select("id, status, user_name, user_email, user_phone, scheduled_time")
         .eq("id", appointment_id)
         .eq("client_id", client_id)
         .maybe_single()
@@ -103,7 +106,26 @@ def cancel_appointment(payload: CancelAppointmentPayload, request: Request):
     logger.info(f"⏰ Reminders cancelled: {cancelled_reminders}")
 
     # =========================
-    # 5️⃣ Track usage
+    # 5️⃣ Send cancellation notification (best effort)
+    # =========================
+    try:
+        await send_appointment_cancellation_notification({
+            "id": appointment_id,
+            "client_id": client_id,
+            "user_name": appointment.get("user_name"),
+            "user_email": appointment.get("user_email"),
+            "user_phone": appointment.get("user_phone"),
+            "scheduled_time": appointment.get("scheduled_time"),
+        })
+    except Exception:
+        logger.exception(
+            "❌ Appointment cancellation notification crashed | client_id=%s | appointment_id=%s",
+            client_id,
+            appointment_id,
+        )
+
+    # =========================
+    # 6️⃣ Track usage
     # =========================
     supabase.table("appointment_usage").insert({
         "client_id": client_id,
@@ -114,7 +136,7 @@ def cancel_appointment(payload: CancelAppointmentPayload, request: Request):
     }).execute()
 
     # =========================
-    # 6️⃣ Response
+    # 7️⃣ Response
     # =========================
     return {
         "success": True,

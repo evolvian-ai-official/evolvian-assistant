@@ -94,7 +94,7 @@ async def receive_whatsapp_message(request: Request):
         message_type = msg.get("type") or ""
         if _is_cancel_action(message_type, msg, text):
             try:
-                _, response = _cancel_appointment_from_whatsapp(client_id, user_phone)
+                _, response = await _cancel_appointment_from_whatsapp(client_id, user_phone)
             except Exception:
                 logger.exception("❌ Error cancelando cita desde webhook legacy")
                 response = "⚠️ No pude cancelar tu cita en este momento. Intenta de nuevo."
@@ -113,12 +113,13 @@ async def receive_whatsapp_message(request: Request):
         if user_phone.startswith("521"):
             user_phone = "52" + user_phone[3:]
 
-        send_whatsapp_message(
-            to_number=f"+{user_phone}",
-            message=response,
-            token=credentials["wa_token"],
-            phone_id=credentials["wa_phone_id"]
-        )
+        if response:
+            send_whatsapp_message(
+                to_number=f"+{user_phone}",
+                message=response,
+                token=credentials["wa_token"],
+                phone_id=credentials["wa_phone_id"]
+            )
 
         return JSONResponse(content={"status": "ok"}, status_code=200)
 

@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from api.modules.assistant_rag.rag_pipeline import handle_message
 from api.modules.whatsapp.whatsapp_sender import send_whatsapp_message
 from api.config.config import supabase
+from api.appointments.cancellation_notifications import (
+    send_appointment_cancellation_notification,
+)
 from api.modules.assistant_rag.supabase_client import (
     get_channel_by_wa_phone_id,
     is_duplicate_wa_message,
@@ -116,7 +119,7 @@ def _find_next_active_appointment(client_id: str, from_number: str) -> dict | No
             res = (
                 supabase
                 .table("appointments")
-                .select("id, scheduled_time, status, user_phone")
+                .select("id, scheduled_time, status, user_phone, user_name, user_email")
                 .eq("client_id", client_id)
                 .in_("status", ["confirmed", "pending_confirmation", "pending"])
                 .eq("user_phone", phone)
@@ -141,7 +144,7 @@ def _find_next_active_appointment(client_id: str, from_number: str) -> dict | No
     return best_match
 
 
-def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) -> tuple[bool, str]:
+async def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) -> tuple[bool, str]:
     appointment = _find_next_active_appointment(client_id, from_number)
     if not appointment:
         return False, "ℹ️ No encontré una cita activa para cancelar."
@@ -218,6 +221,27 @@ def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) -> tuple
         appointment_id,
         appointment.get("user_phone"),
     )
+
+    notification_sent = False
+    try:
+        notification_sent = await send_appointment_cancellation_notification({
+            "id": appointment_id,
+            "client_id": client_id,
+            "user_name": appointment.get("user_name"),
+            "user_email": appointment.get("user_email"),
+            "user_phone": appointment.get("user_phone"),
+            "scheduled_time": appointment.get("scheduled_time"),
+        })
+    except Exception:
+        logger.exception(
+            "❌ Cancellation template send crashed from WhatsApp flow | client_id=%s | appointment_id=%s",
+            client_id,
+            appointment_id,
+        )
+
+    if notification_sent:
+        # Template already sent as WhatsApp message; avoid duplicate text acknowledgment.
+        return True, ""
 
     return True, "✅ Tu cita fue cancelada."
 
@@ -345,7 +369,7 @@ async def process_whatsapp_payload(payload: dict):
             # ---------------------------------------------------------
             if _is_cancel_action(message_type, message, user_text):
                 try:
-                    cancelled, cancel_msg = _cancel_appointment_from_whatsapp(
+                    cancelled, cancel_msg = await _cancel_appointment_from_whatsapp(
                         client_id=client_id,
                         from_number=from_number,
                     )
@@ -363,11 +387,12 @@ async def process_whatsapp_payload(payload: dict):
                     )
                     cancel_msg = "⚠️ No pude cancelar tu cita en este momento. Intenta de nuevo."
 
-                await send_whatsapp_message(
-                    to_number=from_number,
-                    text=cancel_msg,
-                    channel=channel,
-                )
+                if cancel_msg:
+                    await send_whatsapp_message(
+                        to_number=from_number,
+                        text=cancel_msg,
+                        channel=channel,
+                    )
                 continue
 
             # ---------------------------------------------------------

@@ -834,8 +834,7 @@ export default function CreateAppointment({ disabled = false }) {
                         checked={reminderWhatsApp}
                         disabled={
                           !phoneValid ||
-                          whatsappTemplates.length === 0 ||
-                          !whatsAppMetaConnected
+                          whatsappTemplates.length === 0
                         }
                         onChange={(e) =>
                           setReminderWhatsApp(e.target.checked)
