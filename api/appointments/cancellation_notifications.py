@@ -131,6 +131,15 @@ def _format_cancelled_datetime(
         return local_dt.strftime("%Y-%m-%d"), local_dt.strftime("%H:%M")
 
 
+def _render_email_template_text(template_text: str | None, replacements: dict[str, str]) -> str | None:
+    if template_text is None:
+        return None
+    rendered = template_text
+    for key, value in replacements.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", value or "")
+    return rendered
+
+
 async def send_appointment_cancellation_notification(appointment: dict) -> bool:
     from api.modules.whatsapp.whatsapp_sender import send_whatsapp_template_for_client
 
@@ -235,3 +244,115 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         send_result.get("meta_message_id"),
     )
     return True
+
+
+def send_appointment_cancellation_email_notification(appointment: dict) -> bool:
+    from api.modules.calendar.send_confirmation_email import send_confirmation_email
+
+    client_id = str(appointment.get("client_id") or "").strip()
+    to_email = (appointment.get("user_email") or "").strip().lower()
+    if not client_id or not to_email:
+        logger.info(
+            "ℹ️ Appointment cancellation email skipped — missing client_id or user_email"
+        )
+        return False
+
+    templates_res = (
+        supabase
+        .table("message_templates")
+        .select("id, body, label")
+        .eq("client_id", client_id)
+        .eq("channel", "email")
+        .eq("type", "appointment_cancellation")
+        .eq("is_active", True)
+        .limit(20)
+        .execute()
+    )
+    templates = templates_res.data or []
+    template = next(
+        (
+            row for row in templates
+            if isinstance(row.get("body"), str) and row.get("body", "").strip()
+        ),
+        None,
+    )
+    if not template:
+        if templates:
+            logger.warning(
+                "⚠️ appointment_cancellation email template(s) found but none has body | client_id=%s | count=%s",
+                client_id,
+                len(templates),
+            )
+        else:
+            logger.info(
+                "ℹ️ No active appointment_cancellation email template found | client_id=%s",
+                client_id,
+            )
+        return False
+
+    language_code = "es_MX"
+    appointment_date, appointment_time = _format_cancelled_datetime(
+        client_id=client_id,
+        scheduled_time_raw=str(appointment.get("scheduled_time") or ""),
+        language_code=language_code,
+    )
+    company_name = _get_client_company_name(client_id)
+    current_date = (
+        babel_format_datetime(datetime.now(_get_client_timezone(client_id)), "EEEE dd 'de' MMMM yyyy", locale=language_code)
+        if babel_format_datetime
+        else datetime.utcnow().strftime("%Y-%m-%d")
+    )
+    scheduled_time = f"{appointment_date} {appointment_time}".strip()
+
+    replacements = {
+        "company_name": company_name or "",
+        "user_name": (appointment.get("user_name") or "Cliente").strip() or "Cliente",
+        "user_email": to_email,
+        "appointment_type": (appointment.get("appointment_type") or "").strip(),
+        "scheduled_time": scheduled_time,
+        "appointment_date": appointment_date,
+        "appointment_time": appointment_time,
+        "current_date": current_date,
+        "cancel_appointment_link": "",
+        "cancel_appointment_button": "",
+    }
+
+    rendered_body = _render_email_template_text(template.get("body"), replacements) or ""
+    if not rendered_body.strip():
+        logger.warning(
+            "⚠️ appointment_cancellation email template rendered empty | client_id=%s | template_id=%s",
+            client_id,
+            template.get("id"),
+        )
+        return False
+
+    default_subject = "❌ Tu cita fue cancelada"
+    rendered_subject = _render_email_template_text((template.get("label") or "").strip(), replacements) or ""
+    subject = rendered_subject.replace("\r", " ").replace("\n", " ").strip() or default_subject
+
+    sent = send_confirmation_email(
+        to_email,
+        appointment_date,
+        appointment_time,
+        html_body=rendered_body,
+        subject=subject,
+        client_id=client_id,
+        user_name=appointment.get("user_name"),
+        appointment_type=appointment.get("appointment_type"),
+        purpose="transactional",
+    )
+    if sent:
+        logger.info(
+            "✅ Appointment cancellation email sent | client_id=%s | appointment_id=%s | to=%s",
+            client_id,
+            appointment.get("id"),
+            to_email,
+        )
+    else:
+        logger.warning(
+            "⚠️ Appointment cancellation email skipped/blocked | client_id=%s | appointment_id=%s | to=%s",
+            client_id,
+            appointment.get("id"),
+            to_email,
+        )
+    return bool(sent)

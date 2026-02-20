@@ -1,5 +1,5 @@
 // CreateAppointment.jsx — Evolvian Light (Page + Modal)
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import ShowAppointments from "./ShowAppointments";
@@ -34,6 +34,14 @@ const isSelectableWhatsAppTemplate = (template) => {
 
   if (template?.whatsapp_template_active !== true) return false;
 
+  return true;
+};
+
+const isTemplateActive = (template) => {
+  if (!template || typeof template !== "object") return false;
+  if (template.is_active === false || template.active === false) return false;
+  if (typeof template.is_active === "boolean") return template.is_active;
+  if (typeof template.active === "boolean") return template.active;
   return true;
 };
 
@@ -97,6 +105,7 @@ export default function CreateAppointment({ disabled = false }) {
   const [gmailEnabled, setGmailEnabled] = useState(false);
   const [gmailAddress, setGmailAddress] = useState("");
   const [whatsAppMetaConnected, setWhatsAppMetaConnected] = useState(false);
+  const prevEmailValidRef = useRef(false);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -117,10 +126,13 @@ export default function CreateAppointment({ disabled = false }) {
       setTemplatesLoading(true);
       try {
         const res = await authFetch(
-          `${API_BASE_URL}/message_templates?client_id=${clientId}&type=appointment_reminder&include_inactive=true`
+          `${API_BASE_URL}/message_templates?client_id=${clientId}&type=appointment_reminder`
         );
         const data = await res.json();
-        setTemplates(Array.isArray(data) ? data : []);
+        const filtered = (Array.isArray(data) ? data : []).filter(
+          (tpl) => tpl?.type === "appointment_reminder" && isTemplateActive(tpl)
+        );
+        setTemplates(filtered);
       } catch (err) {
         console.error(t("templates_load_failed"), err);
         setTemplates([]);
@@ -437,7 +449,9 @@ export default function CreateAppointment({ disabled = false }) {
     }
   }, [showModal, selectedDate, calendarRules, googleBusyRanges, confirmedAppointments]);
 
-  const _emailTemplates = templates.filter((t) => t.channel === "email");
+  const emailTemplates = templates.filter(
+    (tpl) => tpl?.channel === "email" && tpl?.type === "appointment_reminder" && isTemplateActive(tpl)
+  );
   const whatsappTemplates = templates.filter(isSelectableWhatsAppTemplate);
 
   /* =========================
@@ -456,6 +470,36 @@ export default function CreateAppointment({ disabled = false }) {
         (reminderWhatsApp
           ? phoneValid && whatsappTemplateId
           : true)));
+
+  useEffect(() => {
+    if (!showModal) {
+      prevEmailValidRef.current = false;
+      return;
+    }
+
+    const becameValidEmail = !prevEmailValidRef.current && emailValid;
+    const hasEmailReminderTemplate = emailTemplates.length > 0;
+
+    if (becameValidEmail && hasEmailReminderTemplate) {
+      setEnableReminder(true);
+      setReminderEmail(true);
+      setEmailTemplateId((prev) => prev || emailTemplates[0]?.id || "");
+    }
+
+    if (emailValid && reminderEmail && !emailTemplateId && hasEmailReminderTemplate) {
+      setEmailTemplateId(emailTemplates[0]?.id || "");
+    }
+
+    if ((!emailValid || !hasEmailReminderTemplate) && reminderEmail) {
+      setReminderEmail(false);
+    }
+
+    if ((!emailValid || !hasEmailReminderTemplate) && emailTemplateId) {
+      setEmailTemplateId("");
+    }
+
+    prevEmailValidRef.current = emailValid;
+  }, [showModal, emailValid, reminderEmail, emailTemplateId, emailTemplates]);
 
   /* =========================
      Handlers
@@ -883,7 +927,7 @@ export default function CreateAppointment({ disabled = false }) {
                     )}
                   </div>
 
-                  {/* Email 
+                  {/* Email */}
                   <div style={reminderBlock}>
                     <label
                       style={{
@@ -930,7 +974,12 @@ export default function CreateAppointment({ disabled = false }) {
                           ))}
                         </select>
                       )}
-                  </div>*/}
+                    {emailValid && emailTemplates.length === 0 && (
+                      <p style={reminderHint}>
+                        No tienes templates activos de email para recordatorios. Crea uno en Templates.
+                      </p>
+                    )}
+                  </div>
                 </>
               )}
             </div>

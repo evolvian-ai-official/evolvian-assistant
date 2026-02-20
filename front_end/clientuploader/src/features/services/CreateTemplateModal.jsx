@@ -16,13 +16,19 @@ const buildLabel = (value, unit) => {
   return `${value} ${unitLabel}${value > 1 ? "s" : ""} before`;
 };
 
-const EMAIL_VARIABLES = [
+const SUBJECT_VARIABLES = [
   { label: "Empresa", token: "{{company_name}}" },
   { label: "Usuario", token: "{{user_name}}" },
   { label: "Fecha cita", token: "{{appointment_date}}" },
   { label: "Hora cita", token: "{{appointment_time}}" },
   { label: "Fecha actual", token: "{{current_date}}" },
 ];
+
+const BODY_VARIABLES = [
+  ...SUBJECT_VARIABLES,
+  { label: "Botón cancelar", token: "{{cancel_appointment_button}}" },
+];
+const EMAIL_LINE_BREAK_TOKEN = "<br />";
 
 const MAX_FOOTER_IMAGE_BYTES = 1024 * 1024;
 
@@ -56,6 +62,28 @@ const appendFooterImageToBody = (htmlBody, imageUrl) => {
   return `${htmlBody}\n${footerBlock}`;
 };
 
+const normalizeEmailBodyLineBreaks = (value) => {
+  const normalized = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!normalized.includes("\n")) return normalized;
+
+  const lines = normalized.split("\n");
+  const isStandaloneHtmlLine = (line) => /^\s*<[^>]+>\s*$/.test(line || "");
+  let output = "";
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = lines[index] ?? "";
+    output += current;
+
+    if (index >= lines.length - 1) continue;
+
+    const next = lines[index + 1] ?? "";
+    const shouldInsertHtmlBreak = !isStandaloneHtmlLine(current) && !isStandaloneHtmlLine(next);
+    output += shouldInsertHtmlBreak ? `${EMAIL_LINE_BREAK_TOKEN}\n` : "\n";
+  }
+
+  return output;
+};
+
 export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
   const { t } = useLanguage();
   const API = import.meta.env.VITE_API_URL;
@@ -87,7 +115,12 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
     authFetch(`${API}/message_templates/types`)
       .then((r) => r.json())
       .then((data) => {
-        const types = data || [];
+        const types = (data || []).filter((tplType) => {
+          if (!tplType?.id) return false;
+          if (tplType.is_active === false) return false;
+          if (tplType.active === false) return false;
+          return true;
+        });
         setTemplateTypes(types);
         const exists = types.some((tplType) => tplType.id === type);
         if (!exists && types.length > 0) {
@@ -157,7 +190,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
       ...(frequency ? { frequency } : {}),
     };
 
-    let finalBody = body.trim();
+    let finalBody = normalizeEmailBodyLineBreaks(body.trim());
     if (includeFooterImage && footerImageFile) {
       const formData = new FormData();
       formData.append("client_id", clientId);
@@ -265,7 +298,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
           placeholder="e.g. Confirmación para {{user_name}}"
         />
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
-          {EMAIL_VARIABLES.map((variable) => (
+          {SUBJECT_VARIABLES.map((variable) => (
             <button
               key={`subject-${variable.token}`}
               type="button"
@@ -291,7 +324,17 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
           placeholder="Hola {{user_name}}, tu cita en {{company_name}} es el {{appointment_date}}."
         />
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
-          {EMAIL_VARIABLES.map((variable) => (
+          <button
+            type="button"
+            className="ia-button ia-button-ghost"
+            onClick={() =>
+              insertTokenAtCursor(body, setBody, bodyTextareaRef, `\n${EMAIL_LINE_BREAK_TOKEN}\n`)
+            }
+            style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
+          >
+            Salto de línea
+          </button>
+          {BODY_VARIABLES.map((variable) => (
             <button
               key={`body-${variable.token}`}
               type="button"

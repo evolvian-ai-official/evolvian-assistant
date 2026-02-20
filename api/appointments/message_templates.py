@@ -353,15 +353,56 @@ def get_template_types(request: Request):
     try:
         get_current_user_id(request)
 
-        res = (
-            supabase
-            .table("template_types")
-            .select("id, description")
-            .order("id")
-            .execute()
-        )
+        rows = None
+        try:
+            res = (
+                supabase
+                .table("template_types")
+                .select("id, description, is_active")
+                .eq("is_active", True)
+                .order("id")
+                .execute()
+            )
+            rows = res.data or []
+        except Exception as e_is_active:
+            err_text = str(e_is_active).lower()
+            if "is_active" not in err_text:
+                raise
+            try:
+                res = (
+                    supabase
+                    .table("template_types")
+                    .select("id, description, active")
+                    .eq("active", True)
+                    .order("id")
+                    .execute()
+                )
+                rows = res.data or []
+            except Exception as e_active:
+                err_text_active = str(e_active).lower()
+                if "active" not in err_text_active:
+                    raise
+                res = (
+                    supabase
+                    .table("template_types")
+                    .select("id, description")
+                    .order("id")
+                    .execute()
+                )
+                rows = res.data or []
 
-        return res.data or []
+        cleaned_rows = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            if row.get("is_active") is False or row.get("active") is False:
+                continue
+            cleaned_rows.append({
+                "id": row.get("id"),
+                "description": row.get("description"),
+            })
+
+        return cleaned_rows
 
     except HTTPException:
         raise

@@ -18,6 +18,7 @@ from api.modules.whatsapp.whatsapp_sender import (
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.authz import authorize_client_request
 from api.internal_auth import has_valid_internal_token
+from api.appointments.cancel_link_tokens import build_cancel_link, generate_cancel_token
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -664,6 +665,7 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
         # Use active email appointment_confirmation template if available.
         subject = None
         html_body = None
+        cancel_link_for_email = None
         if client_id:
             tpl_res = (
                 supabase
@@ -686,6 +688,25 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
             )
             if template:
                 company_name = get_client_company_name(client_id)
+                cancel_link = ""
+                try:
+                    token = generate_cancel_token(
+                        client_id=client_id,
+                        appointment_id=str(appointment.get("id") or ""),
+                        recipient_email=email,
+                    )
+                    if token:
+                        cancel_link = build_cancel_link(token)
+                except Exception:
+                    cancel_link = ""
+                cancel_link_for_email = cancel_link or None
+                cancel_button_html = (
+                    f"<a href=\"{cancel_link}\" "
+                    "style=\"display:inline-block;padding:10px 16px;background:#f8fafc;color:#334155;"
+                    "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;font-weight:600;\">Cancelar cita</a>"
+                    if cancel_link else ""
+                )
+
                 scheduled_label = format_datetime(
                     scheduled_local,
                     "EEEE dd 'de' MMMM yyyy, hh:mm a",
@@ -716,6 +737,8 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
                     "appointment_date": appointment_date,
                     "appointment_time": appointment_time,
                     "current_date": today_date,
+                    "cancel_appointment_link": cancel_link,
+                    "cancel_appointment_button": cancel_button_html,
                 }
 
                 html_body = render_email_template_text(template.get("body", ""), replacements)
@@ -739,6 +762,7 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
             user_name=appointment.get("user_name"),
             appointment_type=appointment.get("appointment_type"),
             purpose="transactional",
+            cancel_link=cancel_link_for_email,
         )
         if email_sent:
             logger.info("✅ Appointment email confirmation sent to %s", email)

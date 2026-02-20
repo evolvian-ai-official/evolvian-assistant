@@ -43,6 +43,11 @@ const withAlpha = (color, alpha) => {
   return color;
 };
 
+const resolveApiBaseUrl = () =>
+  window.location.hostname === "localhost"
+    ? "http://localhost:8001"
+    : "https://evolvian-assistant.onrender.com";
+
 export default function ChatWidget({ clientId: propClientId, usageLimit = 100 }) {
   const languageContext = useLanguage();
   const { t = (x) => x, lang = "es" } = languageContext || {};
@@ -138,6 +143,15 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [calendarRefreshTick, setCalendarRefreshTick] = useState(0);
   const [duplicateExistingAppt, setDuplicateExistingAppt] = useState(null);
   const [showBookingSuccessModal, setShowBookingSuccessModal] = useState(false);
+  const [showCancelLookup, setShowCancelLookup] = useState(false);
+  const [cancelEmail, setCancelEmail] = useState("");
+  const [cancelPhone, setCancelPhone] = useState("");
+  const [cancelLookupLoading, setCancelLookupLoading] = useState(false);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+  const [cancelError, setCancelError] = useState("");
+  const [cancelSuccess, setCancelSuccess] = useState("");
+  const [cancelPreviewAppt, setCancelPreviewAppt] = useState(null);
+  const [showCancelConfirmModal, setShowCancelConfirmModal] = useState(false);
 
   // =============================
   // 🧭 Detectar publicClientId
@@ -611,6 +625,95 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     setDuplicateExistingAppt(null);
   }, [selectedCalendarSlot]);
 
+  useEffect(() => {
+    if (activePanel !== "calendar") {
+      setShowCancelLookup(false);
+      setShowCancelConfirmModal(false);
+      setCancelPreviewAppt(null);
+      setCancelError("");
+    }
+  }, [activePanel]);
+
+  const lookupAppointmentForCancellation = async () => {
+    if (!cancelEmail.trim() && !cancelPhone.trim()) {
+      setCancelError("Agrega email o teléfono para ubicar tu cita.");
+      return;
+    }
+
+    setCancelLookupLoading(true);
+    setCancelError("");
+    setCancelSuccess("");
+    setCancelPreviewAppt(null);
+
+    try {
+      const apiUrl = resolveApiBaseUrl();
+      const res = await fetch(`${apiUrl}/widget/calendar/cancel/lookup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          public_client_id: publicClientId,
+          user_email: cancelEmail.trim() || null,
+          user_phone: cancelPhone.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.message || "No se pudo validar tu cita.");
+      }
+      if (!data?.found || !data?.appointment) {
+        setCancelError(data?.message || "No encontramos una cita activa con esos datos.");
+        return;
+      }
+
+      setCancelPreviewAppt(data.appointment);
+      setShowCancelConfirmModal(true);
+    } catch (err) {
+      setCancelError(err?.message || "No se pudo buscar tu cita.");
+    } finally {
+      setCancelLookupLoading(false);
+    }
+  };
+
+  const confirmWidgetCancellation = async () => {
+    if (!cancelPreviewAppt?.id) {
+      setCancelError("No se encontró la cita a cancelar.");
+      return;
+    }
+
+    setCancelSubmitting(true);
+    setCancelError("");
+
+    try {
+      const apiUrl = resolveApiBaseUrl();
+      const res = await fetch(`${apiUrl}/widget/calendar/cancel/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          public_client_id: publicClientId,
+          appointment_id: cancelPreviewAppt.id,
+          user_email: cancelEmail.trim() || null,
+          user_phone: cancelPhone.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.message || "No se pudo cancelar la cita.");
+      }
+
+      const finalMessage = data?.message || "Tu cita ha sido cancelada.";
+      const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setMessages((prev) => [...prev, { from: "bot", text: `✅ ${finalMessage}`, timestamp: now }]);
+      setCancelSuccess(finalMessage);
+      setShowCancelConfirmModal(false);
+      setCancelPreviewAppt(null);
+      setCalendarRefreshTick((v) => v + 1);
+    } catch (err) {
+      setCancelError(err?.message || "No se pudo cancelar la cita.");
+    } finally {
+      setCancelSubmitting(false);
+    }
+  };
+
   // ===================================================
   // 🧾 Mostrar PANTALLA DE CONSENTIMIENTO
   // ===================================================
@@ -959,7 +1062,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
 
                     setBookingSubmitting(false);
 
-                    const successMsg = "✅ Tu sesión fue agendada. Si necesitas cancelar comunícate directamente.";
+                    const successMsg = "✅ Tu sesión fue agendada. Si necesitas cancelar, usa la opción 'Buscar mi cita' en Agendar.";
                     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
                     setMessages((prev) => [...prev, { from: "bot", text: successMsg, timestamp: now }]);
                     setBookingSuccess("Cita agendada correctamente.");
@@ -1011,7 +1114,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                         const data = await res.json();
                         if (!res.ok) throw new Error(data?.detail || data?.message || "No se pudo reemplazar la cita.");
 
-                        const successMsg = "✅ Tu sesión fue reagendada. Si necesitas cancelar comunícate directamente.";
+                        const successMsg = "✅ Tu sesión fue reagendada. Si necesitas cancelar, usa la opción 'Buscar mi cita' en Agendar.";
                         const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
                         setMessages((prev) => [...prev, { from: "bot", text: successMsg, timestamp: now }]);
                         setBookingSuccess("Cita reagendada correctamente.");
@@ -1033,6 +1136,51 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                   </button>
                 </div>
               )}
+            </div>
+          )}
+          <div style={styles.cancelLookupToggleWrap}>
+            <button
+              type="button"
+              style={styles.cancelLookupToggleBtn}
+              onClick={() => {
+                setShowCancelLookup((prev) => !prev);
+                setCancelError("");
+                setCancelSuccess("");
+                setShowCancelConfirmModal(false);
+              }}
+            >
+              {showCancelLookup ? "Ocultar Busqueda" : "Buscar mi cita"}
+            </button>
+          </div>
+          {showCancelLookup && (
+            <div style={styles.cancelLookupCard}>
+              <div style={styles.cancelLookupTitle}>Busca tu cita:</div>
+              <div style={styles.formGrid}>
+                <input
+                  type="email"
+                  placeholder="Email (opcional)"
+                  value={cancelEmail}
+                  onChange={(e) => setCancelEmail(e.target.value)}
+                  style={styles.formInput}
+                />
+                <input
+                  type="text"
+                  placeholder="Teléfono (opcional)"
+                  value={cancelPhone}
+                  onChange={(e) => setCancelPhone(e.target.value)}
+                  style={styles.formInput}
+                />
+              </div>
+              {cancelError ? <div style={styles.formError}>{cancelError}</div> : null}
+              {cancelSuccess ? <div style={styles.formSuccess}>{cancelSuccess}</div> : null}
+              <button
+                type="button"
+                style={styles.cancelLookupSearchBtn}
+                onClick={lookupAppointmentForCancellation}
+                disabled={cancelLookupLoading || cancelSubmitting}
+              >
+                {cancelLookupLoading ? "Buscando..." : "Buscar mi cita"}
+              </button>
             </div>
           )}
           <div style={styles.calendarHint}>
@@ -1148,7 +1296,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             <p style={styles.successBody}>
               Tu sesión fue agendada correctamente.
               <br />
-              Si necesitas cancelar, comunícate directamente.
+              Si necesitas cancelar, usa la opción "Buscar mi cita" en Agendar.
             </p>
             <button
               type="button"
@@ -1166,6 +1314,42 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             >
               Entendido
             </button>
+          </div>
+        </div>
+      )}
+      {showCancelConfirmModal && cancelPreviewAppt && (
+        <div style={styles.cancelOverlay}>
+          <div style={styles.cancelModal}>
+            <h4 style={styles.cancelModalTitle}>Confirmar cancelación</h4>
+            <p style={styles.cancelModalBody}>Encontramos esta cita:</p>
+            <div style={styles.cancelDataGrid}>
+              <div><strong>Nombre:</strong> {cancelPreviewAppt.user_name || "—"}</div>
+              <div><strong>Fecha:</strong> {cancelPreviewAppt.formatted_time || cancelPreviewAppt.scheduled_time || "—"}</div>
+              <div><strong>Tipo:</strong> {cancelPreviewAppt.appointment_type || "Cita"}</div>
+              <div><strong>Email:</strong> {cancelPreviewAppt.user_email || "—"}</div>
+              <div><strong>Teléfono:</strong> {cancelPreviewAppt.user_phone || "—"}</div>
+            </div>
+            <div style={styles.cancelActionsRow}>
+              <button
+                type="button"
+                style={styles.cancelKeepBtn}
+                onClick={() => {
+                  setShowCancelConfirmModal(false);
+                  setCancelPreviewAppt(null);
+                }}
+                disabled={cancelSubmitting}
+              >
+                Mantener cita
+              </button>
+              <button
+                type="button"
+                style={styles.cancelConfirmBtn}
+                onClick={confirmWidgetCancellation}
+                disabled={cancelSubmitting}
+              >
+                {cancelSubmitting ? "Cancelando..." : "Cancelar cita"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1663,6 +1847,111 @@ const styles = {
     fontWeight: "700",
     padding: "0.4rem 0.55rem",
     cursor: "pointer",
+  },
+  cancelLookupToggleWrap: {
+    display: "flex",
+    justifyContent: "center",
+  },
+  cancelLookupToggleBtn: {
+    border: "1px solid #d4dde8",
+    borderRadius: 8,
+    background: "#ffffff",
+    color: "#334155",
+    fontSize: "0.76rem",
+    fontWeight: "700",
+    padding: "0.4rem 0.75rem",
+    cursor: "pointer",
+  },
+  cancelLookupCard: {
+    border: "1px solid #e2e8f0",
+    borderRadius: 10,
+    background: "#f8fafc",
+    padding: "0.6rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.45rem",
+  },
+  cancelLookupTitle: {
+    fontSize: "0.78rem",
+    fontWeight: "700",
+    color: "#334155",
+  },
+  cancelLookupSearchBtn: {
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    background: "#ffffff",
+    color: "#334155",
+    fontSize: "0.77rem",
+    fontWeight: "700",
+    padding: "0.42rem 0.6rem",
+    cursor: "pointer",
+  },
+  cancelOverlay: {
+    position: "absolute",
+    inset: 0,
+    backdropFilter: "blur(5px)",
+    background: "rgba(14, 27, 44, 0.32)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 35,
+    padding: "1rem",
+  },
+  cancelModal: {
+    width: "100%",
+    maxWidth: 340,
+    background: "#ffffff",
+    borderRadius: 14,
+    border: "1px solid #d8e7f8",
+    padding: "1rem",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.16)",
+  },
+  cancelModalTitle: {
+    margin: 0,
+    color: "#1b2a41",
+    fontSize: "0.98rem",
+  },
+  cancelModalBody: {
+    margin: "0.5rem 0 0.65rem 0",
+    color: "#475569",
+    fontSize: "0.82rem",
+  },
+  cancelDataGrid: {
+    display: "grid",
+    gap: "0.34rem",
+    fontSize: "0.78rem",
+    color: "#1e293b",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: 10,
+    padding: "0.55rem",
+  },
+  cancelActionsRow: {
+    display: "flex",
+    gap: "0.45rem",
+    marginTop: "0.7rem",
+  },
+  cancelKeepBtn: {
+    flex: 1,
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    background: "#ffffff",
+    color: "#334155",
+    padding: "0.44rem 0.6rem",
+    cursor: "pointer",
+    fontWeight: "700",
+    fontSize: "0.78rem",
+  },
+  cancelConfirmBtn: {
+    flex: 1,
+    border: "1px solid #cbd5e1",
+    borderRadius: 8,
+    background: "#f8fafc",
+    color: "#334155",
+    padding: "0.44rem 0.6rem",
+    cursor: "pointer",
+    fontWeight: "700",
+    fontSize: "0.78rem",
   },
   successOverlay: {
     position: "absolute",

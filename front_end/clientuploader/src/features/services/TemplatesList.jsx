@@ -61,7 +61,6 @@ export default function TemplatesList({ clientId, refreshKey }) {
 
       const configuredParams = new URLSearchParams();
       configuredParams.append("client_id", clientId);
-      configuredParams.append("include_inactive", "true");
 
       const metaParams = new URLSearchParams();
       metaParams.append("client_id", clientId);

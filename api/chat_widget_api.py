@@ -20,8 +20,10 @@ from api.appointments.create_appointment import (
     create_appointment as create_appointment_route,
     get_client_timezone,
 )
+from api.appointments.cancel_appointment import _cancel_appointment_record
 
 router = APIRouter()
+ACTIVE_WIDGET_APPOINTMENT_STATUSES = ("confirmed", "scheduled", "pending")
 
 # 🔹 Input model
 class ChatRequest(BaseModel):
@@ -39,6 +41,19 @@ class WidgetBookRequest(BaseModel):
     user_phone: str | None = None
     session_id: str | None = None
     replace_existing: bool = False
+
+
+class WidgetCancelLookupRequest(BaseModel):
+    public_client_id: str
+    user_email: str | None = None
+    user_phone: str | None = None
+
+
+class WidgetCancelConfirmRequest(BaseModel):
+    public_client_id: str
+    appointment_id: str
+    user_email: str | None = None
+    user_phone: str | None = None
 
 
 # 🔎 Obtener límite dinámico de mensajes desde client_settings
@@ -315,6 +330,109 @@ def _format_slot_iso(iso_value: str | None, timezone_name: str) -> str | None:
         return f"{local_dt.strftime('%Y-%m-%d %H:%M')} ({timezone_name})"
     except Exception:
         return iso_value
+
+
+def _normalize_email(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalize_phone(value: str | None) -> str:
+    raw = str(value or "").strip()
+    return re.sub(r"[^\d+]", "", raw)
+
+
+def _serialize_widget_appointment(appointment: dict, timezone_name: str) -> dict:
+    return {
+        "id": appointment.get("id"),
+        "status": appointment.get("status"),
+        "user_name": appointment.get("user_name"),
+        "user_email": appointment.get("user_email"),
+        "user_phone": appointment.get("user_phone"),
+        "appointment_type": appointment.get("appointment_type"),
+        "scheduled_time": appointment.get("scheduled_time"),
+        "formatted_time": _format_slot_iso(appointment.get("scheduled_time"), timezone_name),
+    }
+
+
+def _find_active_widget_appointment(
+    *,
+    client_id: str,
+    user_email: str | None,
+    user_phone: str | None,
+) -> dict | None:
+    normalized_email = _normalize_email(user_email)
+    normalized_phone = _normalize_phone(user_phone)
+    now_iso = datetime.now(ZoneInfo("UTC")).isoformat()
+
+    if not normalized_email and not normalized_phone:
+        raise HTTPException(status_code=400, detail="Provide at least email or phone")
+
+    upcoming = (
+        supabase
+        .table("appointments")
+        .select("id, status, user_name, user_email, user_phone, scheduled_time, appointment_type")
+        .eq("client_id", client_id)
+        .in_("status", list(ACTIVE_WIDGET_APPOINTMENT_STATUSES))
+        .gte("scheduled_time", now_iso)
+        .order("scheduled_time", desc=False)
+        .limit(300)
+        .execute()
+    )
+    rows = upcoming.data or []
+    if not rows:
+        return None
+
+    matching_rows: list[dict] = []
+    for row in rows:
+        row_email = _normalize_email(row.get("user_email"))
+        row_phone = _normalize_phone(row.get("user_phone"))
+        matches_email = bool(normalized_email and row_email and row_email == normalized_email)
+        matches_phone = bool(normalized_phone and row_phone and row_phone == normalized_phone)
+
+        if matches_email or matches_phone:
+            matching_rows.append(row)
+
+    if not matching_rows:
+        return None
+
+    matching_rows.sort(key=lambda row: str(row.get("scheduled_time") or ""))
+    return matching_rows[0]
+
+
+def _find_widget_appointment_for_confirmation(
+    *,
+    client_id: str,
+    appointment_id: str,
+    user_email: str | None,
+    user_phone: str | None,
+) -> dict | None:
+    normalized_email = _normalize_email(user_email)
+    normalized_phone = _normalize_phone(user_phone)
+
+    if not normalized_email and not normalized_phone:
+        raise HTTPException(status_code=400, detail="Provide at least email or phone")
+
+    res = (
+        supabase
+        .table("appointments")
+        .select("id, status, user_name, user_email, user_phone, scheduled_time, appointment_type")
+        .eq("client_id", client_id)
+        .eq("id", appointment_id)
+        .in_("status", list(ACTIVE_WIDGET_APPOINTMENT_STATUSES))
+        .limit(1)
+        .execute()
+    )
+    row = (res.data or [None])[0]
+    if not row:
+        return None
+
+    row_email = _normalize_email(row.get("user_email"))
+    row_phone = _normalize_phone(row.get("user_phone"))
+    matches_email = bool(normalized_email and row_email and row_email == normalized_email)
+    matches_phone = bool(normalized_phone and row_phone and row_phone == normalized_phone)
+    if not (matches_email or matches_phone):
+        return None
+    return row
 
 
 def _get_profile_timezone_name(client_id: str) -> str:
@@ -602,6 +720,99 @@ async def book_widget_calendar(payload: WidgetBookRequest):
     except Exception as e:
         logging.exception("❌ Error booking widget calendar")
         raise HTTPException(status_code=500, detail=f"Widget booking error: {e}")
+
+
+@router.post("/widget/calendar/cancel/lookup")
+async def lookup_widget_calendar_cancellation(payload: WidgetCancelLookupRequest, request: Request):
+    try:
+        request_ip = get_request_ip(request)
+        enforce_rate_limit(
+            scope="widget_calendar_cancel_lookup",
+            key=f"{payload.public_client_id}:{request_ip}",
+            limit=30,
+            window_seconds=60,
+        )
+
+        client_id = get_client_id_from_public_client_id(payload.public_client_id)
+        config = _get_widget_calendar_config(client_id)
+        appointment = _find_active_widget_appointment(
+            client_id=client_id,
+            user_email=payload.user_email,
+            user_phone=payload.user_phone,
+        )
+
+        if not appointment:
+            return {
+                "success": True,
+                "found": False,
+                "message": "No encontramos una cita activa con esos datos.",
+            }
+
+        return {
+            "success": True,
+            "found": True,
+            "timezone": config.get("timezone", "UTC"),
+            "appointment": _serialize_widget_appointment(appointment, config.get("timezone", "UTC")),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("❌ Error looking up widget cancellation")
+        raise HTTPException(status_code=500, detail=f"Widget cancellation lookup error: {e}")
+
+
+@router.post("/widget/calendar/cancel/confirm")
+async def confirm_widget_calendar_cancellation(payload: WidgetCancelConfirmRequest, request: Request):
+    try:
+        request_ip = get_request_ip(request)
+        enforce_rate_limit(
+            scope="widget_calendar_cancel_confirm",
+            key=f"{payload.public_client_id}:{request_ip}",
+            limit=20,
+            window_seconds=60,
+        )
+
+        client_id = get_client_id_from_public_client_id(payload.public_client_id)
+        config = _get_widget_calendar_config(client_id)
+        appointment = _find_widget_appointment_for_confirmation(
+            client_id=client_id,
+            appointment_id=str(payload.appointment_id or "").strip(),
+            user_email=payload.user_email,
+            user_phone=payload.user_phone,
+        )
+
+        if not appointment:
+            raise HTTPException(status_code=404, detail="No active appointment found for provided contact.")
+
+        appointment_id = str(appointment.get("id") or "").strip()
+        if not appointment_id:
+            raise HTTPException(status_code=404, detail="Appointment id not found.")
+
+        already_cancelled, reminders_cancelled = await _cancel_appointment_record(
+            appointment=appointment,
+            client_id=client_id,
+            appointment_id=appointment_id,
+            usage_channel="widget",
+            usage_action="cancelled_from_widget",
+        )
+
+        return {
+            "success": True,
+            "already_cancelled": bool(already_cancelled),
+            "reminders_cancelled": int(reminders_cancelled or 0),
+            "timezone": config.get("timezone", "UTC"),
+            "appointment": _serialize_widget_appointment(appointment, config.get("timezone", "UTC")),
+            "message": (
+                "La cita ya estaba cancelada."
+                if already_cancelled
+                else "Tu cita ha sido cancelada."
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("❌ Error confirming widget cancellation")
+        raise HTTPException(status_code=500, detail=f"Widget cancellation confirm error: {e}")
 
 
 # 🔹 Main chat endpoint

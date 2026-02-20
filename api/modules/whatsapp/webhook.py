@@ -10,6 +10,7 @@ from api.modules.whatsapp.whatsapp_sender import send_whatsapp_message
 from api.config.config import supabase
 from api.appointments.cancellation_notifications import (
     send_appointment_cancellation_notification,
+    send_appointment_cancellation_email_notification,
 )
 from api.modules.assistant_rag.supabase_client import (
     get_channel_by_wa_phone_id,
@@ -119,7 +120,7 @@ def _find_next_active_appointment(client_id: str, from_number: str) -> dict | No
             res = (
                 supabase
                 .table("appointments")
-                .select("id, scheduled_time, status, user_phone, user_name, user_email")
+                .select("id, scheduled_time, status, user_phone, user_name, user_email, appointment_type")
                 .eq("client_id", client_id)
                 .in_("status", ["confirmed", "pending_confirmation", "pending"])
                 .eq("user_phone", phone)
@@ -235,6 +236,23 @@ async def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) ->
     except Exception:
         logger.exception(
             "❌ Cancellation template send crashed from WhatsApp flow | client_id=%s | appointment_id=%s",
+            client_id,
+            appointment_id,
+        )
+
+    try:
+        send_appointment_cancellation_email_notification({
+            "id": appointment_id,
+            "client_id": client_id,
+            "user_name": appointment.get("user_name"),
+            "user_email": appointment.get("user_email"),
+            "user_phone": appointment.get("user_phone"),
+            "scheduled_time": appointment.get("scheduled_time"),
+            "appointment_type": appointment.get("appointment_type"),
+        })
+    except Exception:
+        logger.exception(
+            "❌ Cancellation email send crashed from WhatsApp flow | client_id=%s | appointment_id=%s",
             client_id,
             appointment_id,
         )

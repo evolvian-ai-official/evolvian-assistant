@@ -79,6 +79,7 @@ def _resolve_template_content(
     hour_str: str,
     user_name: Optional[str],
     appointment_type: Optional[str],
+    cancel_link: Optional[str] = None,
 ) -> tuple[str, str, Optional[str]]:
     final_subject = default_subject
     final_html = default_html
@@ -121,6 +122,14 @@ def _resolve_template_content(
         now_label = datetime.utcnow().strftime("%Y-%m-%d")
         scheduled_label = f"{date_str} {hour_str}".strip()
 
+        safe_cancel_link = (cancel_link or "").strip()
+        cancel_button_html = (
+            f"<a href=\"{safe_cancel_link}\" "
+            "style=\"display:inline-block;padding:10px 16px;background:#f8fafc;color:#334155;"
+            "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;font-weight:600;\">Cancelar cita</a>"
+            if safe_cancel_link else ""
+        )
+
         replacements = {
             "company_name": company_name,
             "user_name": (user_name or "Cliente").strip() or "Cliente",
@@ -129,6 +138,8 @@ def _resolve_template_content(
             "appointment_date": date_str,
             "appointment_time": hour_str,
             "current_date": now_label,
+            "cancel_appointment_link": safe_cancel_link,
+            "cancel_appointment_button": cancel_button_html,
         }
 
         rendered_html = _render_template_text(tpl.get("body", ""), replacements)
@@ -223,6 +234,7 @@ def send_confirmation_email(
     user_name: Optional[str] = None,
     appointment_type: Optional[str] = None,
     purpose: str = "transactional",
+    cancel_link: Optional[str] = None,
 ) -> bool:
     default_subject = subject or "✅ Confirmación de tu cita"
     sender_name = _safe_header_name(_get_client_sender_name(client_id))
@@ -250,6 +262,7 @@ def send_confirmation_email(
             hour_str=hour_str,
             user_name=user_name,
             appointment_type=appointment_type,
+            cancel_link=cancel_link,
         )
         final_subject, final_html = resolved_subject, resolved_html
         if resolved_template_id:

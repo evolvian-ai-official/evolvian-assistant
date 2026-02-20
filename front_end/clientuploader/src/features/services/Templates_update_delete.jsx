@@ -30,13 +30,19 @@ const fromOffsetMinutes = (offset) => {
   return { value: minutes / 60, unit: "hours" };
 };
 
-const EMAIL_VARIABLES = [
+const SUBJECT_VARIABLES = [
   { label: "Empresa", token: "{{company_name}}" },
   { label: "Usuario", token: "{{user_name}}" },
   { label: "Fecha cita", token: "{{appointment_date}}" },
   { label: "Hora cita", token: "{{appointment_time}}" },
   { label: "Fecha actual", token: "{{current_date}}" },
 ];
+
+const BODY_VARIABLES = [
+  ...SUBJECT_VARIABLES,
+  { label: "Botón cancelar", token: "{{cancel_appointment_button}}" },
+];
+const EMAIL_LINE_BREAK_TOKEN = "<br />";
 
 const MAX_FOOTER_IMAGE_BYTES = 1024 * 1024;
 
@@ -68,6 +74,28 @@ const appendFooterImageToBody = (htmlBody, imageUrl) => {
     "</div>",
   ].join("");
   return `${htmlBody}\n${footerBlock}`;
+};
+
+const normalizeEmailBodyLineBreaks = (value) => {
+  const normalized = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!normalized.includes("\n")) return normalized;
+
+  const lines = normalized.split("\n");
+  const isStandaloneHtmlLine = (line) => /^\s*<[^>]+>\s*$/.test(line || "");
+  let output = "";
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = lines[index] ?? "";
+    output += current;
+
+    if (index >= lines.length - 1) continue;
+
+    const next = lines[index + 1] ?? "";
+    const shouldInsertHtmlBreak = !isStandaloneHtmlLine(current) && !isStandaloneHtmlLine(next);
+    output += shouldInsertHtmlBreak ? `${EMAIL_LINE_BREAK_TOKEN}\n` : "\n";
+  }
+
+  return output;
 };
 
 export default function TemplatesUpdateDelete({
@@ -175,7 +203,7 @@ export default function TemplatesUpdateDelete({
         if (includeFooterImage && !footerImageFile) {
           throw new Error("Footer image option is enabled but no image is selected.");
         }
-        let finalBody = body;
+        let finalBody = normalizeEmailBodyLineBreaks(body);
         if (includeFooterImage && footerImageFile) {
           const formData = new FormData();
           formData.append("client_id", clientId || "");
@@ -321,7 +349,7 @@ export default function TemplatesUpdateDelete({
 
         {!isWhatsApp && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
-            {EMAIL_VARIABLES.map((variable) => (
+            {SUBJECT_VARIABLES.map((variable) => (
               <button
                 key={`edit-subject-${variable.token}`}
                 type="button"
@@ -371,7 +399,17 @@ export default function TemplatesUpdateDelete({
         {!isWhatsApp && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.35rem" }}>
-              {EMAIL_VARIABLES.map((variable) => (
+              <button
+                type="button"
+                className="ia-button ia-button-ghost"
+                onClick={() =>
+                  insertTokenAtCursor(body, setBody, bodyTextareaRef, `\n${EMAIL_LINE_BREAK_TOKEN}\n`)
+                }
+                style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
+              >
+                Salto de línea
+              </button>
+              {BODY_VARIABLES.map((variable) => (
                 <button
                   key={`edit-body-${variable.token}`}
                   type="button"

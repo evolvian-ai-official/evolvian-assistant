@@ -8,6 +8,8 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
     send_whatsapp_template_for_client,
 )
+from api.modules.calendar.send_confirmation_email import send_confirmation_email
+from api.appointments.cancel_link_tokens import build_cancel_link, generate_cancel_token
 from api.internal_auth import require_internal_request
 
 router = APIRouter()
@@ -76,6 +78,13 @@ def render_template(body: str, appointment: dict, locale_code: str) -> str:
     scheduled_time = appointment.get("scheduled_time")
     client_id = appointment.get("client_id")
     safe_client_id = client_id or ""
+    cancel_link = str(appointment.get("_cancel_appointment_link") or "").strip()
+    cancel_button_html = (
+        f"<a href=\"{cancel_link}\" "
+        "style=\"display:inline-block;padding:10px 16px;background:#f8fafc;color:#334155;"
+        "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;font-weight:600;\">Cancelar cita</a>"
+        if cancel_link else ""
+    )
 
     if scheduled_time:
         scheduled_time_label = format_scheduled_time(
@@ -112,6 +121,8 @@ def render_template(body: str, appointment: dict, locale_code: str) -> str:
             format_datetime(datetime.now(get_client_timezone(safe_client_id)), "EEEE dd 'de' MMMM yyyy", locale=locale_code),
         )
         .replace("{{appointment_type}}", appointment.get("appointment_type", "") or "")
+        .replace("{{cancel_appointment_link}}", cancel_link)
+        .replace("{{cancel_appointment_button}}", cancel_button_html)
     )
 
 
@@ -381,7 +392,7 @@ async def execute_pending_reminders(request: Request):
                     )
 
             # =====================================================
-            # EMAIL (stub)
+            # EMAIL
             # =====================================================
             elif channel == "email":
 
@@ -389,8 +400,66 @@ async def execute_pending_reminders(request: Request):
                 if not email:
                     raise Exception("Missing email")
 
-                logger.info("📧 EMAIL reminder (stub) | to=%s", email)
-                send_ok = True
+                locale_code = "es_MX"
+                date_str = ""
+                hour_str = ""
+                try:
+                    scheduled_raw = appointment.get("scheduled_time")
+                    if scheduled_raw:
+                        dt_utc = datetime.fromisoformat(str(scheduled_raw).replace("Z", "+00:00"))
+                        dt_local = dt_utc.astimezone(get_client_timezone(client_id))
+                        date_str = format_datetime(dt_local, "yyyy-MM-dd", locale=locale_code)
+                        hour_str = format_datetime(dt_local, "HH:mm", locale=locale_code)
+                except Exception:
+                    date_str = ""
+                    hour_str = ""
+
+                cancel_link = ""
+                try:
+                    token = generate_cancel_token(
+                        client_id=client_id,
+                        appointment_id=str(appointment.get("id") or ""),
+                        recipient_email=email,
+                    )
+                    if token:
+                        cancel_link = build_cancel_link(token)
+                except Exception:
+                    cancel_link = ""
+
+                appointment_for_render = dict(appointment or {})
+                appointment_for_render["_cancel_appointment_link"] = cancel_link
+                rendered_body = render_template(
+                    template.get("body", "") or "",
+                    appointment_for_render,
+                    locale_code,
+                )
+                rendered_subject = (
+                    (template.get("label") or "").replace("\r", " ").replace("\n", " ").strip()
+                    or "⏰ Recordatorio de tu cita"
+                )
+
+                logger.info(
+                    "📧 EMAIL reminder send | to=%s | reminder_id=%s | cancel_link=%s",
+                    email,
+                    reminder_id,
+                    "yes" if cancel_link else "no",
+                )
+
+                send_ok = bool(
+                    send_confirmation_email(
+                        to_email=email,
+                        date_str=date_str,
+                        hour_str=hour_str,
+                        html_body=rendered_body,
+                        subject=rendered_subject,
+                        client_id=client_id,
+                        user_name=appointment.get("user_name"),
+                        appointment_type=appointment.get("appointment_type"),
+                        purpose="reminder",
+                    )
+                )
+                if not send_ok:
+                    raise Exception("Email reminder send failed")
 
             else:
                 raise Exception(f"Unsupported channel: {channel}")
