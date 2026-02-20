@@ -1589,14 +1589,17 @@ const styles = {
   },
   calendarPanel: {
     flex: 1,
+    minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    padding: "0.8rem",
+    padding: "0.8rem 0.8rem 1rem",
     gap: "0.6rem",
-    overflow: "hidden",
+    overflowY: "auto",
+    overflowX: "hidden",
+    scrollbarGutter: "stable",
   },
   calendarPanelMobile: {
-    padding: "0.65rem",
+    padding: "0.65rem 0.65rem 0.9rem",
   },
   calendarModeBar: {
     display: "flex",
