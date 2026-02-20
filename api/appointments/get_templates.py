@@ -41,6 +41,7 @@ class MessageTemplateResponse(BaseModel):
     channel: str
     type: str
     is_active: bool = True
+    meta_template_id: Optional[uuid.UUID] = None
 
     # Email only
     body: Optional[str] = None
@@ -221,6 +222,7 @@ def get_message_templates(
                     channel=t["channel"],
                     type=t["type"],
                     is_active=bool(t.get("is_active", True)),
+                    meta_template_id=t.get("meta_template_id"),
 
                     # 🔒 WhatsApp never exposes body
                     body=None if is_whatsapp else t.get("body"),

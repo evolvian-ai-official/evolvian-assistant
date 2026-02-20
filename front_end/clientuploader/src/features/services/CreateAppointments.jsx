@@ -28,7 +28,6 @@ const READY_WHATSAPP_TEMPLATE_STATUSES = new Set(["ready", "active", "approved"]
 
 const isSelectableWhatsAppTemplate = (template) => {
   if (template?.channel !== "whatsapp") return false;
-  if (!template?.meta_template_id) return false;
 
   const status = String(template?.whatsapp_template_status || "").trim().toLowerCase();
   if (!READY_WHATSAPP_TEMPLATE_STATUSES.has(status)) return false;
