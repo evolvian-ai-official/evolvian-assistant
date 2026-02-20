@@ -128,7 +128,7 @@ def notify_business_owner(
     try:
         response = requests.post("https://api.resend.com/emails", headers=headers, json=body)
         if response.status_code >= 400:
-            logger.error(f"❌ Failed to send email: {response.status_code} - {response.text}")
+            logger.error("❌ Failed to send email | status=%s", response.status_code)
             complete_email_send_audit(
                 client_id=client_id,
                 policy_result=policy,

@@ -24,6 +24,20 @@ const isValidWhatsApp = (phone) =>
 
 const isChannelEnabled = (channel) => Boolean(channel?.is_active ?? channel?.active);
 
+const READY_WHATSAPP_TEMPLATE_STATUSES = new Set(["ready", "active", "approved"]);
+
+const isSelectableWhatsAppTemplate = (template) => {
+  if (template?.channel !== "whatsapp") return false;
+  if (!template?.meta_template_id) return false;
+
+  const status = String(template?.whatsapp_template_status || "").trim().toLowerCase();
+  if (!READY_WHATSAPP_TEMPLATE_STATUSES.has(status)) return false;
+
+  if (template?.whatsapp_template_active !== true) return false;
+
+  return true;
+};
+
 /* =========================
    Component
    ========================= */
@@ -425,12 +439,7 @@ export default function CreateAppointment({ disabled = false }) {
   }, [showModal, selectedDate, calendarRules, googleBusyRanges, confirmedAppointments]);
 
   const _emailTemplates = templates.filter((t) => t.channel === "email");
-  const whatsappTemplates = templates.filter(
-    (t) =>
-      t.channel === "whatsapp" &&
-      Boolean(t.meta_template_id) &&
-      (typeof t.whatsapp_template_active === "undefined" || t.whatsapp_template_active === true)
-  );
+  const whatsappTemplates = templates.filter(isSelectableWhatsAppTemplate);
 
   /* =========================
      Derived validation (SAFE)

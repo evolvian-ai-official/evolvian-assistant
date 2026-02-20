@@ -12,7 +12,7 @@ const API = import.meta.env.VITE_API_URL;
 const isValidPhone = (phone) => /^\+\d{11,15}$/.test(phone);
 const isValidPhoneId = (id) => /^\d{10,20}$/.test(id);
 const isValidToken = (token) => /^EA[A-Za-z0-9]{16,}$/.test(token);
-const isValidWabaId = (id) => !id || /^\d{8,24}$/.test(id);
+const isValidWabaId = (id) => /^\d{8,24}$/.test(id);
 
 export default function WhatsAppSetup() {
   const { t } = useLanguage();
@@ -96,7 +96,7 @@ export default function WhatsAppSetup() {
     }
 
     if (!isValidWabaId(waBusinessAccountId)) {
-      setStatus({ message: "WABA ID inválido", type: "error" });
+      setStatus({ message: t("wa_error_waba_id"), type: "error" });
       return;
     }
 
@@ -189,7 +189,7 @@ export default function WhatsAppSetup() {
     }
 
     if (field === "waBusinessAccountId" && !isValidWabaId(value)) {
-      return <p className="ia-help-error">WABA ID inválido</p>;
+      return <p className="ia-help-error">{t("wa_error_waba_id")}</p>;
     }
 
     return null;
@@ -272,11 +272,12 @@ export default function WhatsAppSetup() {
             </div>
 
             <div className="ia-form-field">
-              <label className="ia-form-label">WABA ID (optional, recommended)</label>
+              <label className="ia-form-label">{t("whatsapp_business_account_id")}</label>
               <input
                 className="ia-form-input"
                 type="text"
                 value={waBusinessAccountId}
+                placeholder={t("wa_placeholder_waba_id")}
                 disabled={isLocked}
                 onChange={(e) => setWaBusinessAccountId(e.target.value)}
                 onBlur={() => setTouched((prev) => ({ ...prev, waBusinessAccountId: true }))}
@@ -297,6 +298,17 @@ export default function WhatsAppSetup() {
                 {showError("waToken", waToken)}
               </div>
             )}
+          </div>
+
+          <div className="ia-note" style={{ marginTop: "0.9rem" }}>
+            <strong>{t("wa_data_usage_title")}</strong>
+            <ul className="ia-list" style={{ marginTop: "0.35rem" }}>
+              <li>{t("wa_data_usage_phone")}</li>
+              <li>{t("wa_data_usage_phone_id")}</li>
+              <li>{t("wa_data_usage_waba_id")}</li>
+              <li>{t("wa_data_usage_token")}</li>
+            </ul>
+            <p style={{ margin: "0.45rem 0 0" }}>{t("wa_data_usage_security")}</p>
           </div>
 
           <div className="ia-inline-actions" style={{ marginTop: "1.2rem" }}>

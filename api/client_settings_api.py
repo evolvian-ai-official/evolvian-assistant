@@ -132,7 +132,13 @@ async def upsert_client_settings(request: Request):
     """Crea o actualiza la configuración del cliente (compatible con plan_id)."""
     try:
         raw = await request.json()
-        print("📩 Body recibido (raw):", raw)
+        print(
+            "📩 Body recibido en /client_settings (metadata):",
+            {
+                "keys": list(raw.keys()),
+                "has_client_id": bool(raw.get("client_id")),
+            },
+        )
 
         # ⚠️ Validar client_id presente
         if not raw.get("client_id"):
@@ -212,7 +218,10 @@ async def upsert_client_settings(request: Request):
             payload_dict.pop("custom_prompt", None)
 
         # 💾 Guardar configuración limpia
-        print("💾 Guardando configuración limpia:", payload_dict)
+        print(
+            "💾 Guardando configuración limpia (metadata):",
+            {"keys": list(payload_dict.keys()), "client_id": payload.client_id},
+        )
         response = supabase.table("client_settings").upsert(payload_dict, on_conflict="client_id").execute()
 
         if response.data:

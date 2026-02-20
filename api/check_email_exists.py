@@ -35,7 +35,7 @@ def check_email_exists(payload: EmailCheckRequest):
 
         response = requests.get(url, headers=headers)
         print("📥 Status Code:", response.status_code)
-        print("📄 Response Text:", response.text)
+        print("📄 Response bytes:", len(response.text or ""))
 
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail="Error al consultar Supabase")

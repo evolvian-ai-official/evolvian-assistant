@@ -89,7 +89,7 @@ def send_whatsapp_message(
 
     except requests.exceptions.HTTPError as http_err:
         print(f"❌ Error HTTP WhatsApp: {http_err}")
-        print(f"📩 Respuesta Meta: {response.text}")
+        print(f"📩 Respuesta Meta status={response.status_code} bytes={len(response.text or '')}")
 
     except Exception as e:
         print(f"❌ Error inesperado WhatsApp: {e}")

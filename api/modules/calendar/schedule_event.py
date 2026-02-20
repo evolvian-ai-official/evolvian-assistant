@@ -40,7 +40,11 @@ def refresh_access_token(client_id: str, refresh_token: str) -> str:
 
     response = requests.post(token_url, data=payload)
     if response.status_code != 200:
-        logger.error(f"❌ Failed to refresh token: {response.text}")
+        logger.error(
+            "❌ Failed to refresh token | status=%s | client_id=%s",
+            response.status_code,
+            client_id,
+        )
         raise HTTPException(status_code=500, detail="Failed to refresh Google token")
 
     new_token = response.json().get("access_token")
@@ -158,7 +162,11 @@ def schedule_event(payload: dict):
             )
 
         if create_event.status_code >= 400:
-            logger.error(f"❌ Error creating Google event: {create_event.text}")
+            logger.error(
+                "❌ Error creating Google event | status=%s | client_id=%s",
+                create_event.status_code,
+                client_id,
+            )
             raise HTTPException(status_code=create_event.status_code, detail="Error creating event in Google Calendar")
 
         event = create_event.json()

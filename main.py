@@ -8,11 +8,17 @@ from dotenv import load_dotenv
 import os
 import importlib.util, sys
 import subprocess
+from api.security.log_redaction import (
+    install_logging_redaction,
+    install_print_redaction,
+)
 
 # ======================================
 # ✅ Environment
 # ======================================
 load_dotenv(".env")
+install_print_redaction()
+install_logging_redaction()
 print("🔄 Environment variables loaded from .env")
 
 IS_PROD = os.getenv("ENV") == "prod"

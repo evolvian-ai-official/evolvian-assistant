@@ -325,7 +325,7 @@ def send_confirmation_email(
     )
 
     if response.status_code != 200:
-        logger.error(f"❌ Error al enviar correo: {response.status_code} - {response.text}")
+        logger.error("❌ Error al enviar correo | status=%s", response.status_code)
         if client_id:
             complete_email_send_audit(
                 client_id=client_id,

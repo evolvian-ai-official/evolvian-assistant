@@ -82,7 +82,7 @@ async def send_whatsapp_message(
             res = await client.post(meta_url, json=payload, headers=headers)
 
         if res.status_code >= 400:
-            logger.error("❌ WhatsApp TEXT failed | %s", res.text)
+            logger.error("❌ WhatsApp TEXT failed | status=%s", res.status_code)
             return False
 
         logger.info("✅ WhatsApp TEXT sent | to=%s", to_number)
@@ -271,10 +271,9 @@ async def send_meta_template(
 
         if status_code >= 400:
             logger.error(
-                "❌ META TEMPLATE failed | template=%s | status=%s | response=%s",
+                "❌ META TEMPLATE failed | template=%s | status=%s",
                 template_name,
                 status_code,
-                res.text,
             )
             return {
                 "success": False,

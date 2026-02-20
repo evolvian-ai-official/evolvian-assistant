@@ -25,9 +25,14 @@ async def book_calendar(request: Request):
     """
     try:
         payload = await request.json()
-        logger.info(f"📩 Received book_calendar request: {payload}")
-
         client_id = payload.get("client_id")
+        logger.info(
+            "📩 Received book_calendar request | client_id=%s | has_user_email=%s | has_user_name=%s | scheduled_time=%s",
+            client_id or "-",
+            bool(payload.get("user_email")),
+            bool(payload.get("user_name")),
+            payload.get("scheduled_time"),
+        )
         if not client_id:
             return JSONResponse(
                 content={"success": False, "message": "Missing client_id."},
@@ -128,7 +133,10 @@ async def book_calendar(request: Request):
                                 }).eq("client_id", client_id).execute()
                                 logger.info("✅ Google token refreshed and saved.")
                             else:
-                                logger.warning(f"⚠️ Failed to refresh token: {refresh_res.text}")
+                                logger.warning(
+                                    "⚠️ Failed to refresh token | status=%s",
+                                    refresh_res.status_code,
+                                )
                     except Exception as e:
                         logger.warning(f"⚠️ Error parsing or refreshing token expiration: {e}")
 
@@ -156,7 +164,11 @@ async def book_calendar(request: Request):
                     if gcal_response.status_code in [200, 201]:
                         logger.info("✅ Event created in Google Calendar")
                     else:
-                        logger.warning(f"⚠️ Google Calendar sync failed: {gcal_response.text}")
+                        logger.warning(
+                            "⚠️ Google Calendar sync failed | status=%s | client_id=%s",
+                            gcal_response.status_code,
+                            client_id,
+                        )
                 else:
                     logger.warning("⚠️ Missing calendar_id or access_token — skipping sync.")
             else:

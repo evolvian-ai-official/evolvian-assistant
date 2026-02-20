@@ -611,7 +611,14 @@ async def chat_widget(request: Request):
         print("📥 Incoming request to /chat")
 
         body = await request.json()
-        print("📦 Received body:", body)
+        print(
+            "📦 Received /chat body metadata:",
+            {
+                "keys": list(body.keys()),
+                "has_message": bool(body.get("message")),
+                "message_length": len(str(body.get("message") or "")),
+            },
+        )
 
         required_fields = ["public_client_id", "session_id", "message"]
         if not all(field in body for field in required_fields):
@@ -636,7 +643,10 @@ async def chat_widget(request: Request):
             window_seconds=60,
         )
 
-        print(f"💬 [{channel}] Message: '{message}' (public_client_id: {public_client_id}, session_id: {session_id})")
+        print(
+            f"💬 [{channel}] Message received "
+            f"(public_client_id={public_client_id}, session_id={session_id}, message_length={len(message)})"
+        )
 
         # Get actual client_id
         client_id = get_client_id_from_public_client_id(public_client_id)
