@@ -17,8 +17,49 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 logger = logging.getLogger(__name__)
 
 
+def _get_client_language(client_id: Optional[str]) -> str:
+    if not client_id:
+        return "es"
+    try:
+        settings_res = (
+            supabase
+            .table("client_settings")
+            .select("language")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        lang = ((settings_res.data or [{}])[0].get("language") or "es").strip().lower()
+        return "en" if lang.startswith("en") else "es"
+    except Exception as e:
+        logger.warning("⚠️ Could not load client language | client_id=%s | error=%s", client_id, e)
+        return "es"
+
+
+def _email_copy(lang: str) -> dict[str, str]:
+    if lang == "en":
+        return {
+            "company_fallback": "Your company",
+            "subject_confirmation": "✅ Your appointment is confirmed",
+            "hello": "Hi 👋",
+            "body_confirmation": "Your appointment has been scheduled for <strong>{date}</strong> at <strong>{hour}</strong>.",
+            "thanks": "Thank you for your time.",
+            "sent_auto": "Sent automatically by {sender}",
+            "cancel_button": "Cancel appointment",
+        }
+    return {
+        "company_fallback": "Tu empresa",
+        "subject_confirmation": "✅ Confirmación de tu cita",
+        "hello": "Hola 👋",
+        "body_confirmation": "Tu cita ha sido agendada para el <strong>{date}</strong> a las <strong>{hour}</strong>.",
+        "thanks": "Gracias por tu tiempo.",
+        "sent_auto": "Enviado automáticamente por {sender}",
+        "cancel_button": "Cancelar cita",
+    }
+
+
 def _get_client_sender_name(client_id: Optional[str]) -> str:
-    default_name = "Tu empresa"
+    default_name = _email_copy(_get_client_language(client_id)).get("company_fallback", "Tu empresa")
     if not client_id:
         return default_name
 
@@ -58,7 +99,7 @@ def _get_client_sender_name(client_id: Optional[str]) -> str:
 
 
 def _safe_header_name(value: str) -> str:
-    return (value or "").replace("\r", " ").replace("\n", " ").strip() or "Tu empresa"
+    return (value or "").replace("\r", " ").replace("\n", " ").strip() or "Evolvian"
 
 
 def _render_template_text(template_text: Optional[str], replacements: dict[str, str]) -> Optional[str]:
@@ -88,6 +129,8 @@ def _resolve_template_content(
         return final_subject, final_html, None
 
     try:
+        lang = _get_client_language(client_id)
+        copy = _email_copy(lang)
         tpl_res = (
             supabase
             .table("message_templates")
@@ -126,13 +169,13 @@ def _resolve_template_content(
         cancel_button_html = (
             f"<a href=\"{safe_cancel_link}\" "
             "style=\"display:inline-block;padding:10px 16px;background:#f8fafc;color:#334155;"
-            "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;font-weight:600;\">Cancelar cita</a>"
+            f"text-decoration:none;border:1px solid #d1d5db;border-radius:8px;font-weight:600;\">{copy['cancel_button']}</a>"
             if safe_cancel_link else ""
         )
 
         replacements = {
             "company_name": company_name,
-            "user_name": (user_name or "Cliente").strip() or "Cliente",
+            "user_name": (user_name or ("Customer" if lang == "en" else "Cliente")).strip() or ("Customer" if lang == "en" else "Cliente"),
             "appointment_type": (appointment_type or "").strip(),
             "scheduled_time": scheduled_label,
             "appointment_date": date_str,
@@ -236,13 +279,15 @@ def send_confirmation_email(
     purpose: str = "transactional",
     cancel_link: Optional[str] = None,
 ) -> bool:
-    default_subject = subject or "✅ Confirmación de tu cita"
+    lang = _get_client_language(client_id)
+    copy = _email_copy(lang)
+    default_subject = subject or copy["subject_confirmation"]
     sender_name = _safe_header_name(_get_client_sender_name(client_id))
     default_html = html_body or f"""
-                <p>Hola 👋</p>
-                <p>Tu cita ha sido agendada para el <strong>{date_str}</strong> a las <strong>{hour_str}</strong>.</p>
-                <p>Gracias por tu tiempo.</p>
-                <p style='color:#888;font-size:12px;'>Enviado automáticamente por {sender_name}</p>
+                <p>{copy["hello"]}</p>
+                <p>{copy["body_confirmation"].format(date=date_str, hour=hour_str)}</p>
+                <p>{copy["thanks"]}</p>
+                <p style='color:#888;font-size:12px;'>{copy["sent_auto"].format(sender=sender_name)}</p>
             """
     if html_body is not None and subject is not None:
         content_source = "provided_template"

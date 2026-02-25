@@ -420,6 +420,77 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
         )
         widget_messages_count = getattr(widget_messages_res, "count", 0) or 0
 
+        calendar_connected = False
+        try:
+            calendar_res = _run_timed(
+                perf_ms,
+                "calendar_connected_query",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("calendar_integrations")
+                        .select("client_id", count="exact")
+                        .eq("client_id", client_id)
+                        .eq("is_active", True)
+                        .limit(1)
+                        .execute()
+                    ),
+                    op_name="dashboard.calendar_connected",
+                ),
+            )
+            calendar_connected = (getattr(calendar_res, "count", 0) or 0) > 0
+        except Exception as calendar_exc:
+            logging.warning(
+                "⚠️ No se pudo calcular calendar_connected (non-blocking): %s",
+                calendar_exc,
+            )
+
+        templates_active_count = 0
+        try:
+            templates_res = _run_timed(
+                perf_ms,
+                "templates_active_count_query",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("message_templates")
+                        .select("id", count="exact")
+                        .eq("client_id", client_id)
+                        .eq("is_active", True)
+                        .limit(1)
+                        .execute()
+                    ),
+                    op_name="dashboard.templates_active_count",
+                ),
+            )
+            templates_active_count = getattr(templates_res, "count", 0) or 0
+        except Exception as templates_exc:
+            logging.warning(
+                "⚠️ No se pudo calcular templates_active_count (non-blocking): %s",
+                templates_exc,
+            )
+
+        appointments_count = 0
+        try:
+            appointments_res = _run_timed(
+                perf_ms,
+                "appointments_count_query",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("appointments")
+                        .select("id", count="exact")
+                        .eq("client_id", client_id)
+                        .limit(1)
+                        .execute()
+                    ),
+                    op_name="dashboard.appointments_count",
+                ),
+            )
+            appointments_count = getattr(appointments_res, "count", 0) or 0
+        except Exception as appointments_exc:
+            logging.warning(
+                "⚠️ No se pudo calcular appointments_count (non-blocking): %s",
+                appointments_exc,
+            )
+
         # 8️⃣ Historial de usuario (últimos 3)
         history_res = _run_timed(
             perf_ms,
@@ -478,6 +549,9 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
                 "channels": channels,
                 "onboarding_signals": {
                     "widget_messages_count": widget_messages_count,
+                    "calendar_connected": calendar_connected,
+                    "templates_active_count": templates_active_count,
+                    "appointments_count": appointments_count,
                     "external_channel_upgrade_plan": external_channel_upgrade_plan,
                 },
                 "assistant_config": {

@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import InternalSupportWidget from "../components/InternalSupportWidget";
+import { useLanguage } from "../contexts/LanguageContext";
 
 const MOBILE_BREAKPOINT = 1024;
 
 export default function MainLayout({ children }) {
+  const { t } = useLanguage();
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
   );
@@ -42,7 +44,7 @@ export default function MainLayout({ children }) {
           {isMobile ? (
             <button
               type="button"
-              aria-label="Open menu"
+              aria-label={t("main_layout_open_menu")}
               onClick={() => setSidebarOpen(true)}
               style={menuButtonStyle}
             >
@@ -64,25 +66,25 @@ export default function MainLayout({ children }) {
 
       <footer style={footerStyle}>
         <div>
-          Evolvian™ is a pending trademark application filed with the USPTO. All rights reserved.
+          {t("main_layout_footer_trademark")}
         </div>
         <div style={{ marginTop: "0.5rem" }}>
-          Version v1.0 —{" "}
+          {t("main_layout_footer_version_label")} v1.0 {t("main_layout_footer_separator")}{" "}
           <a
             href="https://evolvianai.com"
             target="_blank"
             rel="noopener noreferrer"
             style={linkStyle}
           >
-            Visit Public Site
+            {t("main_layout_footer_visit_public_site")}
           </a>{" "}
           |{" "}
           <a href="/terms" style={linkStyle}>
-            Terms & Conditions
+            {t("main_layout_footer_terms")}
           </a>{" "}
           |{" "}
           <a href="/PrivacyPolicy" style={linkStyle}>
-            Privacy Policy
+            {t("main_layout_footer_privacy")}
           </a>
         </div>
       </footer>
@@ -91,7 +93,7 @@ export default function MainLayout({ children }) {
         <>
           <button
             type="button"
-            aria-label="Close menu"
+            aria-label={t("main_layout_close_menu")}
             onClick={() => setSidebarOpen(false)}
             style={backdropStyle}
           />

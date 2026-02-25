@@ -12,10 +12,10 @@ export default function ServicesDashboard() {
           <p className="ia-services-subtitle">{t("services_use_sidebar")}</p>
 
           <div className="ia-services-grid">
-            <div className="ia-service-item">🧠 Chat Assistant</div>
-            <div className="ia-service-item">✉️ Email</div>
-            <div className="ia-service-item">💬 WhatsApp</div>
-            <div className="ia-service-item">🗓️ Appointments</div>
+            <div className="ia-service-item">🧠 {t("chat_assistant")}</div>
+            <div className="ia-service-item">✉️ {t("email")}</div>
+            <div className="ia-service-item">💬 {t("whatsapp")}</div>
+            <div className="ia-service-item">🗓️ {t("appointments_nav")}</div>
           </div>
         </section>
       </div>

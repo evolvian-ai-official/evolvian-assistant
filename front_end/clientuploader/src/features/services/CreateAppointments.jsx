@@ -1,9 +1,20 @@
 // CreateAppointment.jsx — Evolvian Light (Page + Modal)
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import ShowAppointments from "./ShowAppointments";
 import { authFetch } from "../../lib/authFetch";
+import {
+  PHONE_COUNTRY_OPTIONS,
+  composeE164Phone,
+  inferPhoneCountryCode,
+  isValidAppointmentEmail,
+  isValidAppointmentPhone,
+  normalizeAppointmentEmail,
+  normalizeAppointmentName,
+  sanitizePhoneLocalInput,
+  splitE164Phone,
+} from "./appointmentContactUtils";
 import "../../components/ui/internal-admin-responsive.css";
 
 
@@ -16,11 +27,8 @@ const API_BASE_URL =
 /* =========================
    Validators (Meta-safe)
    ========================= */
-const isValidEmail = (email) =>
-  /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
-
-const isValidWhatsApp = (phone) =>
-  /^\+[1-9]\d{9,14}$/.test(phone); // E.164 (Meta)
+const isValidEmail = isValidAppointmentEmail;
+const isValidWhatsApp = isValidAppointmentPhone;
 
 const isChannelEnabled = (channel) => Boolean(channel?.is_active ?? channel?.active);
 
@@ -50,7 +58,45 @@ const isTemplateActive = (template) => {
    ========================= */
 export default function CreateAppointment({ disabled = false }) {
   const clientId = useClientId();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const isEs = lang === "es";
+  const uiLocale = isEs ? "es-MX" : "en-US";
+  const ui = {
+    clientsLabel: isEs ? "Clientes" : "Clients",
+    clientsSearchPlaceholder: isEs
+      ? "Buscar cliente por nombre, email o teléfono"
+      : "Search client by name, email or phone",
+    loadingClients: isEs ? "Cargando clients..." : "Loading clients...",
+    selectOptionalClient: isEs ? "Selecciona un cliente (opcional)" : "Select a client (optional)",
+    newClientShort: isEs ? "Nuevo" : "New",
+    selectedClientPrefix: isEs ? "Cliente seleccionado" : "Selected client",
+    selectedClientFallback: isEs ? "Cliente" : "Client",
+    creatingNewClientHint: isEs
+      ? 'Estás creando un cliente nuevo. Llena nombre, email y/o teléfono y usa "Guardar cliente".'
+      : 'You are creating a new client. Fill name, email and/or phone, then click "Save client".',
+    saveClient: isEs ? "Guardar cliente" : "Save client",
+    createNewClientOption: isEs ? "+ Crear cliente nuevo" : "+ Create new client",
+    saving: isEs ? "Guardando..." : "Saving...",
+    appointmentsCountSuffix: isEs ? "cita(s)" : "appointment(s)",
+    phoneWithoutPrefixSuffix: isEs ? "(sin prefijo)" : "(without country code)",
+    suggestedPrefixText: isEs
+      ? "Prefijo sugerido"
+      : "Suggested prefix",
+    suggestedPrefixReason: isEs
+      ? "según el país configurado del usuario en Evolvian."
+      : "based on the Evolvian user's configured country.",
+    clientsDirectoryUnavailable: isEs
+      ? "El directorio editable de clients aún no está disponible (falta migración), pero puedes seleccionar clientes del histórico."
+      : "The editable clients directory is not available yet (missing migration), but you can select clients from appointment history.",
+    clientsLoadError: isEs
+      ? "No se pudo cargar la lista de clientes."
+      : "Could not load the clients list.",
+    invalidEmail: isEs ? "Email inválido." : "Invalid email.",
+    invalidPhone: isEs ? "Teléfono inválido. Usa prefijo internacional." : "Invalid phone. Use international format.",
+    addEmailOrPhone: isEs ? "Agrega email o teléfono." : "Add email or phone.",
+    timeNoLongerAvailable: isEs ? "Ese horario ya no está disponible." : "That time is no longer available.",
+    invalidTime: isEs ? "Horario inválido." : "Invalid time.",
+  };
   const [sessionId] = useState(() => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
       return crypto.randomUUID();
@@ -78,6 +124,17 @@ export default function CreateAppointment({ disabled = false }) {
     appointment_type: "general",
     channel: "chat",
   });
+  const [appointmentClients, setAppointmentClients] = useState([]);
+  const [appointmentClientsLoading, setAppointmentClientsLoading] = useState(false);
+  const [appointmentClientsError, setAppointmentClientsError] = useState("");
+  const [appointmentClientSearch, setAppointmentClientSearch] = useState("");
+  const [selectedAppointmentClientKey, setSelectedAppointmentClientKey] = useState("");
+  const [showCreateClientInline, setShowCreateClientInline] = useState(false);
+  const [savingClientInline, setSavingClientInline] = useState(false);
+  const [inlineClientSaveError, setInlineClientSaveError] = useState("");
+  const [ownerPhoneCountryCode, setOwnerPhoneCountryCode] = useState("+1");
+  const [phoneCountryCode, setPhoneCountryCode] = useState("+1");
+  const [phoneLocalNumber, setPhoneLocalNumber] = useState("");
 
   /* 🔔 Reminder State */
   const [enableReminder, setEnableReminder] = useState(false);
@@ -114,6 +171,28 @@ export default function CreateAppointment({ disabled = false }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  useEffect(() => {
+    const nextPhone = composeE164Phone(phoneCountryCode, phoneLocalNumber);
+    setForm((prev) => (prev.user_phone === nextPhone ? prev : { ...prev, user_phone: nextPhone }));
+  }, [phoneCountryCode, phoneLocalNumber]);
+
+  const filteredAppointmentClients = useMemo(() => {
+    const q = appointmentClientSearch.trim().toLowerCase();
+    const list = Array.isArray(appointmentClients) ? appointmentClients : [];
+    if (!q) return list;
+    return list.filter((row) =>
+      String(row?.user_name || "").toLowerCase().includes(q) ||
+      String(row?.user_email || "").toLowerCase().includes(q) ||
+      String(row?.user_phone || "").toLowerCase().includes(q)
+    );
+  }, [appointmentClients, appointmentClientSearch]);
+
+  const selectedAppointmentClient = useMemo(
+    () => filteredAppointmentClients.find((row) => row?.match_key === selectedAppointmentClientKey) ||
+      (appointmentClients || []).find((row) => row?.match_key === selectedAppointmentClientKey) ||
+      null,
+    [filteredAppointmentClients, appointmentClients, selectedAppointmentClientKey]
+  );
 
 
   /* =========================
@@ -219,6 +298,55 @@ export default function CreateAppointment({ disabled = false }) {
     if (!showModal || !clientId) return;
     let mounted = true;
 
+    const fetchAppointmentClients = async () => {
+      setAppointmentClientsLoading(true);
+      setAppointmentClientsError("");
+      try {
+        const [clientsRes, profileRes] = await Promise.all([
+          authFetch(`${API_BASE_URL}/appointments/clients?client_id=${clientId}`),
+          authFetch(`${API_BASE_URL}/profile/${clientId}`),
+        ]);
+
+        const clientsPayload = await clientsRes.json().catch(() => ({}));
+        const profilePayload = await profileRes.json().catch(() => ({}));
+        if (!mounted) return;
+
+        if (!clientsRes.ok && clientsRes.status !== 503) {
+          throw new Error("clients_failed");
+        }
+
+        const nextClients = Array.isArray(clientsPayload?.clients) ? clientsPayload.clients : [];
+        setAppointmentClients(nextClients);
+        if (clientsRes.status === 503 || clientsPayload?.directory_available === false) {
+          setAppointmentClientsError(ui.clientsDirectoryUnavailable);
+        }
+
+        const inferredCode = inferPhoneCountryCode({
+          country: profilePayload?.profile?.country || "",
+          timezone: profilePayload?.timezone || "",
+        });
+        setOwnerPhoneCountryCode(inferredCode);
+        setPhoneCountryCode(inferredCode);
+      } catch (err) {
+        console.error("Failed loading appointment clients/profile", err);
+        if (!mounted) return;
+        setAppointmentClients([]);
+        setAppointmentClientsError(ui.clientsLoadError);
+      } finally {
+        if (mounted) setAppointmentClientsLoading(false);
+      }
+    };
+
+    fetchAppointmentClients();
+    return () => {
+      mounted = false;
+    };
+  }, [showModal, clientId, appointmentsRefreshTick]);
+
+  useEffect(() => {
+    if (!showModal || !clientId) return;
+    let mounted = true;
+
     const readChannels = async (type, provider) => {
       try {
         const res = await authFetch(
@@ -304,7 +432,7 @@ export default function CreateAppointment({ disabled = false }) {
   const formatDateLabel = (dateStr) => {
     try {
       const d = new Date(`${dateStr}T00:00:00`);
-      return d.toLocaleDateString("es-MX", {
+      return d.toLocaleDateString(uiLocale, {
         weekday: "short",
         day: "2-digit",
         month: "2-digit",
@@ -411,13 +539,13 @@ export default function CreateAppointment({ disabled = false }) {
   };
 
   const getFriendlyRulesText = (rules) => {
-    if (!rules) return "Cargando configuración de Calendar Setup...";
+    if (!rules) return t("create_appointment_rules_loading");
     const days = Array.isArray(rules.selected_days) ? rules.selected_days.join(", ") : "Mon, Tue, Wed, Thu, Fri";
     const start = rules.start_time || "09:00";
     const end = rules.end_time || "18:00";
     const slot = Number(rules.slot_duration_minutes ?? 30);
     const buffer = Number(rules.buffer_minutes ?? 0);
-    return `Config activa: días ${days} | horario ${start}-${end} | duración ${slot} min | buffer ${buffer} min.`;
+    return `${t("create_appointment_rules_summary_prefix")} ${days} | ${t("create_appointment_rules_hours_label")} ${start}-${end} | ${t("create_appointment_rules_duration_label")} ${slot} min | ${t("create_appointment_rules_buffer_label")} ${buffer} min.`;
   };
 
   useEffect(() => {
@@ -457,18 +585,24 @@ export default function CreateAppointment({ disabled = false }) {
   /* =========================
      Derived validation (SAFE)
      ========================= */
-  const emailValid = isValidEmail(form.user_email);
-  const phoneValid = isValidWhatsApp(form.user_phone);
+  const hasEmail = Boolean(String(form.user_email || "").trim());
+  const hasPhone = Boolean(String(form.user_phone || "").trim());
+  const emailValid = !hasEmail || isValidEmail(form.user_email);
+  const phoneValid = !hasPhone || isValidWhatsApp(form.user_phone);
+  const hasValidEmail = hasEmail && emailValid;
+  const hasValidPhone = hasPhone && phoneValid;
 
-  const canEnableReminder = emailValid || phoneValid;
+  const canEnableReminder = hasValidEmail || hasValidPhone;
 
   const canSubmit =
-    form.user_name &&
+    normalizeAppointmentName(form.user_name) &&
     form.scheduled_time &&
+    emailValid &&
+    phoneValid &&
     (!enableReminder ||
-      ((reminderEmail ? emailValid && emailTemplateId : true) &&
+      ((reminderEmail ? hasValidEmail && emailTemplateId : true) &&
         (reminderWhatsApp
-          ? phoneValid && whatsappTemplateId
+          ? hasValidPhone && whatsappTemplateId
           : true)));
 
   useEffect(() => {
@@ -477,7 +611,7 @@ export default function CreateAppointment({ disabled = false }) {
       return;
     }
 
-    const becameValidEmail = !prevEmailValidRef.current && emailValid;
+    const becameValidEmail = !prevEmailValidRef.current && hasValidEmail;
     const hasEmailReminderTemplate = emailTemplates.length > 0;
 
     if (becameValidEmail && hasEmailReminderTemplate) {
@@ -486,20 +620,20 @@ export default function CreateAppointment({ disabled = false }) {
       setEmailTemplateId((prev) => prev || emailTemplates[0]?.id || "");
     }
 
-    if (emailValid && reminderEmail && !emailTemplateId && hasEmailReminderTemplate) {
+    if (hasValidEmail && reminderEmail && !emailTemplateId && hasEmailReminderTemplate) {
       setEmailTemplateId(emailTemplates[0]?.id || "");
     }
 
-    if ((!emailValid || !hasEmailReminderTemplate) && reminderEmail) {
+    if ((!hasValidEmail || !hasEmailReminderTemplate) && reminderEmail) {
       setReminderEmail(false);
     }
 
-    if ((!emailValid || !hasEmailReminderTemplate) && emailTemplateId) {
+    if ((!hasValidEmail || !hasEmailReminderTemplate) && emailTemplateId) {
       setEmailTemplateId("");
     }
 
-    prevEmailValidRef.current = emailValid;
-  }, [showModal, emailValid, reminderEmail, emailTemplateId, emailTemplates]);
+    prevEmailValidRef.current = hasValidEmail;
+  }, [showModal, hasValidEmail, reminderEmail, emailTemplateId, emailTemplates]);
 
   /* =========================
      Handlers
@@ -508,16 +642,90 @@ export default function CreateAppointment({ disabled = false }) {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  // 🔥 FIX CRÍTICO: sanitizar teléfono
-  const handlePhoneChange = (e) => {
-    let value = e.target.value.replace(/[^+\d]/g, "");
-
-    // Solo un "+"
-    if (value.indexOf("+") > 0) {
-      value = "+" + value.replace(/\+/g, "");
+  const handleSelectAppointmentClient = (matchKey) => {
+    setSelectedAppointmentClientKey(matchKey);
+    setInlineClientSaveError("");
+    if (matchKey === "__new__") {
+      setShowCreateClientInline(true);
+      setForm((prev) => ({
+        ...prev,
+        user_name: "",
+        user_email: "",
+        user_phone: "",
+      }));
+      setPhoneCountryCode(ownerPhoneCountryCode || "+1");
+      setPhoneLocalNumber("");
+      return;
     }
 
-    setForm({ ...form, user_phone: value });
+    const selected = (appointmentClients || []).find((row) => row?.match_key === matchKey);
+    if (!selected) return;
+    const split = splitE164Phone(selected?.user_phone || "");
+    setShowCreateClientInline(false);
+    setForm((prev) => ({
+      ...prev,
+      user_name: selected?.user_name || "",
+      user_email: selected?.user_email || "",
+      user_phone: selected?.user_phone || "",
+    }));
+    setPhoneCountryCode(split.countryCode || ownerPhoneCountryCode || "+1");
+    setPhoneLocalNumber(split.localNumber || "");
+  };
+
+  const handlePhoneLocalChange = (e) => {
+    setPhoneLocalNumber(sanitizePhoneLocalInput(e.target.value));
+  };
+
+  const saveInlineClient = async () => {
+    if (!clientId || savingClientInline) return;
+
+    const normalizedName = normalizeAppointmentName(form.user_name);
+    const normalizedEmail = normalizeAppointmentEmail(form.user_email);
+    const fullPhone = composeE164Phone(phoneCountryCode, phoneLocalNumber);
+
+    if (normalizedName.length < 2) {
+      setInlineClientSaveError("El nombre debe tener al menos 2 caracteres.");
+      return;
+    }
+    if (!isValidEmail(normalizedEmail)) {
+      setInlineClientSaveError(ui.invalidEmail);
+      return;
+    }
+    if (!isValidWhatsApp(fullPhone)) {
+      setInlineClientSaveError(ui.invalidPhone);
+      return;
+    }
+    if (!normalizedEmail && !fullPhone) {
+      setInlineClientSaveError(ui.addEmailOrPhone);
+      return;
+    }
+
+    setSavingClientInline(true);
+    setInlineClientSaveError("");
+    try {
+      const res = await authFetch(`${API_BASE_URL}/appointments/clients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          user_name: normalizedName,
+          user_email: normalizedEmail || null,
+          user_phone: fullPhone || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || "No se pudo guardar el cliente.");
+      }
+      setShowCreateClientInline(false);
+      setSelectedAppointmentClientKey("");
+      setAppointmentClientSearch("");
+      setAppointmentsRefreshTick((v) => v + 1);
+    } catch (err) {
+      setInlineClientSaveError(err.message || "No se pudo guardar el cliente.");
+    } finally {
+      setSavingClientInline(false);
+    }
   };
 
   const resetForm = () => {
@@ -544,6 +752,12 @@ export default function CreateAppointment({ disabled = false }) {
     setAvailableDates([]);
     setGoogleBusyRanges([]);
     setConfirmedAppointments([]);
+    setAppointmentClientSearch("");
+    setSelectedAppointmentClientKey("");
+    setShowCreateClientInline(false);
+    setInlineClientSaveError("");
+    setPhoneCountryCode(ownerPhoneCountryCode || "+1");
+    setPhoneLocalNumber("");
   };
 
   /* =========================
@@ -564,6 +778,9 @@ export default function CreateAppointment({ disabled = false }) {
 
   const submit = async (replaceExisting = false) => {
     if (!canSubmit || !clientId) return;
+    const normalizedName = normalizeAppointmentName(form.user_name);
+    const normalizedEmail = normalizeAppointmentEmail(form.user_email);
+    const normalizedPhone = composeE164Phone(phoneCountryCode, phoneLocalNumber);
 
     setLoading(true);
     setSubmitError("");
@@ -578,9 +795,9 @@ export default function CreateAppointment({ disabled = false }) {
           client_id: clientId,
           session_id: sessionId,
           scheduled_time: form.scheduled_time,
-          user_name: form.user_name,
-          user_email: emailValid ? form.user_email : undefined,
-          user_phone: phoneValid ? form.user_phone : undefined,
+          user_name: normalizedName,
+          user_email: hasValidEmail ? normalizedEmail : undefined,
+          user_phone: hasValidPhone ? normalizedPhone : undefined,
           appointment_type: form.appointment_type,
           send_reminders: enableReminder,
           replace_existing: replaceExisting,
@@ -601,11 +818,11 @@ export default function CreateAppointment({ disabled = false }) {
       }
       if (data?.overlap_conflict) {
         setOverlapExistingAppt(data?.existing_appointment || {});
-        setSubmitError(data?.message || "Ese horario ya no está disponible.");
+        setSubmitError(data?.message || ui.timeNoLongerAvailable);
         return;
       }
       if (data?.invalid_time) {
-        setSubmitError(data?.message || "Horario inválido.");
+        setSubmitError(data?.message || ui.invalidTime);
         return;
       }
       if (data?.success) {
@@ -649,7 +866,7 @@ export default function CreateAppointment({ disabled = false }) {
       </div>
       {disabled && (
         <p style={reminderHint}>
-          Appointments está desactivado. Actívalo en <strong>Calendar Setup</strong> para crear nuevas citas.
+          {t("create_appointment_disabled_message_prefix")} <strong>{t("create_appointment_calendar_setup_label")}</strong> {t("create_appointment_disabled_message_suffix")}
         </p>
       )}
 
@@ -669,6 +886,68 @@ export default function CreateAppointment({ disabled = false }) {
             }}
           >
             <h3 style={modalTitle}>{t("new_appointment")}</h3>
+
+            <div style={clientPickerBox}>
+              <p style={clientPickerTitle}>{ui.clientsLabel}</p>
+              <input
+                style={inputStyle}
+                placeholder={ui.clientsSearchPlaceholder}
+                value={appointmentClientSearch}
+                onChange={(e) => setAppointmentClientSearch(e.target.value)}
+              />
+              <div style={inlineRow}>
+                <select
+                  style={{ ...inputStyle, marginBottom: 0, flex: 1 }}
+                  value={selectedAppointmentClientKey}
+                  onChange={(e) => handleSelectAppointmentClient(e.target.value)}
+                  disabled={appointmentClientsLoading}
+                >
+                  <option value="">
+                    {appointmentClientsLoading ? ui.loadingClients : ui.selectOptionalClient}
+                  </option>
+                  {filteredAppointmentClients.map((row) => (
+                    <option key={row.match_key || row.id} value={row.match_key}>
+                      {row.user_name || "Cliente"}{row.user_email ? ` • ${row.user_email}` : ""}{row.user_phone ? ` • ${row.user_phone}` : ""}
+                    </option>
+                  ))}
+                  <option value="__new__">{ui.createNewClientOption}</option>
+                </select>
+                <button
+                  type="button"
+                  style={ghostActionButton}
+                  onClick={() => handleSelectAppointmentClient("__new__")}
+                >
+                  {ui.newClientShort}
+                </button>
+              </div>
+              {appointmentClientsError && (
+                <p style={reminderHint}>{appointmentClientsError}</p>
+              )}
+              {selectedAppointmentClient && (
+                <p style={reminderHint}>
+                  {ui.selectedClientPrefix}: <strong>{selectedAppointmentClient.user_name || ui.selectedClientFallback}</strong>
+                  {selectedAppointmentClient.appointments_count ? ` • ${selectedAppointmentClient.appointments_count} ${ui.appointmentsCountSuffix}` : ""}
+                </p>
+              )}
+              {showCreateClientInline && (
+                <div style={inlineClientBox}>
+                  <p style={{ ...reminderHint, marginTop: 0 }}>
+                    {ui.creatingNewClientHint}
+                  </p>
+                  <button
+                    type="button"
+                    style={linkButton}
+                    disabled={savingClientInline}
+                    onClick={saveInlineClient}
+                  >
+                    {savingClientInline ? ui.saving : ui.saveClient}
+                  </button>
+                  {!!inlineClientSaveError && (
+                    <p style={errorMsg}>{inlineClientSaveError}</p>
+                  )}
+                </div>
+              )}
+            </div>
 
             <input
               style={inputStyle}
@@ -690,16 +969,35 @@ export default function CreateAppointment({ disabled = false }) {
             )}
             {!form.user_email && (
               <p style={reminderHint}>
-                Si no agregas correo del cliente, no se enviará confirmación por email.
+                {t("create_appointment_no_email_notice")}
               </p>
             )}
 
-            <input
-              style={inputStyle}
-              placeholder={t("appointment_phone_placeholder")}
-              value={form.user_phone}
-              onChange={handlePhoneChange}
-            />
+            <div style={phoneInputRow}>
+              <select
+                style={{ ...inputStyle, marginBottom: 0, flex: "0 0 180px" }}
+                value={phoneCountryCode}
+                onChange={(e) => setPhoneCountryCode(e.target.value)}
+              >
+                {PHONE_COUNTRY_OPTIONS.map((opt) => (
+                  <option key={opt.code} value={opt.code}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                style={{ ...inputStyle, marginBottom: 0, flex: 1 }}
+                placeholder={`${t("appointment_phone_placeholder")} ${ui.phoneWithoutPrefixSuffix}`}
+                value={phoneLocalNumber}
+                onChange={handlePhoneLocalChange}
+                inputMode="tel"
+              />
+            </div>
+            {!phoneLocalNumber && (
+              <p style={reminderHint}>
+                {ui.suggestedPrefixText}: <strong>{phoneCountryCode || ownerPhoneCountryCode}</strong> {ui.suggestedPrefixReason}
+              </p>
+            )}
             {form.user_phone && !phoneValid && (
               <p style={reminderHint}>
                 {t("use_international_phone_format")}
@@ -714,8 +1012,8 @@ export default function CreateAppointment({ disabled = false }) {
             >
               <option value="">
                 {rulesLoading || googleBusyLoading || appointmentsBusyLoading
-                  ? "Cargando fechas..."
-                  : "Selecciona una fecha disponible"}
+                  ? t("create_appointment_loading_dates")
+                  : t("create_appointment_select_available_date")}
               </option>
               {availableDates.map((date) => (
                 <option key={date.value} value={date.value}>
@@ -738,10 +1036,10 @@ export default function CreateAppointment({ disabled = false }) {
             >
               <option value="">
                 {!selectedDate
-                  ? "Selecciona una fecha"
+                  ? t("create_appointment_select_date")
                   : rulesLoading || googleBusyLoading || appointmentsBusyLoading
-                  ? "Cargando horarios..."
-                  : "Selecciona una hora"}
+                  ? t("create_appointment_loading_times")
+                  : t("create_appointment_select_time")}
               </option>
               {availableTimes.map((time) => (
                 <option key={time} value={time}>
@@ -750,48 +1048,48 @@ export default function CreateAppointment({ disabled = false }) {
               ))}
             </select>
             {googleBusyLoading && (
-              <p style={reminderHint}>Sincronizando horarios ocupados desde Google Calendar...</p>
+              <p style={reminderHint}>{t("create_appointment_syncing_google_busy_slots")}</p>
             )}
             {appointmentsBusyLoading && (
-              <p style={reminderHint}>Validando horarios ocupados por citas ya confirmadas en Evolvian...</p>
+              <p style={reminderHint}>{t("create_appointment_validating_confirmed_busy_slots")}</p>
             )}
             {!googleBusyLoading && googleBusyRanges.length > 0 && (
               <p style={reminderHint}>
-                Se ocultaron automáticamente los horarios ocupados en Google Calendar.
+                {t("create_appointment_google_busy_slots_hidden")}
               </p>
             )}
             {!appointmentsBusyLoading && confirmedAppointments.length > 0 && (
               <p style={reminderHint}>
-                También se ocultaron horarios ya ocupados por citas confirmadas en Evolvian.
+                {t("create_appointment_confirmed_busy_slots_hidden")}
               </p>
             )}
             {selectedDate && !rulesLoading && availableTimes.length === 0 && (
               <p style={reminderHint}>
-                No hay horarios disponibles para esa fecha según tu Calendar Setup, Google Calendar y citas confirmadas en Evolvian.
+                {t("create_appointment_no_times_for_date")}
               </p>
             )}
             {!rulesLoading && availableDates.length === 0 && (
               <p style={reminderHint}>
-                No hay fechas disponibles con tu configuración actual de Calendar Setup.
+                {t("create_appointment_no_dates_available")}
               </p>
             )}
             <p style={timezoneNoticeStyle}>
               ⚠️ {t("appointment_timezone_notice")} <strong>{t("settings_my_profile_path")}</strong> {t("appointment_timezone_notice_end")}
             </p>
             <p style={timezoneNoticeStyle}>
-              ⏱️ Selecciona una fecha y hora disponibles según tu <strong>Calendar Setup</strong>. {getFriendlyRulesText(calendarRules)}
+              ⏱️ {t("create_appointment_select_datetime_notice_prefix")} <strong>{t("create_appointment_calendar_setup_label")}</strong>. {getFriendlyRulesText(calendarRules)}
             </p>
 
             <div style={integrationPanel}>
               {channelsLoading ? (
-                <p style={reminderHint}>Verificando conexiones de Email y WhatsApp...</p>
+                <p style={reminderHint}>{t("create_appointment_checking_channels")}</p>
               ) : (
                 <>
                   {!gmailConnected || !gmailEnabled ? (
                     <div style={warningPanel}>
-                      <p style={panelTitle}>📧 Email sin Gmail activo</p>
+                      <p style={panelTitle}>📧 {t("create_appointment_email_inactive_title")}</p>
                       <p style={panelText}>
-                        Esta cita caerá con el correo de Evolvian reply/no-reply
+                        {t("create_appointment_email_inactive_body_prefix")}
                         (<strong>noreply@notifications.evolvianai.com</strong>).
                       </p>
                       <button
@@ -799,31 +1097,31 @@ export default function CreateAppointment({ disabled = false }) {
                         style={linkButton}
                         onClick={() => (window.location.href = "/services/email")}
                       >
-                        Configurar Email
+                        {t("create_appointment_configure_email")}
                       </button>
                     </div>
                   ) : (
                     <div style={okPanel}>
-                      <p style={panelTitle}>✅ Email activo</p>
+                      <p style={panelTitle}>✅ {t("create_appointment_email_active_title")}</p>
                       <p style={panelText}>
-                        Las citas por correo se enviarán desde tu Gmail conectado:{" "}
-                        <strong>{gmailAddress || "Gmail conectado"}</strong>.
+                        {t("create_appointment_email_active_body_prefix")}{" "}
+                        <strong>{gmailAddress || t("create_appointment_gmail_connected_fallback")}</strong>.
                       </p>
                     </div>
                   )}
 
                   {!whatsAppMetaConnected && (
                     <div style={dangerPanel}>
-                      <p style={panelTitle}>💬 WhatsApp no disponible</p>
+                      <p style={panelTitle}>💬 {t("create_appointment_whatsapp_unavailable_title")}</p>
                       <p style={panelText}>
-                        No puedes mandar citas por WhatsApp porque no tienes enlazado Evolvian con Meta.
+                        {t("create_appointment_whatsapp_unavailable_body")}
                       </p>
                       <button
                         type="button"
                         style={linkButton}
                         onClick={() => (window.location.href = "/services/whatsapp")}
                       >
-                        Conectar WhatsApp
+                        {t("connect_whatsapp")}
                       </button>
                     </div>
                   )}
@@ -867,7 +1165,7 @@ export default function CreateAppointment({ disabled = false }) {
                       style={{
                         ...checkboxRow,
                         opacity:
-                          phoneValid &&
+                          hasValidPhone &&
                           whatsappTemplates.length
                             ? 1
                             : 0.5,
@@ -877,7 +1175,7 @@ export default function CreateAppointment({ disabled = false }) {
                         type="checkbox"
                         checked={reminderWhatsApp}
                         disabled={
-                          !phoneValid ||
+                          !hasValidPhone ||
                           whatsappTemplates.length === 0
                         }
                         onChange={(e) =>
@@ -912,17 +1210,17 @@ export default function CreateAppointment({ disabled = false }) {
                       <p style={{ ...reminderHint, marginTop: "0.35rem" }}>
                         {(() => {
                           const selected = whatsappTemplates.find((tpl) => tpl.id === whatsappTemplateId);
-                          if (!selected) return "Meta puede generar cargos por mensaje según categoría y país.";
-                          if (!selected.billable) return "Este template se estima sin cargo directo de Meta.";
+                          if (!selected) return t("create_appointment_meta_cost_generic");
+                          if (!selected.billable) return t("create_appointment_meta_cost_no_direct");
                           const amount = Number(selected.estimated_unit_cost || 0).toFixed(3);
                           const currency = selected.pricing_currency || "USD";
-                          return `Costo estimado Meta: ~$${amount} ${currency} por mensaje.`;
+                          return `${t("create_appointment_meta_cost_prefix")} ~$${amount} ${currency} ${t("create_appointment_meta_cost_suffix")}`;
                         })()}
                       </p>
                     )}
                     {!whatsAppMetaConnected && (
                       <p style={reminderHint}>
-                        Para usar recordatorios por WhatsApp, primero conecta Evolvian con Meta en WhatsApp Setup.
+                        {t("create_appointment_whatsapp_reminder_setup_notice")}
                       </p>
                     )}
                   </div>
@@ -933,7 +1231,7 @@ export default function CreateAppointment({ disabled = false }) {
                       style={{
                         ...checkboxRow,
                         opacity:
-                          emailValid &&
+                          hasValidEmail &&
                           emailTemplates.length
                             ? 1
                             : 0.5,
@@ -943,7 +1241,7 @@ export default function CreateAppointment({ disabled = false }) {
                         type="checkbox"
                         checked={reminderEmail}
                         disabled={
-                          !emailValid ||
+                          !hasValidEmail ||
                           emailTemplates.length === 0
                         }
                         onChange={(e) =>
@@ -951,7 +1249,7 @@ export default function CreateAppointment({ disabled = false }) {
                         }
                       />
                       <span style={{ marginLeft: 8 }}>
-                        Email
+                        {t("email")}
                       </span>
                     </label>
 
@@ -965,7 +1263,7 @@ export default function CreateAppointment({ disabled = false }) {
                           }
                         >
                           <option value="">
-                            Select Email template
+                            {t("create_appointment_select_email_template")}
                           </option>
                           {emailTemplates.map((t) => (
                             <option key={t.id} value={t.id}>
@@ -974,9 +1272,9 @@ export default function CreateAppointment({ disabled = false }) {
                           ))}
                         </select>
                       )}
-                    {emailValid && emailTemplates.length === 0 && (
+                    {hasValidEmail && emailTemplates.length === 0 && (
                       <p style={reminderHint}>
-                        No tienes templates activos de email para recordatorios. Crea uno en Templates.
+                        {t("create_appointment_no_email_templates_for_reminders")}
                       </p>
                     )}
                   </div>
@@ -1024,21 +1322,21 @@ export default function CreateAppointment({ disabled = false }) {
             {duplicateExistingAppt && (
               <div style={duplicateBox}>
                 <p style={duplicateText}>
-                  Ya existe una cita activa para este contacto ({formatExistingSlot(duplicateExistingAppt)}).
+                  {t("create_appointment_duplicate_existing_message_prefix")} ({formatExistingSlot(duplicateExistingAppt)}).
                 </p>
                 <button
                   style={replaceButton}
                   disabled={loading}
                   onClick={() => submit(true)}
                 >
-                  {loading ? "Procesando..." : "Cancelar actual y crear nueva"}
+                  {loading ? t("processing") : t("create_appointment_replace_existing_action")}
                 </button>
               </div>
             )}
 
             {overlapExistingAppt && (
               <p style={errorMsg}>
-                Ya hay una cita confirmada en ese horario ({formatExistingSlot(overlapExistingAppt)}). Elige otro horario.
+                {t("create_appointment_overlap_existing_message_prefix")} ({formatExistingSlot(overlapExistingAppt)}). {t("create_appointment_overlap_existing_message_suffix")}
               </p>
             )}
 
@@ -1109,6 +1407,52 @@ const inputStyle = {
   marginBottom: "0.75rem",
   borderRadius: 10,
   border: "1px solid #EDEDED",
+};
+
+const clientPickerBox = {
+  border: "1px solid #EDEDED",
+  backgroundColor: "#FAFBFC",
+  borderRadius: 12,
+  padding: "0.8rem",
+  marginBottom: "0.85rem",
+};
+
+const clientPickerTitle = {
+  margin: "0 0 0.45rem",
+  fontSize: "0.9rem",
+  fontWeight: 700,
+  color: "#274472",
+};
+
+const inlineRow = {
+  display: "flex",
+  gap: "0.5rem",
+  alignItems: "stretch",
+  marginBottom: "0.5rem",
+  flexWrap: "wrap",
+};
+
+const ghostActionButton = {
+  border: "1px solid #EDEDED",
+  backgroundColor: "#FFFFFF",
+  color: "#274472",
+  borderRadius: 10,
+  padding: "0.5rem 0.75rem",
+  cursor: "pointer",
+  minWidth: 78,
+};
+
+const inlineClientBox = {
+  borderTop: "1px dashed #DDE3EA",
+  marginTop: "0.55rem",
+  paddingTop: "0.55rem",
+};
+
+const phoneInputRow = {
+  display: "flex",
+  gap: "0.6rem",
+  marginBottom: "0.35rem",
+  flexWrap: "wrap",
 };
 
 const reminderBox = {

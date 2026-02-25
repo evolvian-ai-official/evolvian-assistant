@@ -32,7 +32,7 @@ export default function Templates() {
             </div>
 
             <button onClick={() => setShowModal(true)} className="ia-button ia-button-warning">
-              ➕ Create Email Template
+              ➕ Create Template
             </button>
           </div>
 

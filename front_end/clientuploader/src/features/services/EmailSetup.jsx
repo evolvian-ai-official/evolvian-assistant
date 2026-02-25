@@ -6,16 +6,16 @@ import { authFetch } from "../../lib/authFetch";
 import "../../components/ui/internal-admin-responsive.css";
 
 const isChannelEnabled = (channel) => Boolean(channel?.active ?? channel?.is_active);
-const gmailErrorMessages = {
-  missing_code: "No se recibió la autorización de Google. Intenta conectar tu Gmail otra vez.",
-  missing_state: "La conexión se interrumpió. Vuelve a presionar Conectar Gmail.",
-  state_expired: "La conexión venció por tiempo. Presiona Conectar Gmail nuevamente.",
-  oauth_failed: "No se pudo terminar la conexión con Gmail. Intenta de nuevo.",
+const gmailErrorMessageKeys = {
+  missing_code: "email_setup_gmail_error_missing_code",
+  missing_state: "email_setup_gmail_error_missing_state",
+  state_expired: "email_setup_gmail_error_state_expired",
+  oauth_failed: "email_setup_gmail_error_oauth_failed",
 };
 
 export default function EmailSetup() {
   const clientId = useClientId();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -96,9 +96,9 @@ export default function EmailSetup() {
     if (params.get("gmail_connected") === "true") {
       setStatusModal({
         icon: "✅",
-        title: "Felicitaciones, ya quedó conectado",
-        message: "Ahora puedes enviar correos desde Evolvian a tus clientes usando tu Gmail.",
-        note: "También puedes usar templates, confirmaciones y recordatorios automáticos.",
+        titleKey: "email_setup_modal_connected_title",
+        messageKey: "email_setup_modal_connected_message",
+        noteKey: "email_setup_modal_connected_note",
       });
       fetchChannel();
       params.delete("gmail_connected");
@@ -107,10 +107,13 @@ export default function EmailSetup() {
 
     const gmailError = params.get("gmail_error");
     if (gmailError) {
+      const gmailErrorKey = gmailErrorMessageKeys[gmailError];
       toast({
         variant: "destructive",
-        title: "No se pudo conectar Gmail",
-        description: gmailErrorMessages[gmailError] || "Ocurrió un problema al conectar Gmail. Intenta otra vez.",
+        title: t("email_setup_toast_connect_failed_title"),
+        description:
+          (gmailErrorKey ? t(gmailErrorKey) : null) ||
+          t("email_setup_toast_connect_failed_description"),
       });
       params.delete("gmail_error");
       hasChanges = true;
@@ -141,15 +144,15 @@ export default function EmailSetup() {
         window.location.href = data.authorization_url;
       } else {
         toast({
-          title: "No se pudo iniciar la conexión",
-          description: "Intenta nuevamente en unos segundos.",
+          title: t("email_setup_toast_start_connection_failed_title"),
+          description: t("email_setup_toast_start_connection_failed_description"),
         });
       }
     } catch (err) {
       console.error("❌ Gmail connect error:", err);
       toast({
-        title: "Error al conectar Gmail",
-        description: "No pudimos iniciar la conexión. Intenta otra vez.",
+        title: t("email_setup_toast_connect_error_title"),
+        description: t("email_setup_toast_connect_error_description"),
       });
     }
   };
@@ -163,22 +166,22 @@ export default function EmailSetup() {
       if (res.ok) {
         setStatusModal({
           icon: "ℹ️",
-          title: "Gmail desconectado",
-          message: "Desde ahora, los correos saldrán desde el correo automático de Evolvian.",
-          note: "Puedes volver a conectarlo cuando quieras para seguir usando esta funcionalidad.",
+          titleKey: "email_setup_modal_disconnected_title",
+          messageKey: "email_setup_modal_disconnected_message",
+          noteKey: "email_setup_modal_disconnected_note",
         });
         await fetchChannel();
       } else {
         toast({
-          title: "No se pudo desconectar",
-          description: "Intenta nuevamente.",
+          title: t("email_setup_toast_disconnect_failed_title"),
+          description: t("email_setup_toast_disconnect_failed_description"),
         });
       }
     } catch (err) {
       console.error("❌ Disconnect error:", err);
       toast({
-        title: "Error al desconectar",
-        description: "Ocurrió un problema inesperado. Intenta de nuevo.",
+        title: t("email_setup_toast_disconnect_error_title"),
+        description: t("email_setup_toast_disconnect_error_description"),
       });
     }
   };
@@ -204,17 +207,19 @@ export default function EmailSetup() {
 
       setSenderEnabled(nextEnabled);
       toast({
-        title: nextEnabled ? "Envío activado" : "Envío pausado",
+        title: nextEnabled
+          ? t("email_setup_sender_enabled_title")
+          : t("email_setup_sender_paused_title"),
         description: nextEnabled
-          ? "Desde ahora tus correos saldrán desde tu Gmail conectado."
-          : "Desde ahora los correos saldrán desde el correo automático de Evolvian.",
+          ? t("email_setup_sender_enabled_description")
+          : t("email_setup_sender_paused_description"),
       });
       await fetchChannel();
     } catch (err) {
       console.error("❌ Toggle sender error:", err);
       toast({
-        title: "No se pudo guardar",
-        description: "No se pudo cambiar el estado del envío. Intenta otra vez.",
+        title: t("email_setup_toast_save_failed_title"),
+        description: t("email_setup_toast_save_failed_description"),
       });
     } finally {
       setUpdatingSender(false);
@@ -223,11 +228,15 @@ export default function EmailSetup() {
 
   const plan = dashboardData?.plan || {};
   const supportsEmail = plan?.supports_email === true;
-  const planName = plan?.name || "Free";
+  const normalizedPlanId = (plan?.id || "").toString().toLowerCase();
+  const planName =
+    (["free", "starter", "premium", "white_label"].includes(normalizedPlanId) && t(normalizedPlanId)) ||
+    plan?.name ||
+    t("free");
 
   const senderDisplay = isConnected && senderEnabled && connectedEmail
     ? `${connectedEmail} (Gmail)`
-    : "noreply@notifications.evolvianai.com (correo automático)";
+    : t("email_setup_sender_display_auto");
 
   if (loading || !dashboardData) {
     return (
@@ -247,41 +256,48 @@ export default function EmailSetup() {
           <div className="ia-header-row">
             <img src="/logo-evolvian.svg" alt="Evolvian Logo" className="ia-header-logo" />
             <div>
-              <h1 className="ia-header-title">📧 Enviar correos con tu cuenta</h1>
+              <h1 className="ia-header-title">📧 {t("email_setup_header_title")}</h1>
               <p className="ia-header-subtitle">
-                Aquí decides desde qué correo se envían confirmaciones, recordatorios y templates a tus clientes.
+                {t("email_setup_header_subtitle")}
               </p>
             </div>
           </div>
         </section>
 
         <section className="ia-card">
-          <h2 className="ia-card-title">🔍 Estado actual</h2>
+          <h2 className="ia-card-title">🔍 {t("email_setup_status_title")}</h2>
           <div className="ia-meta-grid">
             <p>
-              <strong>Tu plan:</strong> {planName}
+              <strong>{t("email_setup_status_plan_label")}:</strong> {planName}
             </p>
             <p>
-              <strong>Gmail conectado:</strong>{" "}
+              <strong>{t("email_setup_status_gmail_connected_label")}:</strong>{" "}
               {isConnected ? (
-                <span style={{ color: "#2EB39A", fontWeight: 700 }}>🟢 Sí ({connectedEmail || "Conectado"})</span>
+                <span style={{ color: "#2EB39A", fontWeight: 700 }}>
+                  🟢 {t("yes")} ({connectedEmail || t("connected")})
+                </span>
               ) : (
-                <span style={{ color: "#F5A623", fontWeight: 700 }}>🟡 No conectado</span>
+                <span style={{ color: "#F5A623", fontWeight: 700 }}>
+                  🟡 {t("status_not_connected")}
+                </span>
               )}
             </p>
             <p>
-              <strong>Correo que se usa para enviar:</strong> {senderDisplay}
+              <strong>{t("email_setup_status_sender_label")}:</strong> {senderDisplay}
             </p>
             {lastSync && (
-              <p className="ia-note">Última actualización: {new Date(lastSync).toLocaleString()}</p>
+              <p className="ia-note">
+                {t("email_setup_status_last_update")}:{" "}
+                {new Date(lastSync).toLocaleString(lang === "es" ? "es-ES" : "en-US")}
+              </p>
             )}
           </div>
         </section>
 
         <section className="ia-card">
-          <h2 className="ia-card-title">1) Conectar tu Gmail</h2>
+          <h2 className="ia-card-title">{t("email_setup_connect_section_title")}</h2>
           <p style={{ color: "#274472", lineHeight: 1.55 }}>
-            Conecta el Gmail que quieres usar para mandar correos a tus clientes.
+            {t("email_setup_connect_section_description")}
           </p>
 
           <div className="ia-inline-actions">
@@ -296,7 +312,7 @@ export default function EmailSetup() {
                   color: supportsEmail ? "#1B2A41" : "#999",
                 }}
               >
-                🔗 Conectar Gmail
+                🔗 {t("connect_gmail")}
               </button>
             ) : (
               <button
@@ -305,20 +321,20 @@ export default function EmailSetup() {
                 className="ia-button"
                 style={{ backgroundColor: "#F5A623", color: "#fff" }}
               >
-                ❌ Desconectar Gmail
+                ❌ {t("email_setup_disconnect_gmail")}
               </button>
             )}
           </div>
 
           <div className="ia-note">
-            Te llevaremos a Google para autorizar y regresarás aquí automáticamente.
+            {t("email_setup_connect_section_note")}
           </div>
         </section>
 
         <section className="ia-card">
-          <h2 className="ia-card-title">2) Activar envío con tu Gmail</h2>
+          <h2 className="ia-card-title">{t("email_setup_sender_section_title")}</h2>
           <p style={{ color: "#274472", lineHeight: 1.55 }}>
-            Si lo activas, los correos salen desde tu Gmail. Si lo pausas, salen desde el correo automático de Evolvian.
+            {t("email_setup_sender_section_description")}
           </p>
 
           <div className="ia-inline-actions">
@@ -331,32 +347,32 @@ export default function EmailSetup() {
                 backgroundColor: senderEnabled ? "#2EB39A" : "#EDEDED",
                 color: senderEnabled ? "#fff" : "#1B2A41",
               }}
-            >
+              >
               {updatingSender
-                ? "Guardando..."
+                ? t("saving")
                 : senderEnabled
-                ? "Activado (clic para pausar)"
-                : "Pausado (clic para activar)"}
+                ? t("email_setup_sender_button_active_pause")
+                : t("email_setup_sender_button_paused_activate")}
             </button>
           </div>
 
           <p className="ia-note">
-            Recomendación: haz primero una prueba de correo de confirmación y una de recordatorio.
+            {t("email_setup_sender_recommendation")}
           </p>
         </section>
 
         {!supportsEmail && (
           <section className="ia-card" style={{ marginBottom: 0 }}>
-            <h2 className="ia-card-title">🔒 Función Premium</h2>
+            <h2 className="ia-card-title">🔒 {t("email_setup_premium_title")}</h2>
             <p style={{ color: "#274472", lineHeight: 1.55 }}>
-              Esta opción está disponible en plan Premium o White Label.
+              {t("email_setup_premium_description")}
             </p>
             <button
               type="button"
               className="ia-button ia-button-primary"
               onClick={() => (window.location.href = "/settings#plans")}
             >
-              ⬆️ Ver planes
+              ⬆️ {t("see_plans")}
             </button>
           </section>
         )}
@@ -366,7 +382,7 @@ export default function EmailSetup() {
           className="ia-modal-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={statusModal.title}
+          aria-label={statusModal?.titleKey ? t(statusModal.titleKey) : ""}
           onClick={() => setStatusModal(null)}
         >
           <div className="ia-modal" onClick={(event) => event.stopPropagation()}>
@@ -374,12 +390,18 @@ export default function EmailSetup() {
               <div style={{ fontSize: "2rem" }}>{statusModal.icon || "✅"}</div>
             </div>
             <div className="ia-modal-main">
-              <h3 className="ia-modal-title">{statusModal.title}</h3>
-              <p style={{ margin: 0, color: "#274472" }}>{statusModal.message}</p>
-              <p className="ia-modal-muted">{statusModal.note}</p>
+              <h3 className="ia-modal-title">
+                {statusModal?.titleKey ? t(statusModal.titleKey) : ""}
+              </h3>
+              <p style={{ margin: 0, color: "#274472" }}>
+                {statusModal?.messageKey ? t(statusModal.messageKey) : ""}
+              </p>
+              <p className="ia-modal-muted">
+                {statusModal?.noteKey ? t(statusModal.noteKey) : ""}
+              </p>
               <div className="ia-modal-actions">
                 <button type="button" className="ia-button ia-button-warning" onClick={() => setStatusModal(null)}>
-                  Entendido
+                  {t("email_setup_acknowledge")}
                 </button>
               </div>
             </div>

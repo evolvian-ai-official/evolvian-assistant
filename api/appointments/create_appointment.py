@@ -8,6 +8,7 @@ import uuid
 import logging
 import json
 import os
+import re
 import requests
 from babel.dates import format_datetime
 
@@ -52,6 +53,7 @@ LANGUAGE_TO_LOCALE = {
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy"
+E164_PHONE_RE = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
 def is_calendar_active_for_client(client_id: str) -> bool:
@@ -470,6 +472,20 @@ class CreateAppointmentPayload(BaseModel):
     consent_user_agent: Optional[str] = None
 
 
+def _normalize_phone_e164_or_none(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    raw = raw.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if raw.startswith("00"):
+        raw = f"+{raw[2:]}"
+    if not E164_PHONE_RE.fullmatch(raw):
+        return None
+    return raw
+
+
 def _capture_inline_contact_consent(payload: CreateAppointmentPayload) -> str | None:
     """
     Persist consent provided during appointment creation (non-widget flows).
@@ -832,6 +848,27 @@ async def create_appointment(payload: CreateAppointmentPayload):
     # 🔥 SOLO agregado: obtener timezone del cliente
     LOCAL_TZ = get_client_timezone(str(payload.client_id))
     rules = _load_calendar_rules(str(payload.client_id))
+
+    payload.user_name = " ".join(str(payload.user_name or "").strip().split())
+    if len(payload.user_name) < 2:
+        return {
+            "success": False,
+            "invalid_time": True,
+            "message": "Client name must have at least 2 characters.",
+        }
+
+    if payload.user_phone is not None:
+        normalized_phone = _normalize_phone_e164_or_none(payload.user_phone)
+        if payload.user_phone and not normalized_phone:
+            return {
+                "success": False,
+                "invalid_time": True,
+                "message": "Phone must include country code and use international format (e.g. +525512345678).",
+            }
+        payload.user_phone = normalized_phone
+
+    if payload.user_email is not None:
+        payload.user_email = str(payload.user_email).strip().lower() or None
 
     if payload.scheduled_time.tzinfo is None:
         scheduled_local = payload.scheduled_time.replace(tzinfo=LOCAL_TZ)

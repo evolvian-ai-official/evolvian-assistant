@@ -68,10 +68,10 @@ export default function ChatSetup() {
 ></script>`;
 
   const iframeCode = `<iframe
-  src="${domain}/widget.html?public_client_id=${publicClientId || "TU_ID_PUBLICO"}"
+  src="${domain}/widget.html?public_client_id=${publicClientId || t("chat_setup_public_id_placeholder")}"
   style="width:360px;height:520px;border:none;border-radius:12px;"
   allow="clipboard-write; microphone"
-  title="Evolvian AI Chat Widget"
+  title="${t("chat_widget_iframe_title")}"
 ></iframe>`;
 
   // 🌀 Spinner loader mientras carga

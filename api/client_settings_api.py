@@ -178,7 +178,8 @@ async def upsert_client_settings(request: Request):
             "available_plans", "plan", "plan_features",
             "id", "idx", "created_at", "updated_at",
             "max_messages", "max_documents", "supports_chat",
-            "supports_email", "supports_whatsapp"
+            "supports_email", "supports_whatsapp",
+            "widget_opening_template",
         ]
         for key in forbidden_keys:
             raw.pop(key, None)
@@ -355,6 +356,57 @@ def get_client_settings(
 
         settings = response.data
 
+        # Public widget opening message template (if configured)
+        widget_opening_template = None
+        try:
+            def _widget_opening_template_query():
+                return (
+                    supabase.table("message_templates")
+                    .select("id, label, body, channel, type, is_active")
+                    .eq("client_id", client_id)
+                    .eq("channel", "widget")
+                    .eq("type", "opening_message")
+                    .eq("is_active", True)
+                    .limit(1)
+                )
+
+            def _fetch_widget_opening_template():
+                base = _widget_opening_template_query()
+                try:
+                    return base.order("updated_at", desc=True).execute()
+                except Exception as ordered_exc:
+                    if "updated_at" not in str(ordered_exc).lower():
+                        raise
+                    return _widget_opening_template_query().execute()
+
+            tpl_res = _run_timed(
+                perf_ms,
+                "widget_opening_template_query",
+                lambda: _with_retries(
+                    _fetch_widget_opening_template,
+                    op_name="client_settings.widget_opening_template",
+                ),
+            )
+            tpl_rows = tpl_res.data or []
+            if tpl_rows:
+                row = tpl_rows[0]
+                body = str(row.get("body") or "").strip()
+                if body:
+                    widget_opening_template = {
+                        "id": row.get("id"),
+                        "label": row.get("label"),
+                        "body": body,
+                        "channel": "widget",
+                        "type": "opening_message",
+                    }
+        except Exception as tpl_err:
+            logging.warning(
+                "⚠️ No se pudo cargar widget opening template para client_id=%s: %s",
+                client_id,
+                tpl_err,
+            )
+        settings["widget_opening_template"] = widget_opening_template
+
         # Normalizar booleanos
         for key in [
             "require_email", "require_phone", "require_terms",
@@ -444,7 +496,8 @@ def get_client_settings(
                     .select("""
                 id, name, description, max_messages, max_documents,
                 is_unlimited, supports_chat, supports_email, supports_whatsapp,
-                show_powered_by, price_usd, duration
+                show_powered_by, price_usd, duration,
+                plan_features(feature, is_active)
                     """)
                     .order("price_usd")
                     .execute()
@@ -452,7 +505,15 @@ def get_client_settings(
                 op_name="client_settings.available_plans",
             ),
         )
-        settings["available_plans"] = plans_response.data or []
+        available_plans = plans_response.data or []
+        for p in available_plans:
+            raw_plan_features = p.get("plan_features", []) or []
+            p["plan_features"] = [
+                f["feature"]
+                for f in raw_plan_features
+                if f.get("is_active") is True
+            ]
+        settings["available_plans"] = available_plans
 
         total_ms = round((time.perf_counter() - request_started) * 1000, 1)
         perf_ms["total"] = total_ms

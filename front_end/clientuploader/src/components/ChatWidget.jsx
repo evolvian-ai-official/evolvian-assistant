@@ -43,14 +43,26 @@ const withAlpha = (color, alpha) => {
   return color;
 };
 
-const resolveApiBaseUrl = () =>
-  window.location.hostname === "localhost"
+const resolveApiBaseUrl = () => {
+  const hostname = (typeof window !== "undefined" && window.location?.hostname) || "";
+  const isLocalHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "0.0.0.0";
+
+  return isLocalHost
     ? "http://localhost:8001"
     : "https://evolvian-assistant.onrender.com";
+};
 
 export default function ChatWidget({ clientId: propClientId, usageLimit = 100 }) {
   const languageContext = useLanguage();
-  const { t = (x) => x, lang = "es" } = languageContext || {};
+  const { t = (x) => x, lang = "es", changeLanguage } = languageContext || {};
+  const wt = (key, fallback) => {
+    const value = t(key);
+    return !value || value === key ? fallback : value;
+  };
 
   // =============================
   // 🔹 Estados base
@@ -76,6 +88,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [showLegalLinks, setShowLegalLinks] = useState(false);
   const [termsUrl, setTermsUrl] = useState("");
   const [privacyUrl, setPrivacyUrl] = useState("");
+  const [widgetOpeningTemplate, setWidgetOpeningTemplate] = useState(null);
 
   const [theme, setTheme] = useState({
     headerColor: "#fff9f0",
@@ -122,6 +135,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [, setUsageCount] = useState(0);
   const [usageLimitReached, setUsageLimitReached] = useState(false);
   const messagesEndRef = useRef(null);
+  const openingTemplateInjectedRef = useRef(false);
   const lastSendTriggerAtRef = useRef(0);
   const [activePanel, setActivePanel] = useState("chat");
   const [calendarViewMode, setCalendarViewMode] = useState("month");
@@ -152,6 +166,9 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [cancelSuccess, setCancelSuccess] = useState("");
   const [cancelPreviewAppt, setCancelPreviewAppt] = useState(null);
   const [showCancelConfirmModal, setShowCancelConfirmModal] = useState(false);
+  const requireConsentForChat =
+    Boolean(clientSettings?.require_email_consent) ||
+    Boolean(clientSettings?.require_terms_consent);
 
   // =============================
   // 🧭 Detectar publicClientId
@@ -223,10 +240,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
           consentToken = null;
         }
 
-        const apiUrl =
-          window.location.hostname === "localhost"
-            ? "http://localhost:8001"
-            : "https://evolvian-assistant.onrender.com";
+        const apiUrl = resolveApiBaseUrl();
 
         const params = new URLSearchParams({ public_client_id: publicClientId });
         if (consentToken) {
@@ -267,15 +281,16 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       if (!publicClientId) return;
       setLoading(true);
       try {
-        const apiUrl =
-          window.location.hostname === "localhost"
-            ? "http://localhost:8001"
-            : "https://evolvian-assistant.onrender.com";
+        const apiUrl = resolveApiBaseUrl();
 
         const res = await fetch(`${apiUrl}/client_settings?public_client_id=${publicClientId}`);
         const raw = await res.json();
         const data = Array.isArray(raw) ? raw[0] : raw;
         if (!data) return;
+
+        if (typeof data.language === "string" && data.language.trim()) {
+          changeLanguage?.(data.language);
+        }
 
         setClientSettings(data);
         setAssistantName(data.assistant_name || "Assistant");
@@ -289,6 +304,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         setShowLegalLinks(!!data.show_legal_links);
         setTermsUrl(data.terms_url || "");
         setPrivacyUrl(data.privacy_url || "");
+        setWidgetOpeningTemplate(data.widget_opening_template || null);
 
         if (["premium", "white_label"].includes(data.plan?.id)) {
           setTheme({
@@ -307,12 +323,45 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         }
       } catch (err) {
         console.warn("⚠️ No se pudo cargar configuración:", err);
+        setWidgetOpeningTemplate(null);
       } finally {
         setLoading(false);
       }
     };
     fetchClientSettings();
   }, [publicClientId]);
+
+  useEffect(() => {
+    openingTemplateInjectedRef.current = false;
+  }, [publicClientId]);
+
+  useEffect(() => {
+    if (openingTemplateInjectedRef.current) return;
+    if (!publicClientId || loading || !consentChecked) return;
+    if (activePanel !== "chat") return;
+    if (messages.length > 0) return;
+
+    if (requireConsentForChat && !hasConsent) return;
+
+    const openingText = String(widgetOpeningTemplate?.body || "").trim();
+    if (!openingText) return;
+
+    openingTemplateInjectedRef.current = true;
+    const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setMessages((prev) =>
+      prev.length > 0 ? prev : [{ from: "bot", text: openingText, timestamp }]
+    );
+  }, [
+    activePanel,
+    clientSettings,
+    consentChecked,
+    hasConsent,
+    loading,
+    messages.length,
+    publicClientId,
+    requireConsentForChat,
+    widgetOpeningTemplate,
+  ]);
 
   // =============================
   // 🔄 Auto-scroll
@@ -361,10 +410,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     setSending(true);
 
     try {
-      const apiUrl =
-        window.location.hostname === "localhost"
-          ? "http://localhost:8001"
-          : "https://evolvian-assistant.onrender.com";
+      const apiUrl = resolveApiBaseUrl();
 
       const res = await fetch(`${apiUrl}/chat`, {
         method: "POST",
@@ -536,10 +582,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
 
     const loadCalendarVisibility = async () => {
       try {
-        const apiUrl =
-          window.location.hostname === "localhost"
-            ? "http://localhost:8001"
-            : "https://evolvian-assistant.onrender.com";
+        const apiUrl = resolveApiBaseUrl();
         const url = new URL(`${apiUrl}/widget/calendar/visibility`);
         url.searchParams.set("public_client_id", publicClientId);
         const res = await fetch(url.toString());
@@ -574,10 +617,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       setCalendarError("");
 
       try {
-        const apiUrl =
-          window.location.hostname === "localhost"
-            ? "http://localhost:8001"
-            : "https://evolvian-assistant.onrender.com";
+        const apiUrl = resolveApiBaseUrl();
 
         const url = new URL(`${apiUrl}/widget/calendar/availability`);
         url.searchParams.set("public_client_id", publicClientId);
@@ -760,6 +800,15 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     );
   }
   const effectiveWidgetRadius = isMobileLayout ? 12 : theme.widgetRadius;
+  const canShowOpeningTemplate =
+    !loading &&
+    consentChecked &&
+    !(requireConsentForChat && !hasConsent);
+  const openingTemplateText = String(widgetOpeningTemplate?.body || "").trim();
+  const renderedMessages =
+    messages.length === 0 && activePanel === "chat" && canShowOpeningTemplate && openingTemplateText
+      ? [{ from: "bot", text: openingTemplateText, timestamp: "" }]
+      : messages;
 
   // =============================
   // 💬 RENDER PRINCIPAL
@@ -871,7 +920,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               }}
               onClick={() => setActivePanel("calendar")}
             >
-              Agendar
+              {wt("widget_book_tab", "Agenda")}
             </button>
           )}
         </div>
@@ -885,7 +934,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
             background: aura.messagesBg,
           }}
         >
-          {messages.map((msg, idx) => (
+          {renderedMessages.map((msg, idx) => (
             <div
               key={idx}
               style={{
@@ -910,7 +959,9 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               >
                 {msg.text}
               </div>
-              <span style={{ ...styles.timestamp, color: aura.mutedText }}>{msg.timestamp}</span>
+              {msg.timestamp ? (
+                <span style={{ ...styles.timestamp, color: aura.mutedText }}>{msg.timestamp}</span>
+              ) : null}
             </div>
           ))}
           {usageLimitReached && (
@@ -1028,10 +1079,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                   setDuplicateExistingAppt(null);
 
                   try {
-                    const apiUrl =
-                      window.location.hostname === "localhost"
-                        ? "http://localhost:8001"
-                        : "https://evolvian-assistant.onrender.com";
+                    const apiUrl = resolveApiBaseUrl();
 
                     const requestPayload = {
                       public_client_id: publicClientId,
@@ -1094,10 +1142,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                       try {
                         setBookingSubmitting(true);
                         setBookingError("");
-                        const apiUrl =
-                          window.location.hostname === "localhost"
-                            ? "http://localhost:8001"
-                            : "https://evolvian-assistant.onrender.com";
+                        const apiUrl = resolveApiBaseUrl();
                         const res = await fetch(`${apiUrl}/widget/calendar/book`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
@@ -1208,7 +1253,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={t("type_message") || "Type a message..."}
+              placeholder={wt("type_message", lang === "en" ? "Type your question..." : "Escribe tu consulta...")}
               style={{
                 ...styles.textarea,
                 ...(isMobileLayout ? styles.textareaMobile : null),

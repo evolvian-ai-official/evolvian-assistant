@@ -9,11 +9,19 @@ export default function PromptSettings({
   defaultPrompt,
   temperature
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   if (activeTab !== "prompt") return null;
 
   const prompt = custom_prompt || defaultPrompt;
   const isTooLong = prompt.length > maxLength;
+  const temperatureHelp =
+    lang === "es"
+      ? "La temperatura controla que tan creativa o variable responde la IA. No cambia lo que sabe, cambia como responde."
+      : "Temperature controls how creative or varied the AI responses are. It does not change what it knows, only how it answers.";
+  const temperatureGuide =
+    lang === "es"
+      ? "Baja (0.2-0.4): respuestas mas exactas y consistentes. Media (0.5-0.7): balance recomendado. Alta (0.8-1.0): respuestas mas creativas, pero menos predecibles."
+      : "Low (0.2-0.4): more exact and consistent. Medium (0.5-0.7): recommended balance. High (0.8-1.0): more creative, but less predictable.";
 
   return (
     <div style={{ marginTop: "2rem", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
@@ -52,6 +60,9 @@ export default function PromptSettings({
         <label htmlFor="temperature" style={{ fontWeight: "bold" }}>
           🌡️ {t("temperature_label") || "Model temperature (0.0 - 1.0)"}
         </label>
+        <small style={{ color: "#5f6b7a", lineHeight: 1.4 }}>
+          {temperatureHelp}
+        </small>
         <input
           type="number"
           step="0.1"
@@ -71,6 +82,9 @@ export default function PromptSettings({
             color: hasPromptFeature ? "#000" : "#999"
           }}
         />
+        <small style={{ color: "#6b7280", lineHeight: 1.4 }}>
+          {temperatureGuide}
+        </small>
         {!hasPromptFeature && (
           <small style={{ color: "#888" }}>
             {t("upgrade_to_edit_temperature") || "Upgrade your plan to customize temperature."}

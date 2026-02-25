@@ -6,6 +6,7 @@ import { toast } from "../../components/ui/use-toast";
 import { authFetch } from "../../lib/authFetch";
 import { useLanguage } from "../../contexts/LanguageContext";
 import CreateAppointment from "./CreateAppointments";
+import AppointmentClients from "./AppointmentClients";
 import "../../components/ui/internal-admin-responsive.css";
 
 
@@ -14,7 +15,7 @@ export default function GoogleCalendarSettings() {
   // --- Toggle principal (activar o no el calendario) ---
   const [calendarStatus, setCalendarStatus] = useState("inactive");
 
-  // --- Toggle interno (Appointments | Calendar Setup) ---
+  // --- Toggle interno (Appointments | Calendar Setup | Clients) ---
   const [view, setView] = useState("appointments");
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -358,7 +359,7 @@ export default function GoogleCalendarSettings() {
       if (!res.ok) throw new Error("disconnect_failed");
       setGoogleConnected(false);
       setGoogleConnectedEmail("");
-      toast({ title: "Google Calendar", description: "Sincronización desconectada." });
+      toast({ title: t("calendar_title"), description: t("google_calendar_sync_disconnected") });
     } catch {
       toast({ title: t("error"), description: t("google_calendar_disconnect_failed"), variant: "destructive" });
     } finally {
@@ -382,7 +383,7 @@ export default function GoogleCalendarSettings() {
 
         
 
-        {/* Toggle Appointments / Calendar Setup */}
+        {/* Toggle Appointments / Calendar Setup / Clients */}
         <div style={toggleContainer(isMobile)}>
           <button
             onClick={() => setView("appointments")}
@@ -407,6 +408,18 @@ export default function GoogleCalendarSettings() {
             }}
           >
             Calendar Setup
+          </button>
+
+          <button
+            onClick={() => setView("clients")}
+            style={{
+              ...toggleButton,
+              backgroundColor: view === "clients" ? "#EEF3FF" : "#FFFFFF",
+              color: "#274472",
+              borderColor: view === "clients" ? "#4A90E2" : "#EDEDED",
+            }}
+          >
+            Clients
           </button>
         </div>
 
@@ -578,29 +591,29 @@ export default function GoogleCalendarSettings() {
 
             {/* Google -> Evolvian sync block */}
             <section style={sectionStyle}>
-              <h3 style={sectionTitle}>🔄 Sincronizar con Google Calendar</h3>
+              <h3 style={sectionTitle}>🔄 {t("google_calendar_sync_section_title")}</h3>
               <p style={sectionHint}>
-                Modo unidireccional: <strong>Google → Evolvian</strong>. Evolvian solo usa Google para detectar
-                espacios ocupados y bloquear esos horarios al agendar.
+                {t("google_calendar_sync_mode_prefix")} <strong>Google → Evolvian</strong>.{" "}
+                {t("google_calendar_sync_mode_suffix")}
               </p>
               <p style={sectionHint}>
-                <strong>No se crean ni se modifican eventos en Google Calendar desde Evolvian.</strong>
+                <strong>{t("google_calendar_sync_no_write_notice")}</strong>
               </p>
 
               {loadingGoogleStatus ? (
                 <div style={connectedBox}>
-                  <span style={{ color: "#7A7A7A" }}>Verificando conexión con Google Calendar...</span>
+                  <span style={{ color: "#7A7A7A" }}>{t("google_calendar_checking_connection")}</span>
                 </div>
               ) : (
                 <div style={connectedBox}>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <strong style={{ color: "#274472" }}>
-                      {googleConnected ? "Conectado" : "No conectado"}
+                      {googleConnected ? t("connected") : t("status_not_connected")}
                     </strong>
                     <span style={{ color: "#4A90E2", fontSize: "0.88rem" }}>
                       {googleConnected
-                        ? `Cuenta: ${googleConnectedEmail || "Google Calendar activo"}`
-                        : "Conecta Google para bloquear horarios ocupados automáticamente."}
+                        ? `${t("google_calendar_account_label")}: ${googleConnectedEmail || t("google_calendar_active_account_fallback")}`
+                        : t("google_calendar_connect_to_block_busy_slots")}
                     </span>
                   </div>
 
@@ -610,11 +623,11 @@ export default function GoogleCalendarSettings() {
                       disabled={disconnectingGoogle}
                       style={dangerGhostButton(disconnectingGoogle)}
                     >
-                      {disconnectingGoogle ? "Desconectando..." : "Desconectar Google"}
+                      {disconnectingGoogle ? t("disconnecting") : t("google_calendar_disconnect_button")}
                     </button>
                   ) : (
                     <button onClick={handleConnectGoogleCalendar} style={primaryButton(false)}>
-                      Conectar Google Calendar
+                      {t("calendar_connect_button")}
                     </button>
                   )}
                 </div>
@@ -626,18 +639,18 @@ export default function GoogleCalendarSettings() {
               <h3 style={sectionTitle}>🌎 {t("timezone")}</h3>
               <div style={readonlyTimezone}>{timezone || "UTC"}</div>
               <p style={sectionHint}>
-                Para cambiar tu zona horaria ve a <strong>Settings - My Profile</strong>.
+                {t("google_calendar_timezone_edit_hint_prefix")} <strong>{t("settings_my_profile_path")}</strong>.
               </p>
             </section>
 
             <section style={sectionStyle}>
-              <h3 style={sectionTitle}>💬 Canales de agenda</h3>
+              <h3 style={sectionTitle}>💬 {t("google_calendar_channels_title")}</h3>
               <p style={sectionHint}>
-                Controla si los clientes ven y usan agendado con AI por canal.
+                {t("google_calendar_channels_description")}
               </p>
 
               <div style={toggleRow}>
-                <label style={labelStyle}>Mostrar botón "Agendar" en Chat Widget</label>
+                <label style={labelStyle}>{t("google_calendar_toggle_show_book_button_chat_widget")}</label>
                 <input
                   type="checkbox"
                   checked={showAgendaInChatWidget}
@@ -647,7 +660,7 @@ export default function GoogleCalendarSettings() {
               </div>
 
               <div style={toggleRow}>
-                <label style={labelStyle}>Agendar con AI en chat</label>
+                <label style={labelStyle}>{t("google_calendar_toggle_ai_chat")}</label>
                 <input
                   type="checkbox"
                   checked={aiSchedulingChatEnabled}
@@ -657,7 +670,7 @@ export default function GoogleCalendarSettings() {
               </div>
 
               <div style={toggleRow}>
-                <label style={labelStyle}>Agendar con AI en WhatsApp</label>
+                <label style={labelStyle}>{t("google_calendar_toggle_ai_whatsapp")}</label>
                 <input
                   type="checkbox"
                   checked={aiSchedulingWhatsappEnabled}
@@ -679,6 +692,12 @@ export default function GoogleCalendarSettings() {
             </div>
           </div>
         )}
+
+          {view === "clients" && (
+            <div>
+              <AppointmentClients />
+            </div>
+          )}
               </div>
     </div>
   );

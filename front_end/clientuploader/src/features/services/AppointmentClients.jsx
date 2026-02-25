@@ -1,0 +1,739 @@
+import { useEffect, useMemo, useState } from "react";
+import { useClientId } from "../../hooks/useClientId";
+import { useLanguage } from "../../contexts/LanguageContext";
+import { authFetch } from "../../lib/authFetch";
+import {
+  PHONE_COUNTRY_OPTIONS,
+  buildContactMatchKey,
+  composeE164Phone,
+  inferPhoneCountryCode,
+  isValidAppointmentEmail,
+  isValidAppointmentPhone,
+  normalizeAppointmentEmail,
+  normalizeAppointmentName,
+  sanitizePhoneLocalInput,
+  splitE164Phone,
+} from "./appointmentContactUtils";
+
+const API_BASE_URL =
+  import.meta.env.MODE === "development"
+    ? "http://localhost:8001"
+    : "https://evolvian-assistant.onrender.com";
+
+export default function AppointmentClients() {
+  const clientId = useClientId();
+  const { t, lang } = useLanguage();
+  const isEs = lang === "es";
+  const uiLocale = isEs ? "es-MX" : "en-US";
+  const ui = {
+    title: isEs ? "Clientes" : "Clients",
+    subtitle: isEs
+      ? "Lista editable de clientes y su histórico de citas en orden cronológico."
+      : "Editable client list and appointment history in chronological order.",
+    newClient: isEs ? "+ Nuevo cliente" : "+ New client",
+    close: isEs ? "Cerrar" : "Close",
+    searchPlaceholder: isEs
+      ? "Buscar por nombre, email o teléfono"
+      : "Search by name, email or phone",
+    refresh: isEs ? "Actualizar" : "Refresh",
+    createClientTitle: isEs ? "Crear cliente" : "Create client",
+    name: isEs ? "Nombre" : "Name",
+    email: "Email",
+    invalidEmail: isEs ? "Email inválido." : "Invalid email.",
+    invalidPhone: isEs ? "Teléfono inválido. Usa prefijo internacional." : "Invalid phone. Use international format.",
+    phonePlaceholder: isEs ? "Teléfono (sin prefijo)" : "Phone (without country code)",
+    cancel: isEs ? "Cancelar" : "Cancel",
+    saveClient: isEs ? "Guardar cliente" : "Save client",
+    saveClientFailed: isEs ? "No se pudo guardar el cliente." : "Could not save the client.",
+    saving: isEs ? "Guardando..." : "Saving...",
+    loadClientsError: isEs ? "No se pudo cargar la lista de clientes." : "Could not load the clients list.",
+    directoryMissing503: isEs
+      ? "La tabla appointment_clients aún no existe. Puedes ver clientes derivados de citas, pero para crear/editar corre la migración SQL."
+      : "The appointment_clients table does not exist yet. You can view clients derived from appointments, but run the SQL migration to create/edit clients.",
+    directoryUnavailable: isEs
+      ? "Directorio de clients no disponible todavía. Se muestra lista derivada de citas; para editar/crear corre la migración SQL."
+      : "Clients directory is not available yet. Showing clients derived from appointments; run the SQL migration to edit/create.",
+    noClients: isEs
+      ? "No hay clientes todavía. Crea uno nuevo o crea una cita para generar historial."
+      : "No clients yet. Create a new one or create an appointment to generate history.",
+    clientFallback: isEs ? "Cliente" : "Client",
+    appointmentsCount: (count) => `${count} ${isEs ? "cita(s)" : "appointment(s)"}`,
+    lastLabel: isEs ? "Última" : "Last",
+    derivedFromAppointments: isEs ? "Derivado de Appointments" : "Derived from Appointments",
+    hideHistory: isEs ? "Ocultar histórico" : "Hide history",
+    viewHistory: isEs ? "Ver histórico" : "View history",
+    editTitle: isEs ? "Editar" : "Edit",
+    closeEditTitle: isEs ? "Cerrar edición" : "Close edit",
+    saveChanges: isEs ? "Guardar cambios" : "Save changes",
+    saveInClients: isEs ? "Guardar en Clients" : "Save to Clients",
+    saveFailed: isEs ? "No se pudo guardar." : "Could not save.",
+    historyTitle: isEs ? "Histórico (cronológico)" : "History (chronological)",
+    noHistory: isEs ? "Sin citas registradas todavía." : "No appointments recorded yet.",
+  };
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [directoryWarning, setDirectoryWarning] = useState("");
+  const [clients, setClients] = useState([]);
+  const [appointments, setAppointments] = useState([]);
+  const [search, setSearch] = useState("");
+  const [showNewClient, setShowNewClient] = useState(false);
+  const [ownerDefaultCode, setOwnerDefaultCode] = useState("+1");
+  const [newClient, setNewClient] = useState({
+    user_name: "",
+    user_email: "",
+    countryCode: "+1",
+    localPhone: "",
+  });
+
+  const refreshData = async () => {
+    if (!clientId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const [clientsRes, appointmentsRes, profileRes] = await Promise.all([
+        authFetch(`${API_BASE_URL}/appointments/clients?client_id=${clientId}`),
+        authFetch(`${API_BASE_URL}/appointments/show?client_id=${clientId}`),
+        authFetch(`${API_BASE_URL}/profile/${clientId}`),
+      ]);
+
+      const clientsPayload = clientsRes.ok ? await clientsRes.json() : { clients: [] };
+      const appointmentsPayload = appointmentsRes.ok ? await appointmentsRes.json() : [];
+      const profilePayload = profileRes.ok ? await profileRes.json() : {};
+
+      const inferred = inferPhoneCountryCode({
+        country: profilePayload?.profile?.country || "",
+        timezone: profilePayload?.timezone || "",
+      });
+      setOwnerDefaultCode(inferred);
+      setNewClient((prev) => ({ ...prev, countryCode: prev.localPhone ? prev.countryCode : inferred }));
+
+      if (clientsRes.status === 503) {
+        setDirectoryWarning(ui.directoryMissing503);
+      } else if (clientsPayload?.directory_available === false) {
+        setDirectoryWarning(ui.directoryUnavailable);
+      } else {
+        setDirectoryWarning("");
+      }
+
+      setClients(Array.isArray(clientsPayload?.clients) ? clientsPayload.clients : []);
+      setAppointments(Array.isArray(appointmentsPayload) ? appointmentsPayload : []);
+    } catch (e) {
+      console.error("Failed loading appointment clients", e);
+      setError(ui.loadClientsError);
+      setClients([]);
+      setAppointments([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshData();
+  }, [clientId]);
+
+  const historyByKey = useMemo(() => {
+    const map = new Map();
+    for (const appt of appointments) {
+      const key = buildContactMatchKey(appt || {});
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(appt);
+    }
+    for (const [, list] of map) {
+      list.sort((a, b) => String(a?.scheduled_time || "").localeCompare(String(b?.scheduled_time || "")));
+    }
+    return map;
+  }, [appointments]);
+
+  const filteredClients = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (clients || [])
+      .map((row) => {
+        const matchKey = row.match_key || buildContactMatchKey(row);
+        return {
+          ...row,
+          match_key: matchKey,
+          history: historyByKey.get(matchKey) || [],
+        };
+      })
+      .filter((row) => {
+        if (!q) return true;
+        return (
+          String(row.user_name || "").toLowerCase().includes(q) ||
+          String(row.user_email || "").toLowerCase().includes(q) ||
+          String(row.user_phone || "").toLowerCase().includes(q)
+        );
+      });
+  }, [clients, historyByKey, search]);
+
+  const canCreateNewClient = (() => {
+    const email = normalizeAppointmentEmail(newClient.user_email);
+    const phone = composeE164Phone(newClient.countryCode || ownerDefaultCode, newClient.localPhone);
+    const name = normalizeAppointmentName(newClient.user_name);
+    return (
+      name.length >= 2 &&
+      isValidAppointmentEmail(email) &&
+      isValidAppointmentPhone(phone) &&
+      Boolean(email || phone)
+    );
+  })();
+
+  const saveNewClient = async () => {
+    if (!clientId || !canCreateNewClient || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const payload = {
+        client_id: clientId,
+        user_name: normalizeAppointmentName(newClient.user_name),
+        user_email: normalizeAppointmentEmail(newClient.user_email) || null,
+        user_phone: composeE164Phone(newClient.countryCode || ownerDefaultCode, newClient.localPhone) || null,
+      };
+      const res = await authFetch(`${API_BASE_URL}/appointments/clients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || ui.saveClientFailed);
+      }
+      setShowNewClient(false);
+      setNewClient({
+        user_name: "",
+        user_email: "",
+        countryCode: ownerDefaultCode,
+        localPhone: "",
+      });
+      await refreshData();
+    } catch (e) {
+      setError(e.message || ui.saveClientFailed);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={container}>
+      <div style={headerRow}>
+        <div>
+          <h3 style={title}>{ui.title}</h3>
+          <p style={hint}>
+            {ui.subtitle}
+          </p>
+        </div>
+        <button style={primaryBtn(saving)} onClick={() => setShowNewClient((v) => !v)} disabled={saving}>
+          {showNewClient ? ui.close : ui.newClient}
+        </button>
+      </div>
+
+      <div style={searchRow}>
+        <input
+          style={input}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={ui.searchPlaceholder}
+        />
+        <button style={secondaryBtn} onClick={refreshData} disabled={loading}>
+          {loading ? (t("loading") || "Loading") : ui.refresh}
+        </button>
+      </div>
+
+      {directoryWarning && <div style={warningBox}>{directoryWarning}</div>}
+      {error && <div style={errorBox}>{error}</div>}
+
+      {showNewClient && (
+        <div style={panel}>
+          <h4 style={panelTitle}>{ui.createClientTitle}</h4>
+          <input
+            style={input}
+            value={newClient.user_name}
+            onChange={(e) => setNewClient((prev) => ({ ...prev, user_name: e.target.value }))}
+            placeholder={ui.name}
+          />
+          <input
+            style={input}
+            value={newClient.user_email}
+            onChange={(e) => setNewClient((prev) => ({ ...prev, user_email: e.target.value }))}
+            placeholder="Email"
+          />
+          {newClient.user_email && !isValidAppointmentEmail(newClient.user_email) && (
+            <p style={fieldHintError}>{ui.invalidEmail}</p>
+          )}
+
+          <PhoneInputRow
+            countryCode={newClient.countryCode || ownerDefaultCode}
+            localPhone={newClient.localPhone}
+            onCountryCodeChange={(countryCode) => setNewClient((prev) => ({ ...prev, countryCode }))}
+            onLocalPhoneChange={(localPhone) => setNewClient((prev) => ({ ...prev, localPhone }))}
+            phonePlaceholder={ui.phonePlaceholder}
+          />
+          {composeE164Phone(newClient.countryCode || ownerDefaultCode, newClient.localPhone) &&
+            !isValidAppointmentPhone(composeE164Phone(newClient.countryCode || ownerDefaultCode, newClient.localPhone)) && (
+              <p style={fieldHintError}>{ui.invalidPhone}</p>
+            )}
+          <div style={actions}>
+            <button style={secondaryBtn} onClick={() => setShowNewClient(false)} disabled={saving}>
+              {ui.cancel}
+            </button>
+            <button style={primaryBtn(!canCreateNewClient || saving)} onClick={saveNewClient} disabled={!canCreateNewClient || saving}>
+              {saving ? ui.saving : ui.saveClient}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading && <p style={hint}>{t("appointments_loading") || "Loading..."}</p>}
+
+      {!loading && filteredClients.length === 0 && (
+        <div style={emptyBox}>{ui.noClients}</div>
+      )}
+
+      {!loading && filteredClients.length > 0 && (
+        <div style={list}>
+          {filteredClients.map((client) => (
+            <AppointmentClientCard
+              key={client.match_key || client.id || `${client.user_name || "client"}-${client.user_email || client.user_phone || "na"}`}
+              clientId={clientId}
+              client={client}
+              ui={ui}
+              uiLocale={uiLocale}
+              onSaved={refreshData}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const initialPhone = splitE164Phone(client.user_phone || "");
+  const [draft, setDraft] = useState({
+    user_name: client.user_name || "",
+    user_email: client.user_email || "",
+    countryCode: initialPhone.countryCode,
+    localPhone: initialPhone.localNumber,
+  });
+
+  useEffect(() => {
+    const nextPhone = splitE164Phone(client.user_phone || "");
+    setDraft({
+      user_name: client.user_name || "",
+      user_email: client.user_email || "",
+      countryCode: nextPhone.countryCode,
+      localPhone: nextPhone.localNumber,
+    });
+    setIsEditing(false);
+  }, [client.id, client.match_key, client.user_name, client.user_email, client.user_phone]);
+
+  const fullPhone = composeE164Phone(draft.countryCode, draft.localPhone);
+  const normalizedEmail = normalizeAppointmentEmail(draft.user_email);
+  const normalizedName = normalizeAppointmentName(draft.user_name);
+  const canSave =
+    normalizedName.length >= 2 &&
+    isValidAppointmentEmail(normalizedEmail) &&
+    isValidAppointmentPhone(fullPhone) &&
+    Boolean(normalizedEmail || fullPhone);
+
+  const save = async () => {
+    if (!canSave || !clientId || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const body = {
+        client_id: clientId,
+        user_name: normalizedName,
+        user_email: normalizedEmail || null,
+        user_phone: fullPhone || null,
+      };
+      const url = client.id
+        ? `${API_BASE_URL}/appointments/clients/${client.id}`
+        : `${API_BASE_URL}/appointments/clients`;
+      const method = client.id ? "PATCH" : "POST";
+
+      const res = await authFetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || ui.saveFailed);
+      setIsEditing(false);
+      await onSaved?.();
+    } catch (e) {
+      setError(e.message || ui.saveFailed);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={card}>
+      <div style={contactRowCompact}>
+        <div style={contactMain}>
+          <strong style={{ color: "#274472" }}>{client.user_name || ui.clientFallback}</strong>
+          <div style={contactInlineMeta}>
+            {client.user_email && <span style={contactChip}>✉️ {client.user_email}</span>}
+            {client.user_phone && <span style={contactChip}>📞 {client.user_phone}</span>}
+            <span style={badge}>{ui.appointmentsCount(client.history?.length || client.appointments_count || 0)}</span>
+            {client.last_appointment_time && (
+              <span style={subtleText}>{ui.lastLabel}: {formatDateTime(client.last_appointment_time, uiLocale)}</span>
+            )}
+            {!client.id && <span style={ghostBadge}>{ui.derivedFromAppointments}</span>}
+          </div>
+        </div>
+        <div style={rowActions}>
+          <button style={secondaryBtn} onClick={() => setExpanded((v) => !v)}>
+            {expanded ? ui.hideHistory : ui.viewHistory}
+          </button>
+          <button
+            style={iconBtn}
+            title={isEditing ? ui.closeEditTitle : ui.editTitle}
+            onClick={() => setIsEditing((v) => !v)}
+          >
+            ✏️
+          </button>
+        </div>
+      </div>
+
+      {isEditing && (
+        <div style={editPanel}>
+          <div style={grid}>
+            <input
+              style={input}
+              value={draft.user_name}
+              onChange={(e) => setDraft((prev) => ({ ...prev, user_name: e.target.value }))}
+              placeholder={ui.name}
+            />
+            <input
+              style={input}
+              value={draft.user_email}
+              onChange={(e) => setDraft((prev) => ({ ...prev, user_email: e.target.value }))}
+              placeholder="Email"
+            />
+          </div>
+          {draft.user_email && !isValidAppointmentEmail(draft.user_email) && <p style={fieldHintError}>{ui.invalidEmail}</p>}
+
+          <PhoneInputRow
+            countryCode={draft.countryCode}
+            localPhone={draft.localPhone}
+            onCountryCodeChange={(countryCode) => setDraft((prev) => ({ ...prev, countryCode }))}
+            onLocalPhoneChange={(localPhone) => setDraft((prev) => ({ ...prev, localPhone }))}
+            phonePlaceholder={ui.phonePlaceholder}
+          />
+          {fullPhone && !isValidAppointmentPhone(fullPhone) && (
+            <p style={fieldHintError}>{ui.invalidPhone}</p>
+          )}
+
+          {error && <p style={fieldHintError}>{error}</p>}
+
+          <div style={actions}>
+            <button style={secondaryBtn} onClick={() => setIsEditing(false)} disabled={saving}>
+              {ui.cancel}
+            </button>
+            <button style={primaryBtn(!canSave || saving)} disabled={!canSave || saving} onClick={save}>
+              {saving ? ui.saving : client.id ? ui.saveChanges : ui.saveInClients}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {expanded && (
+        <div style={historyBox}>
+          <div style={historyTitle}>{ui.historyTitle}</div>
+          {client.history?.length ? (
+            <div style={historyList}>
+              {client.history.map((item) => (
+                <div key={item.id} style={historyItem}>
+                  <span>{formatDateTime(item.scheduled_time, uiLocale)}</span>
+                  <span>{String(item.status || "confirmed")}</span>
+                  <span>{String(item.appointment_type || "general")}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={subtleText}>{ui.noHistory}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PhoneInputRow({ countryCode, localPhone, onCountryCodeChange, onLocalPhoneChange, phonePlaceholder = "Phone" }) {
+  return (
+    <div style={phoneRow}>
+      <select
+        style={{ ...input, marginBottom: 0, flex: "0 0 190px" }}
+        value={countryCode}
+        onChange={(e) => onCountryCodeChange?.(e.target.value)}
+      >
+        {PHONE_COUNTRY_OPTIONS.map((opt) => (
+          <option key={opt.code} value={opt.code}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      <input
+        style={{ ...input, marginBottom: 0, flex: 1 }}
+        value={localPhone}
+        onChange={(e) => onLocalPhoneChange?.(sanitizePhoneLocalInput(e.target.value))}
+        placeholder={phonePlaceholder}
+        inputMode="tel"
+      />
+    </div>
+  );
+}
+
+function formatDateTime(value, locale = "en-US") {
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value || "");
+    return d.toLocaleString(locale, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(value || "");
+  }
+}
+
+const container = {
+  padding: "clamp(0.75rem, 0.6rem + 0.8vw, 1.1rem)",
+  border: "1px solid #EDEDED",
+  borderRadius: 14,
+  background: "#FFFFFF",
+};
+
+const headerRow = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: "0.75rem",
+  alignItems: "flex-start",
+  flexWrap: "wrap",
+};
+
+const title = { margin: 0, color: "#274472", fontSize: "1.1rem" };
+const hint = { margin: "0.35rem 0 0", color: "#6b7280", fontSize: "0.9rem" };
+
+const searchRow = {
+  display: "flex",
+  gap: "0.6rem",
+  flexWrap: "wrap",
+  marginTop: "0.9rem",
+  marginBottom: "0.9rem",
+};
+
+const input = {
+  width: "100%",
+  padding: "0.6rem 0.7rem",
+  border: "1px solid #EDEDED",
+  borderRadius: 10,
+  marginBottom: "0.6rem",
+  color: "#274472",
+  backgroundColor: "#FFFFFF",
+};
+
+const phoneRow = {
+  display: "flex",
+  gap: "0.6rem",
+  flexWrap: "wrap",
+  marginBottom: "0.6rem",
+};
+
+const panel = {
+  border: "1px solid #EDEDED",
+  backgroundColor: "#FAFBFC",
+  borderRadius: 12,
+  padding: "0.9rem",
+  marginBottom: "0.9rem",
+};
+
+const panelTitle = { margin: "0 0 0.6rem", color: "#274472" };
+
+const list = { display: "flex", flexDirection: "column", gap: "0.85rem" };
+
+const card = {
+  border: "1px solid #EDEDED",
+  borderRadius: 12,
+  padding: "0.9rem",
+  backgroundColor: "#FFFFFF",
+};
+
+const contactRowCompact = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: "0.75rem",
+  flexWrap: "wrap",
+};
+
+const contactMain = {
+  flex: "1 1 420px",
+  minWidth: 0,
+};
+
+const contactInlineMeta = {
+  marginTop: "0.35rem",
+  display: "flex",
+  gap: "0.35rem",
+  flexWrap: "wrap",
+  alignItems: "center",
+};
+
+const contactChip = {
+  backgroundColor: "#F8FAFC",
+  border: "1px solid #E5E7EB",
+  color: "#334155",
+  borderRadius: 999,
+  padding: "0.2rem 0.55rem",
+  fontSize: "0.8rem",
+};
+
+const rowActions = {
+  display: "flex",
+  gap: "0.45rem",
+  alignItems: "center",
+  flexWrap: "wrap",
+};
+
+const iconBtn = {
+  backgroundColor: "#FFFFFF",
+  border: "1px solid #E5E7EB",
+  color: "#274472",
+  borderRadius: 10,
+  padding: "0.5rem 0.65rem",
+  cursor: "pointer",
+  lineHeight: 1,
+};
+
+const editPanel = {
+  marginTop: "0.75rem",
+  paddingTop: "0.75rem",
+  borderTop: "1px dashed #E5E7EB",
+};
+
+const cardHeader = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: "0.75rem",
+  alignItems: "flex-start",
+  flexWrap: "wrap",
+  marginBottom: "0.7rem",
+};
+
+const metaLine = {
+  marginTop: "0.35rem",
+  display: "flex",
+  gap: "0.4rem",
+  flexWrap: "wrap",
+  alignItems: "center",
+};
+
+const badge = {
+  backgroundColor: "#EAF7F0",
+  border: "1px solid #CDEBDB",
+  color: "#1F6B4A",
+  borderRadius: 999,
+  padding: "0.2rem 0.6rem",
+  fontSize: "0.78rem",
+  fontWeight: 700,
+};
+
+const ghostBadge = {
+  backgroundColor: "#FFF7EA",
+  border: "1px solid #FFD8A8",
+  color: "#7A4D00",
+  borderRadius: 999,
+  padding: "0.2rem 0.6rem",
+  fontSize: "0.78rem",
+  fontWeight: 700,
+};
+
+const subtleText = { color: "#6b7280", fontSize: "0.83rem", margin: 0 };
+
+const grid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: "0.6rem",
+};
+
+const actions = { display: "flex", justifyContent: "flex-end", gap: "0.6rem", flexWrap: "wrap" };
+
+const primaryBtn = (disabled) => ({
+  backgroundColor: disabled ? "#BDE9DF" : "#2EB39A",
+  color: "#FFFFFF",
+  border: "none",
+  borderRadius: 10,
+  padding: "0.55rem 0.9rem",
+  cursor: disabled ? "not-allowed" : "pointer",
+});
+
+const secondaryBtn = {
+  backgroundColor: "#F3F4F6",
+  color: "#274472",
+  border: "1px solid #E5E7EB",
+  borderRadius: 10,
+  padding: "0.55rem 0.9rem",
+  cursor: "pointer",
+};
+
+const warningBox = {
+  border: "1px solid #FFD8A8",
+  backgroundColor: "#FFF8ED",
+  color: "#7A4D00",
+  borderRadius: 10,
+  padding: "0.7rem 0.8rem",
+  marginBottom: "0.75rem",
+  fontSize: "0.88rem",
+};
+
+const errorBox = {
+  border: "1px solid #fecdd3",
+  backgroundColor: "#fff1f2",
+  color: "#be123c",
+  borderRadius: 10,
+  padding: "0.7rem 0.8rem",
+  marginBottom: "0.75rem",
+  fontSize: "0.88rem",
+};
+
+const fieldHintError = { margin: "0 0 0.5rem", color: "#be123c", fontSize: "0.82rem" };
+
+const emptyBox = {
+  border: "1px dashed #D1D5DB",
+  borderRadius: 12,
+  padding: "1rem",
+  color: "#6b7280",
+  textAlign: "center",
+};
+
+const historyBox = {
+  marginTop: "0.9rem",
+  borderTop: "1px solid #F0F1F3",
+  paddingTop: "0.8rem",
+};
+
+const historyTitle = { color: "#274472", fontWeight: 700, marginBottom: "0.45rem" };
+const historyList = { display: "flex", flexDirection: "column", gap: "0.35rem" };
+
+const historyItem = {
+  display: "grid",
+  gridTemplateColumns: "minmax(150px, 1.6fr) 1fr 1fr",
+  gap: "0.45rem",
+  alignItems: "center",
+  padding: "0.45rem 0.55rem",
+  border: "1px solid #F0F1F3",
+  borderRadius: 8,
+  fontSize: "0.83rem",
+  color: "#374151",
+};

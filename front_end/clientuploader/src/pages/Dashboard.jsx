@@ -97,16 +97,6 @@ export default function Dashboard() {
   const normalize = (str) => str.toLowerCase().replace(/\s+/g, "_");
   const activeFeatures = plan?.plan_features?.map((f) => normalize(f)) || [];
   const isSpanish = lang === "es";
-  const formatPlanName = (value, fallback = "Premium") => {
-    const raw = (value || "").toString().trim();
-    if (!raw) return fallback;
-    return raw
-      .replace(/_/g, " ")
-      .split(" ")
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
-  };
 
   useEffect(() => {
     if (!clientId || typeof window === "undefined") {
@@ -130,11 +120,18 @@ export default function Dashboard() {
         uploadAction: "Ir a Subir documentos",
         widgetMessageTitle: "Obtén tu primera conversación desde el widget web",
         widgetMessageAction: "Configurar widget",
-        connectChannelTitle: "Conecta tu primer canal externo (WhatsApp/Email)",
-        connectChannelAction: "Conectar canal",
-        connectChannelUpgradeActionPrefix: "Mejorar a",
-        connectChannelUpsellPrefix: "Disponible en",
-        connectChannelUpsellSuffix: "para automatizar WhatsApp y Email.",
+        whatsappSetupTitle: "Configura WhatsApp",
+        whatsappSetupAction: "Ir a WhatsApp",
+        emailSetupTitle: "Configura Email",
+        emailSetupAction: "Ir a Email",
+        calendarSyncTitle: "Sincroniza Google Calendar",
+        calendarSyncAction: "Ir a Calendar",
+        firstAppointmentTitle: "Haz tu primera cita",
+        firstAppointmentAction: "Ir a Citas",
+        templatesTitle: "Configura tus templates",
+        templatesAction: "Ir a Templates",
+        featureUpgradeActionPrefix: "Mejorar a",
+        featureUpsellPrefix: "Disponible en",
         askHelpTitle: "Si necesitas ayuda, pregúntale a Evolvian",
         askHelpAction: "Abrir ayuda de Evolvian",
       }
@@ -150,11 +147,18 @@ export default function Dashboard() {
         uploadAction: "Go to Upload",
         widgetMessageTitle: "Get first website widget conversation",
         widgetMessageAction: "Set up widget",
-        connectChannelTitle: "Connect first external channel (WhatsApp/Email)",
-        connectChannelAction: "Connect channel",
-        connectChannelUpgradeActionPrefix: "Upgrade to",
-        connectChannelUpsellPrefix: "Available on",
-        connectChannelUpsellSuffix: "to automate WhatsApp and Email.",
+        whatsappSetupTitle: "Set up WhatsApp",
+        whatsappSetupAction: "Go to WhatsApp",
+        emailSetupTitle: "Set up Email",
+        emailSetupAction: "Go to Email",
+        calendarSyncTitle: "Sync Google Calendar",
+        calendarSyncAction: "Go to Calendar",
+        firstAppointmentTitle: "Create your first appointment",
+        firstAppointmentAction: "Go to Appointments",
+        templatesTitle: "Set up message templates",
+        templatesAction: "Go to Templates",
+        featureUpgradeActionPrefix: "Upgrade to",
+        featureUpsellPrefix: "Available on",
         askHelpTitle: "If you have questions, ask Evolvian for help",
         askHelpAction: "Open Evolvian help",
       };
@@ -162,21 +166,22 @@ export default function Dashboard() {
   const hasUpload = (usage?.documents_uploaded || 0) > 0;
   const hasFirstMessage = (usage?.messages_used || 0) > 0;
   const widgetMessagesCount = onboarding_signals?.widget_messages_count || 0;
+  const hasChatWidgetFeature = activeFeatures.includes("chat_widget");
   const hasWidgetConversation = widgetMessagesCount > 0;
   const hasWhatsappFeature = activeFeatures.includes("whatsapp_integration");
   const hasEmailFeature = activeFeatures.includes("email_support");
-  const canConnectExternalChannels = hasWhatsappFeature || hasEmailFeature;
-  const externalChannelUpgradePlan = onboarding_signals?.external_channel_upgrade_plan || null;
-  const externalChannelUpgradePlanName = formatPlanName(
-    externalChannelUpgradePlan?.name || externalChannelUpgradePlan?.id,
-    "Premium"
-  );
-  const hasConnectedExternalChannel = Boolean(channels?.whatsapp || channels?.email);
-  const externalChannelPath = hasWhatsappFeature
-    ? "/services/whatsapp"
-    : hasEmailFeature
-    ? "/services/email"
-    : "/settings#plans";
+  const hasCalendarFeature = activeFeatures.includes("calendar_sync");
+  const hasTemplatesFeature = activeFeatures.includes("templates");
+  const isFreeOrStarter = ["free", "starter"].includes((plan?.id || "").toLowerCase());
+  const calendarConnected = Boolean(onboarding_signals?.calendar_connected);
+  const templatesActiveCount = Number(onboarding_signals?.templates_active_count || 0);
+  const appointmentsCount = Number(onboarding_signals?.appointments_count || 0);
+
+  const getFeatureUpsellLabel = (featureKey) => {
+    if (featureKey === "whatsapp_integration") return "Starter/Premium";
+    if (["email_support", "calendar_sync", "templates"].includes(featureKey)) return "Premium";
+    return "Premium";
+  };
 
   const openSupportWidget = () => {
     if (typeof window === "undefined") return;
@@ -188,6 +193,68 @@ export default function Dashboard() {
     setHasAskedForHelp(true);
   };
 
+  const featureSteps = [
+    {
+      id: "whatsapp_setup",
+      featureKey: "whatsapp_integration",
+      enabled: hasWhatsappFeature,
+      title: onboardingCopy.whatsappSetupTitle,
+      done: Boolean(channels?.whatsapp),
+      actionLabel: onboardingCopy.whatsappSetupAction,
+      action: () => navigate("/services/whatsapp"),
+    },
+    {
+      id: "email_setup",
+      featureKey: "email_support",
+      enabled: hasEmailFeature,
+      title: onboardingCopy.emailSetupTitle,
+      done: Boolean(channels?.email),
+      actionLabel: onboardingCopy.emailSetupAction,
+      action: () => navigate("/services/email"),
+    },
+    {
+      id: "calendar_sync",
+      featureKey: "calendar_sync",
+      enabled: hasCalendarFeature,
+      title: onboardingCopy.calendarSyncTitle,
+      done: calendarConnected,
+      actionLabel: onboardingCopy.calendarSyncAction,
+      action: () => navigate("/services/calendar"),
+    },
+    {
+      id: "first_appointment",
+      featureKey: "calendar_sync",
+      enabled: hasCalendarFeature,
+      title: onboardingCopy.firstAppointmentTitle,
+      done: appointmentsCount > 0,
+      actionLabel: onboardingCopy.firstAppointmentAction,
+      action: () => navigate("/services/calendar"),
+    },
+    {
+      id: "templates_setup",
+      featureKey: "templates",
+      enabled: hasTemplatesFeature,
+      title: onboardingCopy.templatesTitle,
+      done: templatesActiveCount > 0,
+      actionLabel: onboardingCopy.templatesAction,
+      action: () => navigate("/services/templates"),
+    },
+  ]
+    .filter((step) => step.enabled || isFreeOrStarter)
+    .map((step) => {
+      if (step.enabled) return step;
+      const upgradeBadge = getFeatureUpsellLabel(step.featureKey);
+      return {
+        ...step,
+        done: false,
+        actionLabel: `${onboardingCopy.featureUpgradeActionPrefix} ${upgradeBadge}`,
+        note: `${onboardingCopy.featureUpsellPrefix} ${upgradeBadge}.`,
+        badge: upgradeBadge,
+        isUpsell: true,
+        action: () => navigate("/settings#plans"),
+      };
+    });
+
   const onboardingSteps = [
     {
       id: "upload",
@@ -196,27 +263,18 @@ export default function Dashboard() {
       actionLabel: onboardingCopy.uploadAction,
       action: () => navigate("/upload"),
     },
-    {
-      id: "widget_message",
-      title: onboardingCopy.widgetMessageTitle,
-      done: hasWidgetConversation,
-      actionLabel: onboardingCopy.widgetMessageAction,
-      action: () => navigate("/services/chat"),
-    },
-    {
-      id: "connect_channel",
-      title: onboardingCopy.connectChannelTitle,
-      done: hasConnectedExternalChannel,
-      actionLabel: canConnectExternalChannels
-        ? onboardingCopy.connectChannelAction
-        : `${onboardingCopy.connectChannelUpgradeActionPrefix} ${externalChannelUpgradePlanName}`,
-      note: canConnectExternalChannels
-        ? ""
-        : `${onboardingCopy.connectChannelUpsellPrefix} ${externalChannelUpgradePlanName} ${onboardingCopy.connectChannelUpsellSuffix}`,
-      badge: canConnectExternalChannels ? "" : externalChannelUpgradePlanName,
-      isUpsell: !canConnectExternalChannels,
-      action: () => navigate(externalChannelPath),
-    },
+    ...(hasChatWidgetFeature
+      ? [
+          {
+            id: "widget_message",
+            title: onboardingCopy.widgetMessageTitle,
+            done: hasWidgetConversation,
+            actionLabel: onboardingCopy.widgetMessageAction,
+            action: () => navigate("/services/chat"),
+          },
+        ]
+      : []),
+    ...featureSteps,
     {
       id: "ask_help",
       title: onboardingCopy.askHelpTitle,

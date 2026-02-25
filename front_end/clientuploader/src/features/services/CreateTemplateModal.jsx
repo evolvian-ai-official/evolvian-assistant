@@ -16,17 +16,16 @@ const buildLabel = (value, unit) => {
   return `${value} ${unitLabel}${value > 1 ? "s" : ""} before`;
 };
 
-const SUBJECT_VARIABLES = [
-  { label: "Empresa", token: "{{company_name}}" },
-  { label: "Usuario", token: "{{user_name}}" },
-  { label: "Fecha cita", token: "{{appointment_date}}" },
-  { label: "Hora cita", token: "{{appointment_time}}" },
-  { label: "Fecha actual", token: "{{current_date}}" },
+const SUBJECT_VARIABLE_TOKENS = [
+  { key: "create_template_modal_var_company", token: "{{company_name}}" },
+  { key: "create_template_modal_var_user", token: "{{user_name}}" },
+  { key: "create_template_modal_var_appointment_date", token: "{{appointment_date}}" },
+  { key: "create_template_modal_var_appointment_time", token: "{{appointment_time}}" },
+  { key: "create_template_modal_var_current_date", token: "{{current_date}}" },
 ];
 
-const BODY_VARIABLES = [
-  ...SUBJECT_VARIABLES,
-  { label: "Botón cancelar", token: "{{cancel_appointment_button}}" },
+const BODY_EXTRA_VARIABLE_TOKENS = [
+  { key: "create_template_modal_var_cancel_button", token: "{{cancel_appointment_button}}" },
 ];
 const EMAIL_LINE_BREAK_TOKEN = "<br />";
 
@@ -87,7 +86,16 @@ const normalizeEmailBodyLineBreaks = (value) => {
 export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
   const { t } = useLanguage();
   const API = import.meta.env.VITE_API_URL;
+  const SUBJECT_VARIABLES = SUBJECT_VARIABLE_TOKENS.map((item) => ({
+    label: t(item.key),
+    token: item.token,
+  }));
+  const BODY_VARIABLES = [...SUBJECT_VARIABLES, ...BODY_EXTRA_VARIABLE_TOKENS.map((item) => ({
+    label: t(item.key),
+    token: item.token,
+  }))];
 
+  const [channel, setChannel] = useState("email");
   const [type, setType] = useState("appointment_reminder");
   const [templateTypes, setTemplateTypes] = useState([]);
   const [label, setLabel] = useState("");
@@ -103,6 +111,9 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
 
   const subjectInputRef = useRef(null);
   const bodyTextareaRef = useRef(null);
+  const isEmailTemplate = channel === "email";
+  const isWidgetTemplate = channel === "widget";
+  const emailTemplateTypes = templateTypes.filter((tplType) => tplType?.id !== "opening_message");
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -130,6 +141,23 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
       .catch(() => setTemplateTypes([]));
   }, []);
 
+  useEffect(() => {
+    if (isWidgetTemplate) {
+      setType("opening_message");
+      setIncludeFooterImage(false);
+      setFooterImageFile(null);
+      setFooterImageName("");
+      return;
+    }
+
+    if (type === "opening_message") {
+      const fallbackType =
+        templateTypes.find((tplType) => tplType?.id && tplType.id !== "opening_message")?.id ||
+        "appointment_reminder";
+      setType(fallbackType);
+    }
+  }, [isWidgetTemplate, templateTypes, type]);
+
   const addReminder = () => setReminders([...reminders, { value: 1, unit: "hours" }]);
 
   const updateReminder = (index, field, value) => {
@@ -145,12 +173,12 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      alert("Please select a valid image file.");
+      alert(t("create_template_modal_invalid_image_file"));
       return;
     }
 
     if (file.size > MAX_FOOTER_IMAGE_BYTES) {
-      alert("Image too large. Max size is 1MB.");
+      alert(t("create_template_modal_image_too_large"));
       return;
     }
 
@@ -169,13 +197,13 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
       return;
     }
 
-    if (includeFooterImage && !footerImageFile) {
-      alert("Select an image for the footer or disable the footer image option.");
+    if (isEmailTemplate && includeFooterImage && !footerImageFile) {
+      alert(t("create_template_modal_select_footer_image_or_disable"));
       return;
     }
 
     const frequency =
-      type === "appointment_reminder"
+      isEmailTemplate && type === "appointment_reminder"
         ? reminders.map((r) => ({
             offset_minutes: toMinutes(r.value, r.unit),
             label: buildLabel(r.value, r.unit),
@@ -184,57 +212,62 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
 
     const payload = {
       client_id: clientId,
-      channel: "email",
-      type,
+      channel,
+      type: isWidgetTemplate ? "opening_message" : type,
       label: label || null,
       ...(frequency ? { frequency } : {}),
     };
 
-    let finalBody = normalizeEmailBodyLineBreaks(body.trim());
-    if (includeFooterImage && footerImageFile) {
-      const formData = new FormData();
-      formData.append("client_id", clientId);
-      formData.append("file", footerImageFile);
+    if (isEmailTemplate) {
+      let finalBody = normalizeEmailBodyLineBreaks(body.trim());
+      if (includeFooterImage && footerImageFile) {
+        const formData = new FormData();
+        formData.append("client_id", clientId);
+        formData.append("file", footerImageFile);
 
-      const uploadRes = await authFetch(`${API}/message_templates/footer_image`, {
-        method: "POST",
-        body: formData,
-      });
+        const uploadRes = await authFetch(`${API}/message_templates/footer_image`, {
+          method: "POST",
+          body: formData,
+        });
 
-      if (!uploadRes.ok) {
-        const text = await uploadRes.text();
-        throw new Error(text || "Footer image upload failed");
+        if (!uploadRes.ok) {
+          const text = await uploadRes.text();
+          throw new Error(text || t("create_template_modal_footer_image_upload_failed"));
+        }
+
+        const uploadData = await uploadRes.json();
+        const footerImageUrl = uploadData?.url;
+        if (!footerImageUrl) {
+          throw new Error(t("create_template_modal_footer_image_url_missing"));
+        }
+
+        finalBody = appendFooterImageToBody(finalBody, footerImageUrl);
       }
-
-      const uploadData = await uploadRes.json();
-      const footerImageUrl = uploadData?.url;
-      if (!footerImageUrl) {
-        throw new Error("Footer image URL not returned");
-      }
-
-      finalBody = appendFooterImageToBody(finalBody, footerImageUrl);
+      payload.body = finalBody;
+    } else {
+      payload.body = body.trim();
     }
-    payload.body = finalBody;
 
     try {
       setLoading(true);
 
-      const res = await authFetch(`${API}/message_templates`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+        const res = await authFetch(`${API}/message_templates`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(text);
+        throw new Error(text || t("template_create_failed"));
       }
 
       onCreated?.();
       onClose();
     } catch (err) {
       console.error(err);
-      alert(t("template_create_failed"));
+      const detail = err instanceof Error && err.message ? err.message : t("template_create_failed");
+      alert(detail);
     } finally {
       setLoading(false);
     }
@@ -263,57 +296,75 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
           overflowY: "auto",
         }}
       >
-        <h2 style={{ color: "#274472", marginTop: 0 }}>Create Email Template</h2>
+        <h2 style={{ color: "#274472", marginTop: 0 }}>
+          {isWidgetTemplate ? t("create_template_modal_widget_title") : t("create_template_modal_title")}
+        </h2>
 
-        <div
-          style={{
-            marginTop: "0.3rem",
-            marginBottom: "0.7rem",
-            padding: "0.55rem 0.65rem",
-            border: "1px solid #E6EEF8",
-            borderRadius: "8px",
-            backgroundColor: "#F8FBFF",
-            color: "#466286",
-            fontSize: "0.82rem",
-          }}
-        >
-          WhatsApp templates are managed by Meta sync and appear automatically in the list.
-        </div>
+        {isEmailTemplate && (
+          <div
+            style={{
+              marginTop: "0.3rem",
+              marginBottom: "0.7rem",
+              padding: "0.55rem 0.65rem",
+              border: "1px solid #E6EEF8",
+              borderRadius: "8px",
+              backgroundColor: "#F8FBFF",
+              color: "#466286",
+              fontSize: "0.82rem",
+            }}
+          >
+            {t("create_template_modal_meta_sync_note")}
+          </div>
+        )}
 
-        <label className="ia-form-label">{t("type")}</label>
-        <select value={type} onChange={(e) => setType(e.target.value)} className="ia-form-input">
-          {templateTypes.map((tplType) => (
-            <option key={tplType.id} value={tplType.id}>
-              {tplType.description || tplType.id}
-            </option>
-          ))}
+        <label className="ia-form-label">{t("channel")}</label>
+        <select value={channel} onChange={(e) => setChannel(e.target.value)} className="ia-form-input">
+          <option value="email">{t("email") || "Email"}</option>
+          <option value="widget">{t("widget")}</option>
         </select>
 
-        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Subject</label>
+        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("type")}</label>
+        {isEmailTemplate ? (
+          <select value={type} onChange={(e) => setType(e.target.value)} className="ia-form-input">
+            {emailTemplateTypes.map((tplType) => (
+              <option key={tplType.id} value={tplType.id}>
+                {tplType.description || tplType.id}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input className="ia-form-input" value="opening_message" readOnly />
+        )}
+
+        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>
+          {isWidgetTemplate ? t("create_template_modal_widget_internal_label") : t("create_template_modal_subject_label")}
+        </label>
         <input
           ref={subjectInputRef}
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           className="ia-form-input"
-          placeholder="e.g. Confirmación para {{user_name}}"
+          placeholder={isWidgetTemplate ? t("create_template_modal_widget_subject_placeholder") : t("create_template_modal_subject_placeholder")}
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
-          {SUBJECT_VARIABLES.map((variable) => (
-            <button
-              key={`subject-${variable.token}`}
-              type="button"
-              className="ia-button ia-button-ghost"
-              onClick={() =>
-                insertTokenAtCursor(label, setLabel, subjectInputRef, variable.token)
-              }
-              style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
-            >
-              {variable.label}
-            </button>
-          ))}
-        </div>
+        {isEmailTemplate && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
+            {SUBJECT_VARIABLES.map((variable) => (
+              <button
+                key={`subject-${variable.token}`}
+                type="button"
+                className="ia-button ia-button-ghost"
+                onClick={() =>
+                  insertTokenAtCursor(label, setLabel, subjectInputRef, variable.token)
+                }
+                style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
+              >
+                {variable.label}
+              </button>
+            ))}
+          </div>
+        )}
 
-        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>Message body</label>
+        <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("create_template_modal_message_body_label")}</label>
         <textarea
           ref={bodyTextareaRef}
           value={body}
@@ -321,61 +372,69 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
           rows={4}
           className="ia-form-input"
           style={{ resize: "vertical" }}
-          placeholder="Hola {{user_name}}, tu cita en {{company_name}} es el {{appointment_date}}."
+          placeholder={
+            isWidgetTemplate
+              ? t("create_template_modal_widget_body_placeholder")
+              : t("create_template_modal_body_placeholder")
+          }
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
-          <button
-            type="button"
-            className="ia-button ia-button-ghost"
-            onClick={() =>
-              insertTokenAtCursor(body, setBody, bodyTextareaRef, `\n${EMAIL_LINE_BREAK_TOKEN}\n`)
-            }
-            style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
-          >
-            Salto de línea
-          </button>
-          {BODY_VARIABLES.map((variable) => (
+        {isEmailTemplate && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
             <button
-              key={`body-${variable.token}`}
               type="button"
               className="ia-button ia-button-ghost"
               onClick={() =>
-                insertTokenAtCursor(body, setBody, bodyTextareaRef, variable.token)
+                insertTokenAtCursor(body, setBody, bodyTextareaRef, `\n${EMAIL_LINE_BREAK_TOKEN}\n`)
               }
               style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
             >
-              {variable.label}
+              {t("create_template_modal_line_break")}
             </button>
-          ))}
-        </div>
+            {BODY_VARIABLES.map((variable) => (
+              <button
+                key={`body-${variable.token}`}
+                type="button"
+                className="ia-button ia-button-ghost"
+                onClick={() =>
+                  insertTokenAtCursor(body, setBody, bodyTextareaRef, variable.token)
+                }
+                style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
+              >
+                {variable.label}
+              </button>
+            ))}
+          </div>
+        )}
 
-        <label className="ia-form-label" style={{ marginTop: "0.7rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={includeFooterImage}
-            onChange={(e) => {
-              setIncludeFooterImage(e.target.checked);
-              if (!e.target.checked) {
-                setFooterImageFile(null);
-                setFooterImageName("");
-              }
-            }}
-          />
-          Add company image in footer (optional)
-        </label>
+        {isEmailTemplate && (
+          <label className="ia-form-label" style={{ marginTop: "0.7rem", display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={includeFooterImage}
+              onChange={(e) => {
+                setIncludeFooterImage(e.target.checked);
+                if (!e.target.checked) {
+                  setFooterImageFile(null);
+                  setFooterImageName("");
+                }
+              }}
+            />
+            {t("create_template_modal_add_footer_image")}
+          </label>
+        )}
 
-        {includeFooterImage && (
+        {isEmailTemplate && includeFooterImage && (
           <div style={{ marginTop: "0.3rem" }}>
             <input type="file" accept="image/*" onChange={handleFooterImageChange} />
             {footerImageName && (
               <div style={{ fontSize: "0.78rem", color: "#5f6b7a", marginTop: "0.25rem" }}>
-                Selected: {footerImageName}
+                {t("create_template_modal_selected_image")}: {footerImageName}
               </div>
             )}
           </div>
         )}
 
-        {type === "appointment_reminder" && (
+        {isEmailTemplate && type === "appointment_reminder" && (
           <>
             <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>{t("reminders")}</label>
             {reminders.map((r, idx) => (
@@ -435,7 +494,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
             {t("cancel")}
           </button>
           <button type="button" onClick={handleSubmit} disabled={loading} className="ia-button ia-button-primary">
-            {loading ? t("saving") : "Create Email Template"}
+            {loading ? t("saving") : (isWidgetTemplate ? t("create_template_modal_widget_title") : t("create_template_modal_title"))}
           </button>
         </div>
       </div>

@@ -14,6 +14,24 @@ from api.internal_auth import require_internal_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+LANGUAGE_TO_LOCALE = {"es": "es_MX", "en": "en_US"}
+
+
+def get_client_locale(client_id: str) -> str:
+    try:
+        res = (
+            supabase
+            .table("client_settings")
+            .select("language")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        lang = ((res.data or [{}])[0].get("language") or "es").strip().lower()
+        return LANGUAGE_TO_LOCALE.get("en" if lang.startswith("en") else "es", "es_MX")
+    except Exception as e:
+        logger.warning("⚠️ Failed to get locale | client_id=%s | error=%s", client_id, e)
+        return "es_MX"
 
 # =====================================================
 # Timezone helper (multi-tenant safe)
@@ -57,7 +75,7 @@ def format_scheduled_time(
 
         return format_datetime(
             dt_local,
-            "EEEE dd 'de' MMMM, hh:mm a",
+            "EEEE, MMMM dd, hh:mm a" if str(locale_code).lower().startswith("en") else "EEEE dd 'de' MMMM, hh:mm a",
             locale=locale_code,
         )
 
@@ -82,7 +100,7 @@ def render_template(body: str, appointment: dict, locale_code: str) -> str:
     cancel_button_html = (
         f"<a href=\"{cancel_link}\" "
         "style=\"display:inline-block;padding:10px 16px;background:#f8fafc;color:#334155;"
-        "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;font-weight:600;\">Cancelar cita</a>"
+        f"text-decoration:none;border:1px solid #d1d5db;border-radius:8px;font-weight:600;\">{'Cancel appointment' if str(locale_code).lower().startswith('en') else 'Cancelar cita'}</a>"
         if cancel_link else ""
     )
 
@@ -97,7 +115,7 @@ def render_template(body: str, appointment: dict, locale_code: str) -> str:
             dt_local = dt_utc.astimezone(get_client_timezone(safe_client_id))
             appointment_date = format_datetime(
                 dt_local,
-                "EEEE dd 'de' MMMM yyyy",
+                "EEEE, MMMM dd yyyy" if str(locale_code).lower().startswith("en") else "EEEE dd 'de' MMMM yyyy",
                 locale=locale_code,
             )
             appointment_time = format_datetime(
@@ -118,7 +136,11 @@ def render_template(body: str, appointment: dict, locale_code: str) -> str:
         .replace("{{appointment_time}}", appointment_time or "")
         .replace(
             "{{current_date}}",
-            format_datetime(datetime.now(get_client_timezone(safe_client_id)), "EEEE dd 'de' MMMM yyyy", locale=locale_code),
+            format_datetime(
+                datetime.now(get_client_timezone(safe_client_id)),
+                "EEEE, MMMM dd yyyy" if str(locale_code).lower().startswith("en") else "EEEE dd 'de' MMMM yyyy",
+                locale=locale_code,
+            ),
         )
         .replace("{{appointment_type}}", appointment.get("appointment_type", "") or "")
         .replace("{{cancel_appointment_link}}", cancel_link)
@@ -131,6 +153,8 @@ def get_client_company_name(client_id: str) -> str:
 
     if not client_id:
         return default_name
+    if str(get_client_locale(client_id)).lower().startswith("en"):
+        default_name = "your company"
 
     try:
         profile_res = (
@@ -400,7 +424,7 @@ async def execute_pending_reminders(request: Request):
                 if not email:
                     raise Exception("Missing email")
 
-                locale_code = "es_MX"
+                locale_code = get_client_locale(client_id)
                 date_str = ""
                 hour_str = ""
                 try:
@@ -435,7 +459,7 @@ async def execute_pending_reminders(request: Request):
                 )
                 rendered_subject = (
                     (template.get("label") or "").replace("\r", " ").replace("\n", " ").strip()
-                    or "⏰ Recordatorio de tu cita"
+                    or ("⏰ Appointment reminder" if str(locale_code).lower().startswith("en") else "⏰ Recordatorio de tu cita")
                 )
 
                 logger.info(

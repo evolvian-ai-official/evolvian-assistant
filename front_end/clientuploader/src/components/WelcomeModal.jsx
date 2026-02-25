@@ -348,8 +348,8 @@ export default function WelcomeModal({ onClose }) {
                 onChange={(e) => setSelectedLanguage(e.target.value)}
                 style={inputStyle}
               >
-                <option value="en">English</option>
-                <option value="es">Español</option>
+                <option value="en">{t("english")}</option>
+                <option value="es">{t("spanish")}</option>
               </select>
             </div>
           </>

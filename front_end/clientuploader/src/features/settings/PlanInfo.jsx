@@ -94,6 +94,31 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   const currentPlanName = formData?.plan?.name || t("current_plan_label");
   const cancellationRequested = !!formData?.cancellation_requested_at;
   const subscriptionEnd = formData?.subscription_end;
+  const backendAvailablePlans = Array.isArray(formData?.available_plans) ? formData.available_plans : [];
+
+  const backendFeaturesByPlan = backendAvailablePlans.reduce((acc, planRow) => {
+    const planId = normalizePlanId(planRow?.id);
+    const features = Array.isArray(planRow?.plan_features)
+      ? planRow.plan_features
+          .map((feature) => (typeof feature === "string" ? feature : feature?.feature))
+          .filter(Boolean)
+          .map((feature) => feature.toLowerCase().replace(/\s+/g, "_"))
+      : [];
+    acc[planId] = new Set(features);
+    return acc;
+  }, {});
+
+  const planHasBackendFeature = (planId, ...featureKeys) => {
+    const normalizedId = normalizePlanId(planId);
+    const featureSet = backendFeaturesByPlan[normalizedId];
+    if (!featureSet || featureSet.size === 0) return null;
+    return featureKeys.some((key) => featureSet.has(String(key).toLowerCase().replace(/\s+/g, "_")));
+  };
+
+  const featureMark = (value, fallback) => {
+    if (typeof value === "boolean") return value ? "✅" : "—";
+    return fallback;
+  };
 
   const formatDate = (date) =>
     date
@@ -257,50 +282,50 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       id: "widget",
       label: t("plan_feature_widget_integration"),
       values: {
-        free: "✅",
-        starter: "✅",
-        premium: "✅",
-        white_label: "✅",
+        free: featureMark(planHasBackendFeature("free", "chat_widget"), "✅"),
+        starter: featureMark(planHasBackendFeature("starter", "chat_widget"), "✅"),
+        premium: featureMark(planHasBackendFeature("premium", "chat_widget"), "✅"),
+        white_label: featureMark(planHasBackendFeature("white_label", "chat_widget"), "✅"),
       },
     },
     {
       id: "whatsapp_setup",
       label: t("plan_feature_whatsapp_setup_required"),
       values: {
-        free: "—",
-        starter: "✅",
-        premium: "✅",
-        white_label: "✅",
+        free: featureMark(planHasBackendFeature("free", "whatsapp_integration"), "—"),
+        starter: featureMark(planHasBackendFeature("starter", "whatsapp_integration"), "✅"),
+        premium: featureMark(planHasBackendFeature("premium", "whatsapp_integration"), "✅"),
+        white_label: featureMark(planHasBackendFeature("white_label", "whatsapp_integration"), "✅"),
       },
     },
     {
       id: "brand_customization",
       label: t("plan_feature_brand_customization"),
       values: {
-        free: "—",
-        starter: "—",
-        premium: "✅",
-        white_label: "✅",
+        free: featureMark(planHasBackendFeature("free", "remove_branding", "white_labeling"), "—"),
+        starter: featureMark(planHasBackendFeature("starter", "remove_branding", "white_labeling"), "—"),
+        premium: featureMark(planHasBackendFeature("premium", "remove_branding", "white_labeling"), "✅"),
+        white_label: featureMark(planHasBackendFeature("white_label", "remove_branding", "white_labeling"), "✅"),
       },
     },
     {
       id: "custom_prompt",
       label: t("plan_feature_custom_prompt"),
       values: {
-        free: "—",
-        starter: "—",
-        premium: "✅",
-        white_label: "✅",
+        free: featureMark(planHasBackendFeature("free", "custom_prompt_editing"), "—"),
+        starter: featureMark(planHasBackendFeature("starter", "custom_prompt_editing"), "—"),
+        premium: featureMark(planHasBackendFeature("premium", "custom_prompt_editing"), "✅"),
+        white_label: featureMark(planHasBackendFeature("white_label", "custom_prompt_editing"), "✅"),
       },
     },
     {
       id: "appointments",
       label: t("plan_feature_whatsapp_appointments"),
       values: {
-        free: "—",
-        starter: "—",
-        premium: "✅",
-        white_label: "✅",
+        free: featureMark(planHasBackendFeature("free", "calendar_sync"), "—"),
+        starter: featureMark(planHasBackendFeature("starter", "calendar_sync"), "—"),
+        premium: featureMark(planHasBackendFeature("premium", "calendar_sync"), "✅"),
+        white_label: featureMark(planHasBackendFeature("white_label", "calendar_sync"), "✅"),
       },
     },
     {

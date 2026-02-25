@@ -24,6 +24,12 @@ from api.appointments.cancel_appointment import _cancel_appointment_record
 
 router = APIRouter()
 ACTIVE_WIDGET_APPOINTMENT_STATUSES = ("confirmed", "scheduled", "pending")
+WIDGET_CALENDAR_BLOCKING_STATUSES = (
+    "confirmed",
+    "scheduled",
+    "pending",
+    "pending_confirmation",
+)
 
 # 🔹 Input model
 class ChatRequest(BaseModel):
@@ -504,7 +510,7 @@ def get_widget_calendar_availability(
             supabase.table("appointments")
             .select("scheduled_time")
             .eq("client_id", client_id)
-            .eq("status", "confirmed")
+            .in_("status", list(WIDGET_CALENDAR_BLOCKING_STATUSES))
             .gte("scheduled_time", start_utc.isoformat())
             .lte("scheduled_time", end_utc.isoformat())
             .execute()
@@ -615,8 +621,8 @@ async def book_widget_calendar(payload: WidgetBookRequest):
         config = _get_widget_calendar_config(client_id)
         if config["calendar_status"] != "active":
             raise HTTPException(status_code=403, detail="Calendar booking is disabled for this client.")
-        if not config.get("ai_scheduling_chat_enabled", True):
-            raise HTTPException(status_code=403, detail="AI scheduling in chat is disabled for this client.")
+        if not config.get("show_agenda_in_chat_widget", False):
+            raise HTTPException(status_code=403, detail="Calendar booking is hidden in chat widget for this client.")
         user_name = (payload.user_name or "").strip()
         user_email = (payload.user_email or "").strip() or None
         user_phone = (payload.user_phone or "").strip() or None
@@ -648,7 +654,7 @@ async def book_widget_calendar(payload: WidgetBookRequest):
             supabase.table("appointments")
             .select("id")
             .eq("client_id", client_id)
-            .eq("status", "confirmed")
+            .in_("status", list(WIDGET_CALENDAR_BLOCKING_STATUSES))
             .gte("scheduled_time", conflict_start)
             .lt("scheduled_time", conflict_end)
             .limit(1)

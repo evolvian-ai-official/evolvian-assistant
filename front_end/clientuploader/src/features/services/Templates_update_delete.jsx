@@ -30,17 +30,16 @@ const fromOffsetMinutes = (offset) => {
   return { value: minutes / 60, unit: "hours" };
 };
 
-const SUBJECT_VARIABLES = [
-  { label: "Empresa", token: "{{company_name}}" },
-  { label: "Usuario", token: "{{user_name}}" },
-  { label: "Fecha cita", token: "{{appointment_date}}" },
-  { label: "Hora cita", token: "{{appointment_time}}" },
-  { label: "Fecha actual", token: "{{current_date}}" },
+const SUBJECT_VARIABLE_TOKENS = [
+  { key: "create_template_modal_var_company", token: "{{company_name}}" },
+  { key: "create_template_modal_var_user", token: "{{user_name}}" },
+  { key: "create_template_modal_var_appointment_date", token: "{{appointment_date}}" },
+  { key: "create_template_modal_var_appointment_time", token: "{{appointment_time}}" },
+  { key: "create_template_modal_var_current_date", token: "{{current_date}}" },
 ];
 
-const BODY_VARIABLES = [
-  ...SUBJECT_VARIABLES,
-  { label: "Botón cancelar", token: "{{cancel_appointment_button}}" },
+const BODY_EXTRA_VARIABLE_TOKENS = [
+  { key: "create_template_modal_var_cancel_button", token: "{{cancel_appointment_button}}" },
 ];
 const EMAIL_LINE_BREAK_TOKEN = "<br />";
 
@@ -106,6 +105,17 @@ export default function TemplatesUpdateDelete({
   onSuccess,
 }) {
   const { t } = useLanguage();
+  const SUBJECT_VARIABLES = SUBJECT_VARIABLE_TOKENS.map((item) => ({
+    label: t(item.key),
+    token: item.token,
+  }));
+  const BODY_VARIABLES = [
+    ...SUBJECT_VARIABLES,
+    ...BODY_EXTRA_VARIABLE_TOKENS.map((item) => ({
+      label: t(item.key),
+      token: item.token,
+    })),
+  ];
   const [templateName, setTemplateName] = useState("");
   const [label, setLabel] = useState("");
   const [body, setBody] = useState("");
@@ -123,6 +133,8 @@ export default function TemplatesUpdateDelete({
   const bodyTextareaRef = useRef(null);
 
   const isWhatsApp = initialData?.channel === "whatsapp";
+  const isWidget = initialData?.channel === "widget";
+  const isEmail = initialData?.channel === "email";
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -168,12 +180,12 @@ export default function TemplatesUpdateDelete({
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      alert("Please select a valid image file.");
+      alert(t("create_template_modal_invalid_image_file"));
       return;
     }
 
     if (file.size > MAX_FOOTER_IMAGE_BYTES) {
-      alert("Image too large. Max size is 1MB.");
+      alert(t("create_template_modal_image_too_large"));
       return;
     }
 
@@ -187,7 +199,7 @@ export default function TemplatesUpdateDelete({
 
     try {
       const frequency =
-        initialData.type === "appointment_reminder"
+        isEmail && initialData.type === "appointment_reminder"
           ? reminders.map((r) => ({
               offset_minutes: toMinutes(r.value, r.unit),
               label: buildLabel(r.value, r.unit),
@@ -199,9 +211,9 @@ export default function TemplatesUpdateDelete({
         ...(frequency ? { frequency } : {}),
       };
 
-      if (!isWhatsApp) {
+      if (isEmail) {
         if (includeFooterImage && !footerImageFile) {
-          throw new Error("Footer image option is enabled but no image is selected.");
+          throw new Error(t("create_template_modal_select_footer_image_or_disable"));
         }
         let finalBody = normalizeEmailBodyLineBreaks(body);
         if (includeFooterImage && footerImageFile) {
@@ -216,13 +228,13 @@ export default function TemplatesUpdateDelete({
 
           if (!uploadRes.ok) {
             const text = await uploadRes.text();
-            throw new Error(text || "Footer image upload failed");
+            throw new Error(text || t("create_template_modal_footer_image_upload_failed"));
           }
 
           const uploadData = await uploadRes.json();
           const footerImageUrl = uploadData?.url;
           if (!footerImageUrl) {
-            throw new Error("Footer image URL not returned");
+            throw new Error(t("create_template_modal_footer_image_url_missing"));
           }
 
           finalBody = appendFooterImageToBody(finalBody, footerImageUrl);
@@ -230,6 +242,8 @@ export default function TemplatesUpdateDelete({
 
         payload.body = finalBody;
         payload.template_name = templateName;
+      } else if (isWidget) {
+        payload.body = body;
       }
 
       const res = await authFetch(`${import.meta.env.VITE_API_URL}/message_templates/${initialData.id}`, {
@@ -240,7 +254,7 @@ export default function TemplatesUpdateDelete({
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(errText || "Update failed");
+        throw new Error(errText || t("template_update_failed"));
       }
 
       onSuccess?.();
@@ -255,7 +269,7 @@ export default function TemplatesUpdateDelete({
 
   const handleDelete = async () => {
     if (isWhatsApp) {
-      alert("WhatsApp templates are managed by Meta sync and cannot be deleted here.");
+      alert(t("template_delete_meta_managed"));
       return;
     }
 
@@ -331,7 +345,9 @@ export default function TemplatesUpdateDelete({
         {error && <div style={{ color: "#D9534F", marginBottom: "0.6rem" }}>{error}</div>}
 
         <div>
-          <div className="ia-form-label">{isWhatsApp ? t("template_name") : "Subject"}</div>
+          <div className="ia-form-label">
+            {isWhatsApp ? t("template_name") : isWidget ? t("create_template_modal_widget_internal_label") : t("create_template_modal_subject_label")}
+          </div>
           <input
             ref={subjectInputRef}
             className="ia-form-input"
@@ -347,7 +363,7 @@ export default function TemplatesUpdateDelete({
           />
         </div>
 
-        {!isWhatsApp && (
+        {isEmail && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.4rem" }}>
             {SUBJECT_VARIABLES.map((variable) => (
               <button
@@ -396,7 +412,7 @@ export default function TemplatesUpdateDelete({
           />
         </div>
 
-        {!isWhatsApp && (
+        {isEmail && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.35rem" }}>
               <button
@@ -407,7 +423,7 @@ export default function TemplatesUpdateDelete({
                 }
                 style={{ padding: "0.25rem 0.45rem", fontSize: "0.76rem" }}
               >
-                Salto de línea
+                {t("create_template_modal_line_break")}
               </button>
               {BODY_VARIABLES.map((variable) => (
                 <button
@@ -436,7 +452,7 @@ export default function TemplatesUpdateDelete({
                   }
                 }}
               />
-              Add company image in footer (optional)
+              {t("create_template_modal_add_footer_image")}
             </label>
 
             {includeFooterImage && (
@@ -444,7 +460,7 @@ export default function TemplatesUpdateDelete({
                 <input type="file" accept="image/*" onChange={handleFooterImageChange} />
                 {footerImageName && (
                   <div style={{ fontSize: "0.78rem", color: "#5f6b7a", marginTop: "0.25rem" }}>
-                    Selected: {footerImageName}
+                    {t("create_template_modal_selected_image")}: {footerImageName}
                   </div>
                 )}
               </div>
@@ -452,7 +468,7 @@ export default function TemplatesUpdateDelete({
           </>
         )}
 
-        {initialData.type === "appointment_reminder" && (
+        {isEmail && initialData.type === "appointment_reminder" && (
           <>
             <div className="ia-form-label">{t("reminders")}</div>
 
@@ -523,7 +539,7 @@ export default function TemplatesUpdateDelete({
             </button>
           ) : (
             <small style={{ marginRight: "auto", color: "#667085", alignSelf: "center" }}>
-              Managed by Meta sync
+              {t("templates_managed_by_meta_sync")}
             </small>
           )}
 

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal, List
 import uuid
 import logging
+from postgrest.exceptions import APIError
 
 from api.compliance.email_marketing_standard import (
     is_marketing_template_type,
@@ -77,7 +78,7 @@ class ReminderRule(BaseModel):
 
 class CreateTemplatePayload(BaseModel):
     client_id: uuid.UUID
-    channel: Literal["whatsapp", "email"]
+    channel: Literal["whatsapp", "email", "widget"]
 
     # Ahora dinámico — validado contra DB
     type: str = Field(
@@ -90,7 +91,7 @@ class CreateTemplatePayload(BaseModel):
     meta_template_id: Optional[uuid.UUID] = None
     body: Optional[str] = Field(
         None,
-        min_length=5
+        min_length=1
     )
     label: Optional[str] = Field(
         None,
@@ -103,7 +104,7 @@ class CreateTemplatePayload(BaseModel):
 
 class UpdateTemplatePayload(BaseModel):
     label: Optional[str] = None
-    body: Optional[str] = Field(None, min_length=5)
+    body: Optional[str] = Field(None, min_length=1)
     frequency: Optional[List[ReminderRule]] = None
     is_active: Optional[bool] = None
 
@@ -194,7 +195,7 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
             .execute()
         )
 
-        if not type_check.data:
+        if not type_check.data and payload.type != "opening_message":
             raise HTTPException(
                 status_code=400,
                 detail="Invalid template type"
@@ -287,6 +288,29 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
 
             body = payload.body
 
+        # --------------------------
+        # WIDGET
+        # --------------------------
+        elif payload.channel == "widget":
+            if payload.type != "opening_message":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Widget templates currently support only type=opening_message",
+                )
+            if payload.frequency:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Widget templates do not support frequency",
+                )
+
+            if not payload.body or not str(payload.body).strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="body is required for widget templates",
+                )
+
+            body = str(payload.body).strip()
+
         else:
             raise HTTPException(
                 status_code=400,
@@ -343,6 +367,30 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
 
     except HTTPException:
         raise
+    except APIError as e:
+        detail = "Internal server error"
+        try:
+            payload = e.args[0] if e.args else {}
+            if isinstance(payload, dict):
+                constraint_msg = str(payload.get("message") or "")
+                if "body_required_for_email" in constraint_msg:
+                    detail = (
+                        "Database constraint blocks widget templates with body content. "
+                        "Apply the message_templates widget-opening migration first."
+                    )
+                    raise HTTPException(status_code=409, detail=detail)
+                if "message_templates_channel_check" in constraint_msg:
+                    detail = (
+                        "Database channel constraint does not allow widget templates yet. "
+                        "Apply the message_templates channel migration (allow widget)."
+                    )
+                    raise HTTPException(status_code=409, detail=detail)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+        logger.exception("Unexpected PostgREST API error creating template")
+        raise HTTPException(status_code=500, detail=detail)
     except Exception:
         logger.exception("Unexpected error creating template")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -453,6 +501,25 @@ def update_message_template(
                         + ", ".join(missing_tokens)
                     ),
                 )
+
+        if channel == "widget":
+            if template_type != "opening_message":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Unsupported widget template type",
+                )
+            if "frequency" in update_data:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Widget templates do not support frequency",
+                )
+            if "body" in update_data and not str(update_data.get("body") or "").strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="body is required for widget templates",
+                )
+            if "body" in update_data:
+                update_data["body"] = str(update_data["body"]).strip()
 
         # Frequency validation
         if "frequency" in update_data:

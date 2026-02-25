@@ -20,12 +20,12 @@ const normalizeMetaStatus = (status) => {
   return "unknown";
 };
 
-const metaStatusLabel = (status) => {
-  if (status === "ready") return "Synced with Meta · Ready for use";
-  if (status === "pending") return "Synced with Meta · Pending review";
-  if (status === "inactive") return "Synced with Meta · Not usable";
-  if (status === "not_synced") return "Not synced with Meta";
-  return "Meta status unknown";
+const metaStatusLabel = (status, t) => {
+  if (status === "ready") return t("templates_meta_status_label_ready");
+  if (status === "pending") return t("templates_meta_status_label_pending");
+  if (status === "inactive") return t("templates_meta_status_label_inactive");
+  if (status === "not_synced") return t("templates_meta_status_label_not_synced");
+  return t("templates_meta_status_label_unknown");
 };
 
 const metaStatusPalette = (status) => {
@@ -120,7 +120,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
           (isWhatsApp ? tpl.meta_template_name : null) ||
           tpl.label ||
           tpl.template_name ||
-          "Template",
+          t("templates_default_title"),
         bodyPreview: isWhatsApp ? tpl.meta_preview_body : tpl.body,
         metaStatus: isWhatsApp ? normalizeMetaStatus(tpl.whatsapp_template_status) : null,
         billable: isWhatsApp ? Boolean(tpl.billable) : null,
@@ -140,7 +140,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
         channel: "whatsapp",
         type: tpl.type || "unknown",
         active: Boolean(tpl.client_template_active),
-        title: tpl.template_name || "Meta template",
+        title: tpl.template_name || t("templates_meta_default_title"),
         bodyPreview: tpl.preview_body,
         metaStatus: normalizeMetaStatus(tpl.client_template_status),
         billable: Boolean(tpl.billable),
@@ -228,13 +228,13 @@ export default function TemplatesList({ clientId, refreshKey }) {
       });
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(text || "Failed to refresh Meta statuses");
+        throw new Error(text || t("templates_meta_refresh_failed_fallback"));
       }
       const summary = await res.json().catch(() => null);
       if (summary && summary.success === false) {
         const details = Array.isArray(summary.errors) && summary.errors.length
           ? summary.errors.join(", ")
-          : "Failed refreshing Meta status";
+          : t("templates_meta_refresh_failed_fallback");
         throw new Error(details);
       }
       await fetchTemplates();
@@ -243,8 +243,8 @@ export default function TemplatesList({ clientId, refreshKey }) {
       const detail =
         err instanceof Error && err.message
           ? err.message
-          : "No se pudo refrescar el estado de templates en Meta.";
-      alert(`No se pudo refrescar el estado de templates en Meta. ${detail}`);
+          : t("templates_meta_refresh_alert_prefix");
+      alert(`${t("templates_meta_refresh_alert_prefix")} ${detail}`);
     } finally {
       setSyncingMetaStatus(false);
     }
@@ -266,7 +266,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap" }}>
-          <strong style={{ color: "#274472", fontSize: "0.92rem" }}>Filters</strong>
+          <strong style={{ color: "#274472", fontSize: "0.92rem" }}>{t("templates_filters_title")}</strong>
           <button
             type="button"
             className="ia-button ia-button-ghost"
@@ -274,26 +274,27 @@ export default function TemplatesList({ clientId, refreshKey }) {
             disabled={syncingMetaStatus}
             style={{ padding: "0.35rem 0.55rem", fontSize: "0.78rem" }}
           >
-            {syncingMetaStatus ? "Refreshing..." : "Refresh Meta status"}
+            {syncingMetaStatus ? t("templates_refreshing") : t("templates_refresh_meta_status")}
           </button>
         </div>
 
         <div style={{ marginTop: "0.65rem", display: "grid", gap: "0.55rem", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
           <input
             className="ia-form-input"
-            placeholder="Search template..."
+            placeholder={t("templates_search_placeholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
 
           <select className="ia-form-input" value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}>
-            <option value="all">All channels</option>
-            <option value="whatsapp">WhatsApp</option>
-            <option value="email">Email</option>
+            <option value="all">{t("templates_filter_all_channels")}</option>
+            <option value="whatsapp">{t("whatsapp")}</option>
+            <option value="email">{t("email")}</option>
+            <option value="widget">Widget</option>
           </select>
 
           <select className="ia-form-input" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-            <option value="all">All types</option>
+            <option value="all">{t("templates_filter_all_types")}</option>
             {availableTypes.map((value) => (
               <option key={value} value={value}>
                 {value}
@@ -302,18 +303,18 @@ export default function TemplatesList({ clientId, refreshKey }) {
           </select>
 
           <select className="ia-form-input" value={activityFilter} onChange={(e) => setActivityFilter(e.target.value)}>
-            <option value="all">All activity</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
+            <option value="all">{t("templates_filter_all_activity")}</option>
+            <option value="active">{t("templates_status_active")}</option>
+            <option value="inactive">{t("templates_status_inactive")}</option>
           </select>
 
           <select className="ia-form-input" value={metaStatusFilter} onChange={(e) => setMetaStatusFilter(e.target.value)}>
-            <option value="all">Any Meta status</option>
-            <option value="ready">Ready</option>
-            <option value="pending">Pending</option>
-            <option value="inactive">Not usable</option>
-            <option value="not_synced">Not synced</option>
-            <option value="unknown">Unknown</option>
+            <option value="all">{t("templates_filter_any_meta_status")}</option>
+            <option value="ready">{t("templates_meta_status_ready_short")}</option>
+            <option value="pending">{t("templates_meta_status_pending_short")}</option>
+            <option value="inactive">{t("templates_meta_status_inactive_short")}</option>
+            <option value="not_synced">{t("templates_meta_status_not_synced_short")}</option>
+            <option value="unknown">{t("templates_meta_status_unknown_short")}</option>
           </select>
         </div>
       </div>
@@ -328,7 +329,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
             color: "#667085",
           }}
         >
-          No templates match current filters.
+          {t("templates_no_results")}
         </div>
       ) : (
         <div style={{ marginTop: "1rem", display: "grid", gap: "0.8rem" }}>
@@ -355,8 +356,18 @@ export default function TemplatesList({ clientId, refreshKey }) {
                         fontSize: "0.72rem",
                         padding: "0.2rem 0.5rem",
                         borderRadius: "999px",
-                        backgroundColor: card.channel === "whatsapp" ? "#25D36620" : "#4A90E220",
-                        color: card.channel === "whatsapp" ? "#25D366" : "#4A90E2",
+                        backgroundColor:
+                          card.channel === "whatsapp"
+                            ? "#25D36620"
+                            : card.channel === "widget"
+                            ? "#7C3AED20"
+                            : "#4A90E220",
+                        color:
+                          card.channel === "whatsapp"
+                            ? "#25D366"
+                            : card.channel === "widget"
+                            ? "#7C3AED"
+                            : "#4A90E2",
                         fontWeight: 700,
                       }}
                     >
@@ -412,7 +423,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
                           color: statusColors.color,
                         }}
                       >
-                        {metaStatusLabel(card.metaStatus)}
+                        {metaStatusLabel(card.metaStatus, t)}
                       </span>
                     ) : (
                       <span
@@ -426,7 +437,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
                           color: emailStatusActive ? "#1F8F4D" : "#B42318",
                         }}
                       >
-                        {emailStatusActive ? "Active" : "Inactive"}
+                        {emailStatusActive ? t("templates_status_active") : t("templates_status_inactive")}
                       </span>
                     )}
 
@@ -442,22 +453,22 @@ export default function TemplatesList({ clientId, refreshKey }) {
                           color: "#344054",
                         }}
                       >
-                        Meta catalog
+                        {t("templates_meta_catalog")}
                       </span>
                     )}
                   </div>
 
                   {card.metaParameterCount ? (
                     <small style={{ display: "block", marginTop: "0.45rem", color: "#667085", fontSize: "0.75rem" }}>
-                      Parameters: {card.metaParameterCount}
+                      {t("templates_parameters")}: {card.metaParameterCount}
                     </small>
                   ) : null}
 
                   {isWhatsApp && (
                     <small style={{ display: "block", marginTop: "0.35rem", color: "#617187", fontSize: "0.75rem" }}>
                       {card.billable
-                        ? `Estimated Meta charge: ~$${Number(card.estimatedUnitCost || 0).toFixed(3)} ${card.pricingCurrency || "USD"} / message`
-                        : "Estimated Meta charge: no direct charge for this category"}
+                        ? `${t("templates_estimated_meta_charge_prefix")} ~$${Number(card.estimatedUnitCost || 0).toFixed(3)} ${card.pricingCurrency || "USD"} / ${t("templates_per_message")}`
+                        : t("templates_estimated_meta_charge_no_direct")}
                     </small>
                   )}
                 </div>
@@ -478,7 +489,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
                     disabled
                     style={{ marginTop: "0.75rem", width: "100%", opacity: 0.7, cursor: "not-allowed" }}
                   >
-                    Managed by Meta sync
+                    {t("templates_managed_by_meta_sync")}
                   </button>
                 )}
               </div>
