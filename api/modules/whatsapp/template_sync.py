@@ -270,6 +270,16 @@ def _waba_has_phone_number(*, waba_id: str, wa_phone_id: str, wa_token: str) -> 
             params=params,
         )
         if response.status_code >= 400:
+            # Some Graph setups return code=100 "nonexisting field (phone_numbers)"
+            # for objects that don't expose this edge. Treat it as an unsupported
+            # candidate during fallback discovery instead of warning noise.
+            if _response_has_unknown_field_error(response):
+                logger.debug(
+                    "Skipping WABA phone number probe (unsupported edge/object) | waba_id=%s | %s",
+                    waba_id,
+                    _format_meta_error(response),
+                )
+                return False
             logger.warning(
                 "⚠️ Failed listing phone numbers for WABA | waba_id=%s | %s",
                 waba_id,
@@ -858,8 +868,13 @@ def _ensure_whatsapp_template_binding(
         template_type=template_type,
     )
 
+    frequency = None
+    if template_type == "appointment_reminder":
+        frequency = [{"offset_minutes": -60, "label": "1 hour before"}]
+
     if existing:
         language_family, locale_code = normalize_language_preferences(locale_code=language)
+        existing_frequency = existing.get("frequency")
         update_payload = {
             "meta_template_id": meta_template_id,
             "template_name": canonical_template_name,
@@ -870,6 +885,13 @@ def _ensure_whatsapp_template_binding(
             "variant_key": "default",
             "priority": 100 if preferred_active else 0,
             "is_default_for_language": bool(preferred_active),
+            # Keep local binding aligned with language-specific preferred template selection.
+            "is_active": bool(preferred_active),
+            "frequency": (
+                existing_frequency
+                if template_type == "appointment_reminder" and existing_frequency
+                else (frequency if preferred_active else None)
+            ),
             "updated_at": _utcnow_iso(),
         }
         try:
@@ -883,10 +905,6 @@ def _ensure_whatsapp_template_binding(
         except Exception:
             logger.exception("❌ Failed updating existing WhatsApp message template binding")
         return
-
-    frequency = None
-    if template_type == "appointment_reminder":
-        frequency = [{"offset_minutes": -60, "label": "1 hour before"}]
 
     language_family, locale_code = normalize_language_preferences(locale_code=language)
 
