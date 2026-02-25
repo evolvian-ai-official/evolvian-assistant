@@ -115,16 +115,10 @@ def _safe_bool(value: Any) -> bool:
 
 
 def _safe_select_templates_with_language(client_id: str, channel: str, template_type: str):
-    base_query = (
-        supabase.table("message_templates")
-        .eq("client_id", client_id)
-        .eq("channel", channel)
-        .eq("type", template_type)
-        .eq("is_active", True)
-    )
     try:
         return (
-            base_query
+            supabase
+            .table("message_templates")
             .select(
                 """
                 id,
@@ -153,6 +147,10 @@ def _safe_select_templates_with_language(client_id: str, channel: str, template_
                 )
                 """
             )
+            .eq("client_id", client_id)
+            .eq("channel", channel)
+            .eq("type", template_type)
+            .eq("is_active", True)
             .order("updated_at", desc=True)
             .execute()
         )
@@ -166,7 +164,8 @@ def _safe_select_templates_with_language(client_id: str, channel: str, template_
             exc,
         )
         return (
-            base_query
+            supabase
+            .table("message_templates")
             .select(
                 """
                 id,
@@ -190,6 +189,10 @@ def _safe_select_templates_with_language(client_id: str, channel: str, template_
                 )
                 """
             )
+            .eq("client_id", client_id)
+            .eq("channel", channel)
+            .eq("type", template_type)
+            .eq("is_active", True)
             .order("updated_at", desc=True)
             .execute()
         )
