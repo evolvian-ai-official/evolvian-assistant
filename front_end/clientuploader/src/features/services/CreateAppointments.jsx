@@ -53,6 +53,20 @@ const isTemplateActive = (template) => {
   return true;
 };
 
+const parseTemplateFrequency = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter((item) => item && typeof item === "object");
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === "object") : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 /* =========================
    Component
    ========================= */
@@ -149,9 +163,6 @@ export default function CreateAppointment({ disabled = false }) {
   const [enableReminder, setEnableReminder] = useState(false);
   const [reminderEmail, setReminderEmail] = useState(false);
   const [reminderWhatsApp, setReminderWhatsApp] = useState(false);
-
-  const [emailTemplateId, setEmailTemplateId] = useState("");
-  const [whatsappTemplateId, setWhatsappTemplateId] = useState("");
 
   /* 🧠 Templates */
   const [templates, setTemplates] = useState([]);
@@ -612,20 +623,114 @@ export default function CreateAppointment({ disabled = false }) {
     return family === (appointmentsTemplateLanguage === "en" ? "en" : "es");
   };
 
-  const emailTemplates = templates.filter(
-    (tpl) =>
-      tpl?.channel === "email" &&
-      tpl?.type === "appointment_reminder" &&
-      isTemplateActive(tpl) &&
-      matchesConfiguredTemplateLanguage(tpl)
-  );
-  const whatsappTemplates = templates.filter(
-    (tpl) => isSelectableWhatsAppTemplate(tpl) && matchesConfiguredTemplateLanguage(tpl)
-  );
   const appointmentTemplateLanguageLabel = appointmentsTemplateLanguage === "en" ? "English" : "Español";
   const templatesForActiveLanguage = templates.filter(
     (tpl) => isTemplateActive(tpl) && matchesConfiguredTemplateLanguage(tpl)
   );
+
+  const pickPreferredTemplate = (channel, templateType, { requireFrequency = false } = {}) => {
+    const candidates = templatesForActiveLanguage.filter((tpl) => {
+      if (tpl?.channel !== channel || tpl?.type !== templateType) return false;
+      if (channel === "whatsapp" && !isSelectableWhatsAppTemplate(tpl)) return false;
+      if (channel === "email" && !String(tpl?.body || "").trim()) return false;
+      if (requireFrequency && parseTemplateFrequency(tpl?.frequency).length === 0) return false;
+      return true;
+    });
+
+    if (candidates.length === 0) return null;
+
+    return [...candidates].sort((a, b) => {
+      const aDefault = a?.is_default_for_language === true ? 1 : 0;
+      const bDefault = b?.is_default_for_language === true ? 1 : 0;
+      if (aDefault !== bDefault) return bDefault - aDefault;
+
+      const aPriority = Number(a?.priority ?? 0);
+      const bPriority = Number(b?.priority ?? 0);
+      if (aPriority !== bPriority) return bPriority - aPriority;
+
+      const aUpdated = Date.parse(a?.updated_at || a?.created_at || 0) || 0;
+      const bUpdated = Date.parse(b?.updated_at || b?.created_at || 0) || 0;
+      if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+
+      return String(a?.id || "").localeCompare(String(b?.id || ""));
+    })[0];
+  };
+
+  const activeWhatsAppConfirmationTemplate = pickPreferredTemplate("whatsapp", "appointment_confirmation");
+  const activeEmailConfirmationTemplate = pickPreferredTemplate("email", "appointment_confirmation");
+  const activeReminderWhatsAppTemplate = pickPreferredTemplate("whatsapp", "appointment_reminder", { requireFrequency: true });
+  const activeReminderEmailTemplate = pickPreferredTemplate("email", "appointment_reminder", { requireFrequency: true });
+  const activeWhatsAppCancellationTemplate = pickPreferredTemplate("whatsapp", "appointment_cancellation");
+  const activeEmailCancellationTemplate = pickPreferredTemplate("email", "appointment_cancellation");
+
+  const formatReminderSchedule = (tpl) => {
+    const entries = parseTemplateFrequency(tpl?.frequency);
+    if (entries.length === 0) return isEs ? "Sin horarios configurados" : "No schedule configured";
+
+    const fmtOffset = (offsetMinutes) => {
+      const n = Number(offsetMinutes);
+      if (!Number.isFinite(n)) return "";
+      const abs = Math.abs(n);
+      if (abs % 1440 === 0) {
+        const days = abs / 1440;
+        return isEs ? `${days} día${days === 1 ? "" : "s"} antes` : `${days} day${days === 1 ? "" : "s"} before`;
+      }
+      if (abs % 60 === 0) {
+        const hours = abs / 60;
+        return isEs ? `${hours} hora${hours === 1 ? "" : "s"} antes` : `${hours} hour${hours === 1 ? "" : "s"} before`;
+      }
+      return isEs ? `${abs} min antes` : `${abs} min before`;
+    };
+
+    return entries
+      .map((item) => String(item?.label || "").trim() || fmtOffset(item?.offset_minutes))
+      .filter(Boolean)
+      .join(", ");
+  };
+
+  const getTemplateDisplayName = (tpl) =>
+    tpl?.meta_template_name || tpl?.template_name || tpl?.label || (isEs ? "Template" : "Template");
+
+  const getTemplateLanguageBadge = (tpl) => {
+    const probe = String(tpl?.meta_language || tpl?.locale_code || tpl?.language_family || "").toLowerCase();
+    if (!probe) return "";
+    return probe.startsWith("en") ? "EN" : "ES";
+  };
+
+  const templateUsageCards = [
+    {
+      key: "wa-confirmation",
+      title: isEs ? "Confirmación por WhatsApp" : "WhatsApp confirmation",
+      template: activeWhatsAppConfirmationTemplate,
+    },
+    {
+      key: "email-confirmation",
+      title: isEs ? "Confirmación por email" : "Email confirmation",
+      template: activeEmailConfirmationTemplate,
+    },
+    {
+      key: "wa-reminder",
+      title: isEs ? "Reminder por WhatsApp" : "WhatsApp reminder",
+      template: activeReminderWhatsAppTemplate,
+      schedule: activeReminderWhatsAppTemplate ? formatReminderSchedule(activeReminderWhatsAppTemplate) : "",
+    },
+    {
+      key: "email-reminder",
+      title: isEs ? "Reminder por email" : "Email reminder",
+      template: activeReminderEmailTemplate,
+      schedule: activeReminderEmailTemplate ? formatReminderSchedule(activeReminderEmailTemplate) : "",
+    },
+    {
+      key: "wa-cancellation",
+      title: isEs ? "Cancelación por WhatsApp" : "WhatsApp cancellation",
+      template: activeWhatsAppCancellationTemplate,
+    },
+    {
+      key: "email-cancellation",
+      title: isEs ? "Cancelación por email" : "Email cancellation",
+      template: activeEmailCancellationTemplate,
+    },
+  ];
 
   /* =========================
      Derived validation (SAFE)
@@ -640,20 +745,14 @@ export default function CreateAppointment({ disabled = false }) {
   const canEnableReminder = hasValidEmail || hasValidPhone;
 
   const hasEmailTemplateCoverage = (templateType, { requireFrequency = false } = {}) =>
-    templatesForActiveLanguage.some((tpl) => {
-      if (tpl?.channel !== "email" || tpl?.type !== templateType) return false;
-      if (!String(tpl?.body || "").trim()) return false;
-      if (requireFrequency && !tpl?.frequency) return false;
-      return true;
-    });
+    Boolean(
+      pickPreferredTemplate("email", templateType, { requireFrequency })
+    );
 
   const hasWhatsappTemplateCoverage = (templateType, { requireFrequency = false } = {}) =>
-    templatesForActiveLanguage.some((tpl) => {
-      if (tpl?.channel !== "whatsapp" || tpl?.type !== templateType) return false;
-      if (!isSelectableWhatsAppTemplate(tpl)) return false;
-      if (requireFrequency && !tpl?.frequency) return false;
-      return true;
-    });
+    Boolean(
+      pickPreferredTemplate("whatsapp", templateType, { requireFrequency })
+    );
 
   const templateCoverageWarnings = useMemo(() => {
     const warnings = [];
@@ -692,9 +791,9 @@ export default function CreateAppointment({ disabled = false }) {
     emailValid &&
     phoneValid &&
     (!enableReminder ||
-      ((reminderEmail ? hasValidEmail && emailTemplateId : true) &&
+      ((reminderEmail ? hasValidEmail && !!activeReminderEmailTemplate : true) &&
         (reminderWhatsApp
-          ? hasValidPhone && whatsappTemplateId
+          ? hasValidPhone && !!activeReminderWhatsAppTemplate
           : true)));
 
   useEffect(() => {
@@ -704,28 +803,26 @@ export default function CreateAppointment({ disabled = false }) {
     }
 
     const becameValidEmail = !prevEmailValidRef.current && hasValidEmail;
-    const hasEmailReminderTemplate = emailTemplates.length > 0;
+    const hasEmailReminderTemplate = Boolean(activeReminderEmailTemplate);
 
     if (becameValidEmail && hasEmailReminderTemplate) {
       setEnableReminder(true);
       setReminderEmail(true);
-      setEmailTemplateId((prev) => prev || emailTemplates[0]?.id || "");
-    }
-
-    if (hasValidEmail && reminderEmail && !emailTemplateId && hasEmailReminderTemplate) {
-      setEmailTemplateId(emailTemplates[0]?.id || "");
     }
 
     if ((!hasValidEmail || !hasEmailReminderTemplate) && reminderEmail) {
       setReminderEmail(false);
     }
 
-    if ((!hasValidEmail || !hasEmailReminderTemplate) && emailTemplateId) {
-      setEmailTemplateId("");
-    }
-
     prevEmailValidRef.current = hasValidEmail;
-  }, [showModal, hasValidEmail, reminderEmail, emailTemplateId, emailTemplates]);
+  }, [showModal, hasValidEmail, reminderEmail, activeReminderEmailTemplate]);
+
+  useEffect(() => {
+    if (!showModal) return;
+    if ((!hasValidPhone || !activeReminderWhatsAppTemplate) && reminderWhatsApp) {
+      setReminderWhatsApp(false);
+    }
+  }, [showModal, hasValidPhone, activeReminderWhatsAppTemplate, reminderWhatsApp]);
 
   /* =========================
      Handlers
@@ -832,8 +929,6 @@ export default function CreateAppointment({ disabled = false }) {
     setEnableReminder(false);
     setReminderEmail(false);
     setReminderWhatsApp(false);
-    setEmailTemplateId("");
-    setWhatsappTemplateId("");
     setSuccess(false);
     setSubmitError("");
     setDuplicateExistingAppt(null);
@@ -896,8 +991,8 @@ export default function CreateAppointment({ disabled = false }) {
           reminders: enableReminder
 
             ? {
-                email: reminderEmail ? emailTemplateId : null,
-                whatsapp: reminderWhatsApp ? whatsappTemplateId : null,
+                email: reminderEmail ? activeReminderEmailTemplate?.id || null : null,
+                whatsapp: reminderWhatsApp ? activeReminderWhatsAppTemplate?.id || null : null,
               }
             : null,
         }),
@@ -1268,6 +1363,40 @@ export default function CreateAppointment({ disabled = false }) {
               </div>
             )}
 
+            <div style={templateUsagePanel}>
+              <p style={templateUsageTitle}>
+                {isEs ? "Templates activos para este idioma" : "Active templates for this language"}
+              </p>
+              <div style={templateUsageGrid}>
+                {templateUsageCards.map((item) => {
+                  const tpl = item.template;
+                  const badge = getTemplateLanguageBadge(tpl);
+                  return (
+                    <div key={item.key} style={templateUsageCard}>
+                      <p style={templateUsageCardLabel}>{item.title}</p>
+                      {tpl ? (
+                        <>
+                          <p style={templateUsageCardValue}>
+                            {getTemplateDisplayName(tpl)}
+                            {badge ? <span style={templateLangChip}>{badge}</span> : null}
+                          </p>
+                          {item.schedule ? (
+                            <p style={templateUsageCardMeta}>
+                              <strong>{isEs ? "Frecuencia" : "Schedule"}:</strong> {item.schedule}
+                            </p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p style={{ ...templateUsageCardMeta, color: "#B42318" }}>
+                          {isEs ? "No configurado para este idioma" : "Not configured for this language"}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
 
             {/* 🔔 REMINDERS */}
             <div style={reminderBox}>
@@ -1305,7 +1434,7 @@ export default function CreateAppointment({ disabled = false }) {
                         ...checkboxRow,
                         opacity:
                           hasValidPhone &&
-                          whatsappTemplates.length
+                          activeReminderWhatsAppTemplate
                             ? 1
                             : 0.5,
                       }}
@@ -1315,7 +1444,7 @@ export default function CreateAppointment({ disabled = false }) {
                         checked={reminderWhatsApp}
                         disabled={
                           !hasValidPhone ||
-                          whatsappTemplates.length === 0
+                          !activeReminderWhatsAppTemplate
                         }
                         onChange={(e) =>
                           setReminderWhatsApp(e.target.checked)
@@ -1326,35 +1455,26 @@ export default function CreateAppointment({ disabled = false }) {
                       </span>
                     </label>
 
-                    {reminderWhatsApp &&
-                      whatsappTemplates.length > 0 && (
-                        <select
-                          style={inputStyle}
-                          value={whatsappTemplateId}
-                          onChange={(e) =>
-                            setWhatsappTemplateId(e.target.value)
-                          }
-                        >
-                          <option value="">
-                            {t("select_whatsapp_template")}
-                          </option>
-                          {whatsappTemplates.map((tpl) => (
-                            <option key={tpl.id} value={tpl.id}>
-                              {tpl.meta_template_name || tpl.template_name || t("template")}
-                              {tpl.meta_language ? ` [${String(tpl.meta_language).toLowerCase().startsWith("en") ? "EN" : "ES"}]` : ""}
-                              {tpl.label ? ` — ${tpl.label}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    {reminderWhatsApp && whatsappTemplates.length > 0 && (
+                    {reminderWhatsApp && activeReminderWhatsAppTemplate && (
+                      <div style={readonlyTemplateBox}>
+                        <p style={readonlyTemplateTitle}>
+                          {isEs ? "Template activo para reminders (WhatsApp)" : "Active template for reminders (WhatsApp)"}
+                        </p>
+                        <p style={readonlyTemplateValue}>
+                          {getTemplateDisplayName(activeReminderWhatsAppTemplate)}
+                          <span style={templateLangChip}>{getTemplateLanguageBadge(activeReminderWhatsAppTemplate) || (appointmentsTemplateLanguage === "en" ? "EN" : "ES")}</span>
+                        </p>
+                        <p style={readonlyTemplateMeta}>
+                          <strong>{isEs ? "Frecuencia" : "Schedule"}:</strong> {formatReminderSchedule(activeReminderWhatsAppTemplate)}
+                        </p>
+                      </div>
+                    )}
+                    {reminderWhatsApp && activeReminderWhatsAppTemplate && (
                       <p style={{ ...reminderHint, marginTop: "0.35rem" }}>
                         {(() => {
-                          const selected = whatsappTemplates.find((tpl) => tpl.id === whatsappTemplateId);
-                          if (!selected) return t("create_appointment_meta_cost_generic");
-                          if (!selected.billable) return t("create_appointment_meta_cost_no_direct");
-                          const amount = Number(selected.estimated_unit_cost || 0).toFixed(3);
-                          const currency = selected.pricing_currency || "USD";
+                          if (!activeReminderWhatsAppTemplate.billable) return t("create_appointment_meta_cost_no_direct");
+                          const amount = Number(activeReminderWhatsAppTemplate.estimated_unit_cost || 0).toFixed(3);
+                          const currency = activeReminderWhatsAppTemplate.pricing_currency || "USD";
                           return `${t("create_appointment_meta_cost_prefix")} ~$${amount} ${currency} ${t("create_appointment_meta_cost_suffix")}`;
                         })()}
                       </p>
@@ -1373,7 +1493,7 @@ export default function CreateAppointment({ disabled = false }) {
                         ...checkboxRow,
                         opacity:
                           hasValidEmail &&
-                          emailTemplates.length
+                          activeReminderEmailTemplate
                             ? 1
                             : 0.5,
                       }}
@@ -1383,7 +1503,7 @@ export default function CreateAppointment({ disabled = false }) {
                         checked={reminderEmail}
                         disabled={
                           !hasValidEmail ||
-                          emailTemplates.length === 0
+                          !activeReminderEmailTemplate
                         }
                         onChange={(e) =>
                           setReminderEmail(e.target.checked)
@@ -1394,30 +1514,21 @@ export default function CreateAppointment({ disabled = false }) {
                       </span>
                     </label>
 
-                    {reminderEmail &&
-                      emailTemplates.length > 0 && (
-                        <select
-                          style={inputStyle}
-                          value={emailTemplateId}
-                          onChange={(e) =>
-                            setEmailTemplateId(e.target.value)
-                          }
-                        >
-                          <option value="">
-                            {t("create_appointment_select_email_template")}
-                          </option>
-                          {emailTemplates.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.template_name}
-                              {(t.locale_code || t.language_family)
-                                ? ` [${String(t.locale_code || t.language_family).toLowerCase().startsWith("en") ? "EN" : "ES"}]`
-                                : ""}
-                              {t.label ? ` — ${t.label}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    {hasValidEmail && emailTemplates.length === 0 && (
+                    {reminderEmail && activeReminderEmailTemplate && (
+                      <div style={readonlyTemplateBox}>
+                        <p style={readonlyTemplateTitle}>
+                          {isEs ? "Template activo para reminders (Email)" : "Active template for reminders (Email)"}
+                        </p>
+                        <p style={readonlyTemplateValue}>
+                          {getTemplateDisplayName(activeReminderEmailTemplate)}
+                          <span style={templateLangChip}>{getTemplateLanguageBadge(activeReminderEmailTemplate) || (appointmentsTemplateLanguage === "en" ? "EN" : "ES")}</span>
+                        </p>
+                        <p style={readonlyTemplateMeta}>
+                          <strong>{isEs ? "Frecuencia" : "Schedule"}:</strong> {formatReminderSchedule(activeReminderEmailTemplate)}
+                        </p>
+                      </div>
+                    )}
+                    {hasValidEmail && !activeReminderEmailTemplate && (
                       <p style={reminderHint}>
                         {t("create_appointment_no_email_templates_for_reminders")}
                       </p>
@@ -1608,6 +1719,99 @@ const reminderBox = {
 
 const reminderBlock = {
   marginTop: "0.75rem",
+};
+
+const templateUsagePanel = {
+  marginTop: "0.65rem",
+  border: "1px solid #EDEDED",
+  borderRadius: 12,
+  backgroundColor: "#FCFDFE",
+  padding: "0.75rem",
+};
+
+const templateUsageTitle = {
+  margin: "0 0 0.55rem",
+  fontSize: "0.9rem",
+  fontWeight: 700,
+  color: "#274472",
+};
+
+const templateUsageGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: "0.55rem",
+};
+
+const templateUsageCard = {
+  border: "1px solid #E6EEF8",
+  backgroundColor: "#FFFFFF",
+  borderRadius: 10,
+  padding: "0.65rem",
+};
+
+const templateUsageCardLabel = {
+  margin: 0,
+  fontSize: "0.78rem",
+  color: "#667085",
+  fontWeight: 600,
+};
+
+const templateUsageCardValue = {
+  margin: "0.35rem 0 0",
+  fontSize: "0.88rem",
+  color: "#101828",
+  fontWeight: 600,
+  lineHeight: 1.35,
+};
+
+const templateUsageCardMeta = {
+  margin: "0.35rem 0 0",
+  fontSize: "0.78rem",
+  color: "#475467",
+  lineHeight: 1.35,
+};
+
+const templateLangChip = {
+  display: "inline-block",
+  marginLeft: 6,
+  padding: "0.1rem 0.35rem",
+  borderRadius: 999,
+  backgroundColor: "#EEF4FF",
+  color: "#3538CD",
+  border: "1px solid #DDE7FF",
+  fontSize: "0.68rem",
+  fontWeight: 700,
+  verticalAlign: "middle",
+};
+
+const readonlyTemplateBox = {
+  marginTop: "0.45rem",
+  border: "1px solid #E6EEF8",
+  backgroundColor: "#F8FBFF",
+  borderRadius: 10,
+  padding: "0.65rem 0.7rem",
+};
+
+const readonlyTemplateTitle = {
+  margin: 0,
+  fontSize: "0.78rem",
+  color: "#36506B",
+  fontWeight: 700,
+};
+
+const readonlyTemplateValue = {
+  margin: "0.35rem 0 0",
+  fontSize: "0.86rem",
+  color: "#102A43",
+  fontWeight: 600,
+  lineHeight: 1.35,
+};
+
+const readonlyTemplateMeta = {
+  margin: "0.35rem 0 0",
+  fontSize: "0.78rem",
+  color: "#486581",
+  lineHeight: 1.35,
 };
 
 const checkboxRow = {

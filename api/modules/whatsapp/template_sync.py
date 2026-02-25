@@ -436,7 +436,61 @@ def _ensure_body_placeholders(text: str, parameter_count: int) -> str:
     return f"{body} {missing_parts}".strip()
 
 
-def _build_template_components(*, preview_body: Optional[str], parameter_count: int) -> list[dict]:
+def _default_quick_reply_button_specs(*, template_type: Optional[str], language: Optional[str]) -> list[dict]:
+    normalized_type = str(template_type or "").strip().lower()
+    if normalized_type not in {"appointment_confirmation", "appointment_reminder"}:
+        return []
+
+    family, _ = normalize_language_preferences(locale_code=language)
+    text = "Cancel" if family == "en" else "Cancelar"
+    return [{"type": "QUICK_REPLY", "text": text}]
+
+
+def _normalize_template_buttons(
+    *,
+    buttons_json: Any,
+    template_type: Optional[str],
+    language: Optional[str],
+) -> list[dict]:
+    raw = buttons_json
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = None
+
+    if isinstance(raw, dict):
+        raw = raw.get("buttons")
+
+    if not isinstance(raw, list):
+        raw = _default_quick_reply_button_specs(
+            template_type=template_type,
+            language=language,
+        )
+
+    normalized: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        button_type = str(item.get("type") or "").strip().upper()
+        text = str(item.get("text") or "").strip()
+        if button_type != "QUICK_REPLY" or not text:
+            continue
+        normalized.append({"type": "QUICK_REPLY", "text": text[:25]})
+        if len(normalized) >= 10:
+            break
+
+    return normalized
+
+
+def _build_template_components(
+    *,
+    preview_body: Optional[str],
+    parameter_count: int,
+    template_type: Optional[str] = None,
+    language: Optional[str] = None,
+    buttons_json: Any = None,
+) -> list[dict]:
     safe_params = max(0, int(parameter_count or 0))
     body_text = _ensure_body_placeholders(preview_body or "", safe_params)
 
@@ -450,7 +504,20 @@ def _build_template_components(*, preview_body: Optional[str], parameter_count: 
             "body_text": [[f"sample_{idx}" for idx in range(1, safe_params + 1)]]
         }
 
-    return [body_component]
+    components: list[dict] = [body_component]
+
+    buttons = _normalize_template_buttons(
+        buttons_json=buttons_json,
+        template_type=template_type,
+        language=language,
+    )
+    if buttons:
+        components.append({
+            "type": "BUTTONS",
+            "buttons": buttons,
+        })
+
+    return components
 
 
 def _load_rate_card() -> dict[str, dict[str, float]]:
@@ -644,16 +711,32 @@ def _resolve_channel_waba_id(*, client_id: str, channel: dict) -> Optional[str]:
 
 
 def _load_canonical_templates() -> list[dict]:
-    response = (
-        supabase
-        .table("meta_approved_templates")
-        .select("id, template_name, preview_body, language, parameter_count, type")
-        .eq("channel", "whatsapp")
-        .eq("is_active", True)
-        .order("template_name")
-        .execute()
-    )
-    return response.data or []
+    try:
+        response = (
+            supabase
+            .table("meta_approved_templates")
+            .select("id, template_name, preview_body, language, parameter_count, type, buttons_json")
+            .eq("channel", "whatsapp")
+            .eq("is_active", True)
+            .order("template_name")
+            .execute()
+        )
+        return response.data or []
+    except Exception as exc:
+        logger.warning(
+            "⚠️ meta_approved_templates.buttons_json unavailable; using legacy canonical template query | error=%s",
+            exc,
+        )
+        response = (
+            supabase
+            .table("meta_approved_templates")
+            .select("id, template_name, preview_body, language, parameter_count, type")
+            .eq("channel", "whatsapp")
+            .eq("is_active", True)
+            .order("template_name")
+            .execute()
+        )
+        return response.data or []
 
 
 def _list_meta_templates(*, waba_id: str, wa_token: str) -> dict[str, dict]:
@@ -856,6 +939,7 @@ def _ensure_whatsapp_template_binding(
     canonical_template_name: str,
     template_type: Optional[str],
     language: Optional[str],
+    meta_status_active: bool,
     preferred_active: bool,
 ) -> None:
     if not template_type:
@@ -884,9 +968,9 @@ def _ensure_whatsapp_template_binding(
             "locale_code": locale_code,
             "variant_key": "default",
             "priority": 100 if preferred_active else 0,
-            "is_default_for_language": bool(preferred_active),
+            "is_default_for_language": bool(preferred_active and meta_status_active),
             # Keep local binding aligned with language-specific preferred template selection.
-            "is_active": bool(preferred_active),
+            "is_active": bool(meta_status_active),
             "frequency": (
                 existing_frequency
                 if template_type == "appointment_reminder" and existing_frequency
@@ -919,9 +1003,9 @@ def _ensure_whatsapp_template_binding(
         "locale_code": locale_code,
         "variant_key": "default",
         "priority": 100 if preferred_active else 0,
-        "is_default_for_language": bool(preferred_active),
+        "is_default_for_language": bool(preferred_active and meta_status_active),
         "body": None,
-        "is_active": bool(preferred_active),
+        "is_active": bool(meta_status_active),
         "frequency": frequency if preferred_active else None,
     }
 
@@ -1011,6 +1095,9 @@ def sync_canonical_templates_for_client(
                 components=_build_template_components(
                     preview_body=canonical.get("preview_body"),
                     parameter_count=parameter_count,
+                    template_type=template_type,
+                    language=language,
+                    buttons_json=canonical.get("buttons_json"),
                 ),
             )
 
@@ -1058,6 +1145,7 @@ def sync_canonical_templates_for_client(
                 canonical_template_name=canonical_name,
                 template_type=template_type,
                 language=language,
+                meta_status_active=(status == "active"),
                 preferred_active=(
                     preferred_meta_by_type_language.get(
                         (str(template_type or ""), normalize_language_preferences(locale_code=language)[0])
