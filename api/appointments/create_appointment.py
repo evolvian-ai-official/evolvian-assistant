@@ -20,6 +20,12 @@ from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.authz import authorize_client_request
 from api.internal_auth import has_valid_internal_token
 from api.appointments.cancel_link_tokens import build_cancel_link, generate_cancel_token
+from api.appointments.template_language_resolution import (
+    get_client_default_language_preferences,
+    normalize_language_preferences,
+    resolve_locale_for_rendering,
+    resolve_template_for_appointment,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -466,10 +472,21 @@ class CreateAppointmentPayload(BaseModel):
     send_reminders: bool = False
     reminders: Optional[Dict[str, Optional[str]]] = None
     replace_existing: bool = False
+    recipient_language: Optional[str] = None
+    recipient_locale: Optional[str] = None
     consent_accepted_terms: Optional[bool] = None
     consent_accepted_email_marketing: Optional[bool] = None
     consent_captured_at: Optional[datetime] = None
     consent_user_agent: Optional[str] = None
+
+
+def _resolve_payload_recipient_language(payload: CreateAppointmentPayload) -> tuple[str, str]:
+    default_family, _ = get_client_default_language_preferences(str(payload.client_id))
+    return normalize_language_preferences(
+        language_family=payload.recipient_language,
+        locale_code=payload.recipient_locale,
+        fallback_language=default_family,
+    )
 
 
 def _normalize_phone_e164_or_none(value: Optional[str]) -> Optional[str]:
@@ -547,42 +564,30 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         )
         return
 
-    # 1️⃣ Get active confirmation template
-    res = (
-        supabase
-        .table("message_templates")
-        .select("id, meta_template_id, template_name")
-        .eq("client_id", client_id)
-        .eq("channel", "whatsapp")
-        .eq("type", "appointment_confirmation")
-        .eq("is_active", True)
-        .limit(20)
-        .execute()
+    # 1️⃣ Resolve active confirmation template by recipient language
+    template = resolve_template_for_appointment(
+        client_id=str(client_id),
+        channel="whatsapp",
+        template_type="appointment_confirmation",
+        appointment=appointment,
     )
-
-    templates = res.data or []
-    if not templates:
+    if not template:
         logger.info("ℹ️ No active appointment_confirmation template found")
         return
 
-    template = next((row for row in templates if row.get("meta_template_id")), None)
-    if not template:
-        logger.warning("⚠️ No canonical active appointment_confirmation template found (legacy rows ignored)")
-        return
-
     meta_template_id = template.get("meta_template_id")
-
-    # 2️⃣ Resolve canonical metadata
-    meta_res = (
-        supabase
-        .table("meta_approved_templates")
-        .select("template_name, language, parameter_count")
-        .eq("id", meta_template_id)
-        .eq("is_active", True)
-        .single()
-        .execute()
-    )
-    meta = meta_res.data
+    meta = template.get("_resolved_meta")
+    if not meta and meta_template_id:
+        meta_res = (
+            supabase
+            .table("meta_approved_templates")
+            .select("template_name, language, parameter_count")
+            .eq("id", meta_template_id)
+            .eq("is_active", True)
+            .single()
+            .execute()
+        )
+        meta = meta_res.data
 
     if not meta:
         logger.warning(
@@ -592,7 +597,12 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         return
 
     template_name = meta.get("template_name")
-    language_code = meta.get("language") or "es_MX"
+    _, language_code = resolve_locale_for_rendering(
+        client_id=str(client_id),
+        appointment=appointment,
+        template_row=template,
+        meta_row=meta,
+    )
     expected_params = int(meta.get("parameter_count") or 2)
 
     if not template_name:
@@ -615,7 +625,9 @@ async def send_appointment_confirmation(appointment: dict) -> None:
 
         formatted_date = format_datetime(
             scheduled_local,
-            "EEEE dd 'de' MMMM yyyy, hh:mm a",
+            "EEEE, MMMM dd yyyy, hh:mm a"
+            if str(language_code).lower().startswith("en")
+            else "EEEE dd 'de' MMMM yyyy, hh:mm a",
             locale=language_code,
         )
 
@@ -683,26 +695,19 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
         html_body = None
         cancel_link_for_email = None
         if client_id:
-            tpl_res = (
-                supabase
-                .table("message_templates")
-                .select("id, body, label")
-                .eq("client_id", client_id)
-                .eq("type", "appointment_confirmation")
-                .eq("channel", "email")
-                .eq("is_active", True)
-                .limit(20)
-                .execute()
-            )
-            templates = tpl_res.data or []
-            template = next(
-                (
-                    row for row in templates
-                    if isinstance(row.get("body"), str) and row.get("body", "").strip()
-                ),
-                None,
+            template = resolve_template_for_appointment(
+                client_id=client_id,
+                channel="email",
+                template_type="appointment_confirmation",
+                appointment=appointment,
+                require_body=True,
             )
             if template:
+                _, locale_code = resolve_locale_for_rendering(
+                    client_id=client_id,
+                    appointment=appointment,
+                    template_row=template,
+                )
                 company_name = get_client_company_name(client_id)
                 cancel_link = ""
                 try:
@@ -725,12 +730,16 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
 
                 scheduled_label = format_datetime(
                     scheduled_local,
-                    "EEEE dd 'de' MMMM yyyy, hh:mm a",
+                    "EEEE, MMMM dd yyyy, hh:mm a"
+                    if str(locale_code).lower().startswith("en")
+                    else "EEEE dd 'de' MMMM yyyy, hh:mm a",
                     locale=locale_code,
                 )
                 appointment_date = format_datetime(
                     scheduled_local,
-                    "EEEE dd 'de' MMMM yyyy",
+                    "EEEE, MMMM dd yyyy"
+                    if str(locale_code).lower().startswith("en")
+                    else "EEEE dd 'de' MMMM yyyy",
                     locale=locale_code,
                 )
                 appointment_time = format_datetime(
@@ -740,7 +749,9 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
                 )
                 today_date = format_datetime(
                     datetime.now(client_tz),
-                    "EEEE dd 'de' MMMM yyyy",
+                    "EEEE, MMMM dd yyyy"
+                    if str(locale_code).lower().startswith("en")
+                    else "EEEE dd 'de' MMMM yyyy",
                     locale=locale_code,
                 )
 
@@ -761,12 +772,6 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
                 raw_subject = (template.get("label") or "").strip() or None
                 rendered_subject = render_email_template_text(raw_subject, replacements)
                 subject = (rendered_subject or "").replace("\r", " ").replace("\n", " ").strip() or None
-            elif templates:
-                logger.warning(
-                    "⚠️ appointment_confirmation template(s) found but none has body | client_id=%s | count=%s",
-                    client_id,
-                    len(templates),
-                )
 
         email_sent = send_confirmation_email(
             email,
@@ -1142,7 +1147,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
             "overlap_conflict": True,
             "google_busy": True,
             "existing_appointment": {},
-            "message": "This time is busy in Google Calendar.",
+            "message": "This time is no longer available. Please choose another time.",
         }
 
     if existing_id_to_replace:
@@ -1156,6 +1161,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
             "updated_at": datetime.utcnow().isoformat(),
         }).eq("appointment_id", existing_id_to_replace).in_("status", ["pending", "processing"]).execute()
 
+    recipient_language, recipient_locale = _resolve_payload_recipient_language(payload)
     appointment_data = {
         "client_id": str(payload.client_id),
         "user_name": payload.user_name,
@@ -1166,6 +1172,8 @@ async def create_appointment(payload: CreateAppointmentPayload):
         "channel": payload.channel,
         "status": "confirmed",
         "session_id": str(payload.session_id),
+        "recipient_language": recipient_language,
+        "recipient_locale": recipient_locale,
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
     }
@@ -1205,6 +1213,8 @@ async def create_appointment(payload: CreateAppointmentPayload):
             "user_phone": appointment.get("user_phone") or payload.user_phone,
             "scheduled_time": appointment.get("scheduled_time") or scheduled_utc.isoformat(),
             "appointment_type": appointment.get("appointment_type") or payload.appointment_type,
+            "recipient_language": appointment.get("recipient_language") or recipient_language,
+            "recipient_locale": appointment.get("recipient_locale") or recipient_locale,
         }
 
         await send_appointment_confirmation(appointment_for_confirmation)
@@ -1227,20 +1237,58 @@ async def create_appointment(payload: CreateAppointmentPayload):
     reminders_created = 0
 
     if payload.send_reminders:
+        chosen_templates: list[dict] = []
+        chosen_ids: set[str] = set()
+        reminders_pref = payload.reminders or {}
+        appointment_language_ctx = {
+            "recipient_language": recipient_language,
+            "recipient_locale": recipient_locale,
+        }
 
-        templates_res = (
-            supabase
-            .table("message_templates")
-            .select("id, channel, frequency, meta_template_id")
-            .eq("client_id", str(payload.client_id))
-            .eq("type", "appointment_reminder")
-            .eq("is_active", True)
-            .execute()
-        )
+        for channel_name in ("whatsapp", "email"):
+            explicit_template_id = (reminders_pref.get(channel_name) or "").strip() if isinstance(reminders_pref, dict) else ""
+            template = None
 
-        templates = templates_res.data or []
+            if explicit_template_id:
+                try:
+                    exact_res = (
+                        supabase
+                        .table("message_templates")
+                        .select("id, channel, type, frequency, meta_template_id, language_family, locale_code")
+                        .eq("id", explicit_template_id)
+                        .eq("client_id", str(payload.client_id))
+                        .eq("channel", channel_name)
+                        .eq("type", "appointment_reminder")
+                        .eq("is_active", True)
+                        .single()
+                        .execute()
+                    )
+                    template = exact_res.data
+                except Exception:
+                    template = None
+                if template and not template.get("frequency"):
+                    template = None
 
-        for template in templates:
+            if not template:
+                template = resolve_template_for_appointment(
+                    client_id=str(payload.client_id),
+                    channel=channel_name,
+                    template_type="appointment_reminder",
+                    appointment=appointment_language_ctx,
+                    require_frequency=True,
+                    require_body=(channel_name == "email"),
+                )
+
+            if not template:
+                continue
+
+            template_id_str = str(template.get("id") or "")
+            if not template_id_str or template_id_str in chosen_ids:
+                continue
+            chosen_ids.add(template_id_str)
+            chosen_templates.append(template)
+
+        for template in chosen_templates:
             if template.get("channel") == "whatsapp" and not template.get("meta_template_id"):
                 logger.warning(
                     "⚠️ Skipping legacy WhatsApp reminder template without canonical meta_template_id | template_id=%s",

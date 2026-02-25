@@ -83,7 +83,7 @@ const normalizeEmailBodyLineBreaks = (value) => {
   return output;
 };
 
-export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
+export default function CreateTemplateModal({ clientId, onClose, onCreated, selectedLanguage = "es" }) {
   const { t } = useLanguage();
   const API = import.meta.env.VITE_API_URL;
   const SUBJECT_VARIABLES = SUBJECT_VARIABLE_TOKENS.map((item) => ({
@@ -100,6 +100,7 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
   const [templateTypes, setTemplateTypes] = useState([]);
   const [label, setLabel] = useState("");
   const [body, setBody] = useState("");
+  const [templateLanguage, setTemplateLanguage] = useState(selectedLanguage || "es");
   const [includeFooterImage, setIncludeFooterImage] = useState(false);
   const [footerImageFile, setFooterImageFile] = useState(null);
   const [footerImageName, setFooterImageName] = useState("");
@@ -121,6 +122,10 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  useEffect(() => {
+    setTemplateLanguage(selectedLanguage || "es");
+  }, [selectedLanguage]);
 
   useEffect(() => {
     authFetch(`${API}/message_templates/types`)
@@ -215,6 +220,9 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
       channel,
       type: isWidgetTemplate ? "opening_message" : type,
       label: label || null,
+      language_family: !channel || channel === "email" || channel === "widget"
+        ? (templateLanguage !== "auto" ? templateLanguage : null)
+        : null,
       ...(frequency ? { frequency } : {}),
     };
 
@@ -404,6 +412,23 @@ export default function CreateTemplateModal({ clientId, onClose, onCreated }) {
               </button>
             ))}
           </div>
+        )}
+
+        {(isEmailTemplate || isWidgetTemplate) && (
+          <>
+            <label className="ia-form-label" style={{ marginTop: "0.6rem" }}>
+              {t("language") || "Language"}
+            </label>
+            <select
+              value={templateLanguage}
+              onChange={(e) => setTemplateLanguage(e.target.value)}
+              className="ia-form-input"
+            >
+              <option value="auto">Auto (client default)</option>
+              <option value="es">Español</option>
+              <option value="en">English</option>
+            </select>
+          </>
         )}
 
         {isEmailTemplate && (

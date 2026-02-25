@@ -96,6 +96,8 @@ export default function CreateAppointment({ disabled = false }) {
     addEmailOrPhone: isEs ? "Agrega email o teléfono." : "Add email or phone.",
     timeNoLongerAvailable: isEs ? "Ese horario ya no está disponible." : "That time is no longer available.",
     invalidTime: isEs ? "Horario inválido." : "Invalid time.",
+    templateLanguageInUseLabel: isEs ? "Idioma de templates en uso" : "Template language in use",
+    templateLanguageManagedInTemplates: isEs ? "Se configura en Templates" : "Managed in Templates",
   };
   const [sessionId] = useState(() => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -162,6 +164,7 @@ export default function CreateAppointment({ disabled = false }) {
   const [gmailEnabled, setGmailEnabled] = useState(false);
   const [gmailAddress, setGmailAddress] = useState("");
   const [whatsAppMetaConnected, setWhatsAppMetaConnected] = useState(false);
+  const [appointmentsTemplateLanguage, setAppointmentsTemplateLanguage] = useState("es");
   const prevEmailValidRef = useRef(false);
 
   useEffect(() => {
@@ -221,6 +224,26 @@ export default function CreateAppointment({ disabled = false }) {
     };
 
     fetchTemplates();
+  }, [showModal, clientId]);
+
+  useEffect(() => {
+    if (!showModal || !clientId) return;
+    let mounted = true;
+    const loadTemplateLanguage = async () => {
+      try {
+        const res = await authFetch(`${API_BASE_URL}/client_settings?client_id=${clientId}`);
+        const data = await res.json().catch(() => ({}));
+        if (!mounted) return;
+        const lang = String(data?.appointments_template_language || "es").toLowerCase();
+        setAppointmentsTemplateLanguage(lang.startsWith("en") ? "en" : "es");
+      } catch {
+        if (mounted) setAppointmentsTemplateLanguage("es");
+      }
+    };
+    loadTemplateLanguage();
+    return () => {
+      mounted = false;
+    };
   }, [showModal, clientId]);
 
   useEffect(() => {
@@ -577,10 +600,24 @@ export default function CreateAppointment({ disabled = false }) {
     }
   }, [showModal, selectedDate, calendarRules, googleBusyRanges, confirmedAppointments]);
 
+  const matchesConfiguredTemplateLanguage = (tpl) => {
+    const probe = String(tpl?.meta_language || tpl?.locale_code || tpl?.language_family || "").toLowerCase();
+    if (!probe) return true;
+    const family = probe.startsWith("en") ? "en" : "es";
+    return family === (appointmentsTemplateLanguage === "en" ? "en" : "es");
+  };
+
   const emailTemplates = templates.filter(
-    (tpl) => tpl?.channel === "email" && tpl?.type === "appointment_reminder" && isTemplateActive(tpl)
+    (tpl) =>
+      tpl?.channel === "email" &&
+      tpl?.type === "appointment_reminder" &&
+      isTemplateActive(tpl) &&
+      matchesConfiguredTemplateLanguage(tpl)
   );
-  const whatsappTemplates = templates.filter(isSelectableWhatsAppTemplate);
+  const whatsappTemplates = templates.filter(
+    (tpl) => isSelectableWhatsAppTemplate(tpl) && matchesConfiguredTemplateLanguage(tpl)
+  );
+  const appointmentTemplateLanguageLabel = appointmentsTemplateLanguage === "en" ? "English" : "Español";
 
   /* =========================
      Derived validation (SAFE)
@@ -1129,6 +1166,22 @@ export default function CreateAppointment({ disabled = false }) {
               )}
             </div>
 
+            <div
+              style={{
+                marginTop: "0.65rem",
+                marginBottom: "0.35rem",
+                padding: "0.7rem 0.8rem",
+                borderRadius: 10,
+                border: "1px solid #E6EEF8",
+                backgroundColor: "#F8FBFF",
+                color: "#36506B",
+                fontSize: "0.86rem",
+              }}
+            >
+              <strong>{ui.templateLanguageInUseLabel}:</strong> {appointmentTemplateLanguageLabel}
+              <span style={{ marginLeft: 8, color: "#667085" }}>({ui.templateLanguageManagedInTemplates})</span>
+            </div>
+
 
             {/* 🔔 REMINDERS */}
             <div style={reminderBox}>
@@ -1201,7 +1254,9 @@ export default function CreateAppointment({ disabled = false }) {
                           </option>
                           {whatsappTemplates.map((tpl) => (
                             <option key={tpl.id} value={tpl.id}>
-                              {tpl.meta_template_name || tpl.template_name || t("template")} — {tpl.label}
+                              {tpl.meta_template_name || tpl.template_name || t("template")}
+                              {tpl.meta_language ? ` [${String(tpl.meta_language).toLowerCase().startsWith("en") ? "EN" : "ES"}]` : ""}
+                              {tpl.label ? ` — ${tpl.label}` : ""}
                             </option>
                           ))}
                         </select>
@@ -1267,7 +1322,11 @@ export default function CreateAppointment({ disabled = false }) {
                           </option>
                           {emailTemplates.map((t) => (
                             <option key={t.id} value={t.id}>
-                              {t.template_name} — {t.label}
+                              {t.template_name}
+                              {(t.locale_code || t.language_family)
+                                ? ` [${String(t.locale_code || t.language_family).toLowerCase().startsWith("en") ? "EN" : "ES"}]`
+                                : ""}
+                              {t.label ? ` — ${t.label}` : ""}
                             </option>
                           ))}
                         </select>

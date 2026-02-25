@@ -57,6 +57,11 @@ class MessageTemplateResponse(BaseModel):
 
     label: Optional[str] = None
     frequency: Optional[List[FrequencyRule]] = None
+    language_family: Optional[str] = None
+    locale_code: Optional[str] = None
+    variant_key: Optional[str] = None
+    priority: Optional[int] = None
+    is_default_for_language: Optional[bool] = None
 
     is_meta_template: bool
     template_category: Optional[str] = None
@@ -98,7 +103,8 @@ def get_message_templates(
                 supabase
                 .table("message_templates")
                 .select(
-                    "id, channel, type, is_active, body, frequency, template_name, label, meta_template_id"
+                    "id, channel, type, is_active, body, frequency, template_name, label, meta_template_id, "
+                    "language_family, locale_code, variant_key, priority, is_default_for_language"
                 )
                 .eq("client_id", str(client_id))
             )
@@ -180,6 +186,12 @@ def get_message_templates(
             is_meta = bool(meta)
             is_whatsapp = t.get("channel") == "whatsapp"
             meta_template_id = str(t.get("meta_template_id") or "")
+            if is_whatsapp and meta:
+                resolved_language_family = "en" if str(meta.get("language") or "").lower().startswith("en") else "es"
+                resolved_locale_code = meta.get("language")
+            else:
+                resolved_language_family = t.get("language_family")
+                resolved_locale_code = t.get("locale_code")
 
             if is_whatsapp and not meta_template_id:
                 legacy_whatsapp_skipped += 1
@@ -236,6 +248,13 @@ def get_message_templates(
 
                     label=t.get("label"),
                     frequency=t.get("frequency"),
+                    language_family=resolved_language_family,
+                    locale_code=resolved_locale_code,
+                    variant_key=t.get("variant_key") or "default",
+                    priority=int(t.get("priority") or 0),
+                    is_default_for_language=(
+                        True if t.get("is_default_for_language") is None else bool(t.get("is_default_for_language"))
+                    ),
 
                     is_meta_template=is_meta,
                     template_category=category if is_whatsapp else None,

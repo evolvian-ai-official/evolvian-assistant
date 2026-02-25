@@ -10,6 +10,7 @@ from api.modules.whatsapp.whatsapp_sender import (
 )
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.appointments.cancel_link_tokens import build_cancel_link, generate_cancel_token
+from api.appointments.template_language_resolution import resolve_locale_for_rendering
 from api.internal_auth import require_internal_request
 
 router = APIRouter()
@@ -424,7 +425,11 @@ async def execute_pending_reminders(request: Request):
                 if not email:
                     raise Exception("Missing email")
 
-                locale_code = get_client_locale(client_id)
+                _, locale_code = resolve_locale_for_rendering(
+                    client_id=client_id,
+                    appointment=appointment,
+                    template_row=template,
+                )
                 date_str = ""
                 hour_str = ""
                 try:

@@ -19,6 +19,7 @@ from api.appointments.create_appointment import (
     CreateAppointmentPayload,
     create_appointment as create_appointment_route,
     get_client_timezone,
+    _get_google_busy_ranges,
 )
 from api.appointments.cancel_appointment import _cancel_appointment_record
 
@@ -531,6 +532,31 @@ def get_widget_calendar_availability(
                     dt = dt.replace(tzinfo=ZoneInfo("UTC"))
                 local_start = dt.astimezone(tz)
                 busy_ranges.append((local_start, local_start + slot_duration))
+            except Exception:
+                continue
+
+        try:
+            google_busy_ranges = _get_google_busy_ranges(client_id, start_utc, end_utc)
+        except Exception:
+            logging.exception("⚠️ Error fetching Google busy ranges for widget availability")
+            google_busy_ranges = []
+
+        for item in google_busy_ranges:
+            raw_start = item.get("start")
+            raw_end = item.get("end")
+            if not raw_start or not raw_end:
+                continue
+            try:
+                busy_start = datetime.fromisoformat(str(raw_start).replace("Z", "+00:00"))
+                busy_end = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00"))
+                if busy_start.tzinfo is None:
+                    busy_start = busy_start.replace(tzinfo=ZoneInfo("UTC"))
+                if busy_end.tzinfo is None:
+                    busy_end = busy_end.replace(tzinfo=ZoneInfo("UTC"))
+                local_start = busy_start.astimezone(tz)
+                local_end = busy_end.astimezone(tz)
+                if local_end > local_start:
+                    busy_ranges.append((local_start, local_end))
             except Exception:
                 continue
 

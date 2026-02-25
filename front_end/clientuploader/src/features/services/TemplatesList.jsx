@@ -35,7 +35,15 @@ const metaStatusPalette = (status) => {
   return { bg: "#EEF2F8", color: "#364152" };
 };
 
-export default function TemplatesList({ clientId, refreshKey }) {
+const formatLanguageBadge = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (raw.toLowerCase().startsWith("es")) return "ES";
+  if (raw.toLowerCase().startsWith("en")) return "EN";
+  return raw.toUpperCase();
+};
+
+export default function TemplatesList({ clientId, refreshKey, selectedLanguage = "es" }) {
   const { t } = useLanguage();
   const API = import.meta.env.VITE_API_URL;
 
@@ -66,6 +74,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
       metaParams.append("client_id", clientId);
       metaParams.append("channel", "whatsapp");
       metaParams.append("refresh_status", "false");
+      metaParams.append("language_family", selectedLanguage === "en" ? "en" : "es");
 
       const [configuredRes, metaRes] = await Promise.all([
         authFetch(`${API}/message_templates?${configuredParams.toString()}`),
@@ -92,7 +101,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
   useEffect(() => {
     fetchTemplates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, refreshKey]);
+  }, [clientId, refreshKey, selectedLanguage]);
 
   const allCards = useMemo(() => {
     const configuredMetaIds = new Set(
@@ -105,6 +114,11 @@ export default function TemplatesList({ clientId, refreshKey }) {
       .filter((tpl) => {
         if (tpl.channel === "email" && !tpl.is_active) return false;
         if (tpl.channel === "whatsapp" && !tpl.meta_template_id) return false;
+        const langProbe = String(tpl.meta_language || tpl.locale_code || tpl.language_family || "").toLowerCase();
+        if (langProbe) {
+          const family = langProbe.startsWith("en") ? "en" : "es";
+          if (family !== (selectedLanguage === "en" ? "en" : "es")) return false;
+        }
         return true;
       })
       .map((tpl) => {
@@ -127,6 +141,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
         estimatedUnitCost: isWhatsApp ? Number(tpl.estimated_unit_cost || 0) : null,
         pricingCurrency: isWhatsApp ? tpl.pricing_currency || "USD" : null,
         metaParameterCount: tpl.meta_parameter_count,
+        languageBadge: formatLanguageBadge(tpl.meta_language || tpl.locale_code || tpl.language_family),
         raw: tpl,
         };
       });
@@ -147,6 +162,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
         estimatedUnitCost: Number(tpl.estimated_unit_cost || 0),
         pricingCurrency: tpl.pricing_currency || "USD",
         metaParameterCount: tpl.parameter_count,
+        languageBadge: formatLanguageBadge(tpl.language),
         raw: tpl,
       }));
 
@@ -164,7 +180,7 @@ export default function TemplatesList({ clientId, refreshKey }) {
       if (aPriority !== bPriority) return aPriority - bPriority;
       return String(a.title || "").localeCompare(String(b.title || ""));
     });
-  }, [configuredTemplates, metaTemplates]);
+  }, [configuredTemplates, metaTemplates, selectedLanguage]);
 
   const availableTypes = useMemo(() => {
     const values = new Set(allCards.map((card) => card.type).filter(Boolean));
@@ -385,6 +401,20 @@ export default function TemplatesList({ clientId, refreshKey }) {
                     >
                       {card.type}
                     </span>
+                    {card.languageBadge && (
+                      <span
+                        style={{
+                          fontSize: "0.72rem",
+                          padding: "0.2rem 0.5rem",
+                          borderRadius: "999px",
+                          backgroundColor: "#F3F4F6",
+                          color: "#111827",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {card.languageBadge}
+                      </span>
+                    )}
                   </div>
                 </div>
 

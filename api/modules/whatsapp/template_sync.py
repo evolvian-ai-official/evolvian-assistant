@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from api.config.config import supabase
+from api.appointments.template_language_resolution import normalize_language_preferences
 from api.security.whatsapp_token_crypto import decrypt_whatsapp_token
 
 logger = logging.getLogger(__name__)
@@ -844,6 +845,7 @@ def _ensure_whatsapp_template_binding(
     meta_template_id: str,
     canonical_template_name: str,
     template_type: Optional[str],
+    language: Optional[str],
     preferred_active: bool,
 ) -> None:
     if not template_type:
@@ -857,11 +859,17 @@ def _ensure_whatsapp_template_binding(
     )
 
     if existing:
+        language_family, locale_code = normalize_language_preferences(locale_code=language)
         update_payload = {
             "meta_template_id": meta_template_id,
             "template_name": canonical_template_name,
             "type": template_type,
             "channel": "whatsapp",
+            "language_family": language_family,
+            "locale_code": locale_code,
+            "variant_key": "default",
+            "priority": 100 if preferred_active else 0,
+            "is_default_for_language": bool(preferred_active),
             "updated_at": _utcnow_iso(),
         }
         try:
@@ -880,6 +888,8 @@ def _ensure_whatsapp_template_binding(
     if template_type == "appointment_reminder":
         frequency = [{"offset_minutes": -60, "label": "1 hour before"}]
 
+    language_family, locale_code = normalize_language_preferences(locale_code=language)
+
     insert_payload = {
         "client_id": client_id,
         "channel": "whatsapp",
@@ -887,6 +897,11 @@ def _ensure_whatsapp_template_binding(
         "meta_template_id": meta_template_id,
         "template_name": canonical_template_name,
         "label": canonical_template_name,
+        "language_family": language_family,
+        "locale_code": locale_code,
+        "variant_key": "default",
+        "priority": 100 if preferred_active else 0,
+        "is_default_for_language": bool(preferred_active),
         "body": None,
         "is_active": bool(preferred_active),
         "frequency": frequency if preferred_active else None,
@@ -939,12 +954,14 @@ def sync_canonical_templates_for_client(
         result["success"] = True
         return result
 
-    preferred_meta_by_type: dict[str, str] = {}
+    preferred_meta_by_type_language: dict[tuple[str, str], str] = {}
     for row in canonical_templates:
         row_type = row.get("type")
         row_id = str(row.get("id") or "")
-        if row_type and row_id and row_type not in preferred_meta_by_type:
-            preferred_meta_by_type[row_type] = row_id
+        row_family, _ = normalize_language_preferences(locale_code=row.get("language"))
+        key = (str(row_type or ""), row_family)
+        if row_type and row_id and key not in preferred_meta_by_type_language:
+            preferred_meta_by_type_language[key] = row_id
 
     existing_remote = _list_meta_templates(waba_id=waba_id, wa_token=wa_token)
     country_code = get_client_country_code(client_id)
@@ -1022,7 +1039,13 @@ def sync_canonical_templates_for_client(
                 meta_template_id=canonical_id_str,
                 canonical_template_name=canonical_name,
                 template_type=template_type,
-                preferred_active=preferred_meta_by_type.get(template_type) == canonical_id_str,
+                language=language,
+                preferred_active=(
+                    preferred_meta_by_type_language.get(
+                        (str(template_type or ""), normalize_language_preferences(locale_code=language)[0])
+                    )
+                    == canonical_id_str
+                ),
             )
 
         result["synced"] += 1

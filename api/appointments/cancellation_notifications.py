@@ -10,6 +10,10 @@ except Exception:  # pragma: no cover - fallback for lightweight test envs
     babel_format_datetime = None
 
 from api.config.config import supabase
+from api.appointments.template_language_resolution import (
+    resolve_locale_for_rendering,
+    resolve_template_for_appointment,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -116,9 +120,14 @@ def _format_cancelled_datetime(
     try:
         if not babel_format_datetime:
             raise ValueError("babel_not_available")
+        date_pattern = (
+            "EEEE, MMMM dd yyyy"
+            if str(language_code).lower().startswith("en")
+            else "EEEE dd 'de' MMMM yyyy"
+        )
         date_label = babel_format_datetime(
             local_dt,
-            "EEEE dd 'de' MMMM yyyy",
+            date_pattern,
             locale=language_code,
         )
         time_label = babel_format_datetime(
@@ -151,41 +160,29 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         )
         return False
 
-    templates_res = (
-        supabase
-        .table("message_templates")
-        .select("id, meta_template_id, template_name")
-        .eq("client_id", client_id)
-        .eq("channel", "whatsapp")
-        .eq("type", "appointment_cancellation")
-        .eq("is_active", True)
-        .limit(20)
-        .execute()
+    template = resolve_template_for_appointment(
+        client_id=client_id,
+        channel="whatsapp",
+        template_type="appointment_cancellation",
+        appointment=appointment,
     )
-    templates = templates_res.data or []
-    if not templates:
+    if not template:
         logger.info("ℹ️ No active appointment_cancellation template found | client_id=%s", client_id)
         return False
 
-    template = next((row for row in templates if row.get("meta_template_id")), None)
-    if not template:
-        logger.warning(
-            "⚠️ No canonical active appointment_cancellation template found (legacy rows ignored) | client_id=%s",
-            client_id,
-        )
-        return False
-
     meta_template_id = template.get("meta_template_id")
-    meta_res = (
-        supabase
-        .table("meta_approved_templates")
-        .select("template_name, language, parameter_count")
-        .eq("id", meta_template_id)
-        .eq("is_active", True)
-        .single()
-        .execute()
-    )
-    meta = meta_res.data
+    meta = template.get("_resolved_meta")
+    if not meta and meta_template_id:
+        meta_res = (
+            supabase
+            .table("meta_approved_templates")
+            .select("template_name, language, parameter_count")
+            .eq("id", meta_template_id)
+            .eq("is_active", True)
+            .single()
+            .execute()
+        )
+        meta = meta_res.data
     if not meta:
         logger.warning(
             "⚠️ Meta template metadata not found for cancellation | meta_template_id=%s",
@@ -198,7 +195,12 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         logger.warning("⚠️ Cancellation meta template missing template_name")
         return False
 
-    language_code = (meta.get("language") or "es_MX").strip() or "es_MX"
+    _, language_code = resolve_locale_for_rendering(
+        client_id=client_id,
+        appointment=appointment,
+        template_row=template,
+        meta_row=meta,
+    )
     expected_params = int(meta.get("parameter_count") or 4)
     company_name = _get_client_company_name(client_id)
 
@@ -257,40 +259,25 @@ def send_appointment_cancellation_email_notification(appointment: dict) -> bool:
         )
         return False
 
-    templates_res = (
-        supabase
-        .table("message_templates")
-        .select("id, body, label")
-        .eq("client_id", client_id)
-        .eq("channel", "email")
-        .eq("type", "appointment_cancellation")
-        .eq("is_active", True)
-        .limit(20)
-        .execute()
-    )
-    templates = templates_res.data or []
-    template = next(
-        (
-            row for row in templates
-            if isinstance(row.get("body"), str) and row.get("body", "").strip()
-        ),
-        None,
+    template = resolve_template_for_appointment(
+        client_id=client_id,
+        channel="email",
+        template_type="appointment_cancellation",
+        appointment=appointment,
+        require_body=True,
     )
     if not template:
-        if templates:
-            logger.warning(
-                "⚠️ appointment_cancellation email template(s) found but none has body | client_id=%s | count=%s",
-                client_id,
-                len(templates),
-            )
-        else:
-            logger.info(
-                "ℹ️ No active appointment_cancellation email template found | client_id=%s",
-                client_id,
-            )
+        logger.info(
+            "ℹ️ No active appointment_cancellation email template found | client_id=%s",
+            client_id,
+        )
         return False
 
-    language_code = "es_MX"
+    _, language_code = resolve_locale_for_rendering(
+        client_id=client_id,
+        appointment=appointment,
+        template_row=template,
+    )
     appointment_date, appointment_time = _format_cancelled_datetime(
         client_id=client_id,
         scheduled_time_raw=str(appointment.get("scheduled_time") or ""),
@@ -298,7 +285,11 @@ def send_appointment_cancellation_email_notification(appointment: dict) -> bool:
     )
     company_name = _get_client_company_name(client_id)
     current_date = (
-        babel_format_datetime(datetime.now(_get_client_timezone(client_id)), "EEEE dd 'de' MMMM yyyy", locale=language_code)
+        babel_format_datetime(
+            datetime.now(_get_client_timezone(client_id)),
+            "EEEE, MMMM dd yyyy" if str(language_code).lower().startswith("en") else "EEEE dd 'de' MMMM yyyy",
+            locale=language_code,
+        )
         if babel_format_datetime
         else datetime.utcnow().strftime("%Y-%m-%d")
     )
@@ -326,7 +317,11 @@ def send_appointment_cancellation_email_notification(appointment: dict) -> bool:
         )
         return False
 
-    default_subject = "❌ Tu cita fue cancelada"
+    default_subject = (
+        "❌ Appointment cancelled"
+        if str(language_code).lower().startswith("en")
+        else "❌ Tu cita fue cancelada"
+    )
     rendered_subject = _render_email_template_text((template.get("label") or "").strip(), replacements) or ""
     subject = rendered_subject.replace("\r", " ").replace("\n", " ").strip() or default_subject
 

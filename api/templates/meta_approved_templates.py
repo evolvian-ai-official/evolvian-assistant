@@ -59,6 +59,7 @@ def get_meta_approved_templates(
     request: Request,
     type: Optional[str] = Query(None, description="Template functional type"),
     channel: Optional[str] = Query("whatsapp", description="Channel type"),
+    language_family: Optional[str] = Query(None, description="Language family filter (es|en)"),
     client_id: Optional[str] = Query(
         None,
         description="Optional client_id to resolve per-account status/cost",
@@ -77,7 +78,12 @@ def get_meta_approved_templates(
     Filters are optional and validated dynamically.
     """
 
-    logger.info(f"📥 Fetching Meta templates | type={type} | channel={channel}")
+    logger.info(
+        "📥 Fetching Meta templates | type=%s | channel=%s | language_family=%s",
+        type,
+        channel,
+        language_family,
+    )
 
     try:
         request_ip = get_request_ip(request)
@@ -115,6 +121,8 @@ def get_meta_approved_templates(
                 status_code=400,
                 detail="Invalid channel"
             )
+        if language_family and str(language_family).lower() not in {"es", "en"}:
+            raise HTTPException(status_code=400, detail="Invalid language_family")
 
         if client_id:
             authorize_client_request(request, client_id)
@@ -155,6 +163,12 @@ def get_meta_approved_templates(
         res = query.order("template_name").execute()
 
         templates = res.data or []
+        if language_family:
+            family = str(language_family).strip().lower()
+            templates = [
+                row for row in templates
+                if str((row or {}).get("language") or "").lower().startswith(family)
+            ]
 
         if not client_id:
             return templates

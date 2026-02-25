@@ -210,6 +210,62 @@ def test_widget_availability_hides_pending_confirmation_slots(monkeypatch):
     assert slot_iso not in slot_starts
 
 
+def test_widget_availability_hides_google_busy_ranges(monkeypatch):
+    slot_dt = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+        hour=10,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    slot_iso = slot_dt.isoformat()
+    slot_date = slot_dt.strftime("%Y-%m-%d")
+
+    def _data_source(_filters):
+        return []
+
+    monkeypatch.setattr(widget_api, "supabase", _FakeAvailabilitySupabase(_data_source))
+    monkeypatch.setattr(
+        widget_api,
+        "get_client_id_from_public_client_id",
+        lambda _public_client_id: "client-1",
+    )
+    monkeypatch.setattr(
+        widget_api,
+        "_get_widget_calendar_config",
+        lambda _client_id: {
+            "calendar_status": "active",
+            "show_agenda_in_chat_widget": True,
+            "timezone": "UTC",
+            "selected_days": set(range(7)),
+            "start_time": "09:00",
+            "end_time": "12:00",
+            "slot_duration_minutes": 30,
+            "buffer_minutes": 0,
+            "min_notice_hours": 0,
+            "allow_same_day": True,
+        },
+    )
+    monkeypatch.setattr(
+        widget_api,
+        "_get_google_busy_ranges",
+        lambda _client_id, _start_utc, _end_utc: [
+            {
+                "start": slot_dt.isoformat().replace("+00:00", "Z"),
+                "end": (slot_dt + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            }
+        ],
+    )
+
+    result = widget_api.get_widget_calendar_availability(
+        public_client_id="public-client-1",
+        from_date=slot_date,
+        to_date=slot_date,
+    )
+
+    slot_starts = {slot["start_iso"] for slot in result["slots"]}
+    assert slot_iso not in slot_starts
+
+
 def test_widget_booking_conflict_precheck_blocks_pending_confirmation(monkeypatch):
     monkeypatch.setattr(widget_api, "get_client_id_from_public_client_id", lambda _public_client_id: "client-1")
     monkeypatch.setattr(

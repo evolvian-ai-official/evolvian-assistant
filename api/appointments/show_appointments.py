@@ -11,6 +11,7 @@ from pydantic import BaseModel, EmailStr
 
 from api.authz import authorize_client_request
 from api.config.config import supabase
+from api.appointments.template_language_resolution import normalize_language_preferences
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 
@@ -23,6 +24,8 @@ class AppointmentClientPayload(BaseModel):
     user_name: str
     user_email: Optional[EmailStr] = None
     user_phone: Optional[str] = None
+    preferred_language: Optional[str] = None
+    preferred_locale: Optional[str] = None
 
 
 def _is_valid_datetime(value) -> bool:
@@ -99,7 +102,7 @@ def _load_clean_appointments(client_id: str, desc: bool = True) -> list[dict]:
         supabase.table("appointments")
         .select(
             "id, user_name, user_email, user_phone, "
-            "scheduled_time, appointment_type, channel, status, created_at"
+            "scheduled_time, appointment_type, channel, status, created_at, recipient_language, recipient_locale"
         )
         .eq("client_id", client_id)
         .order("scheduled_time", desc=desc)
@@ -140,6 +143,8 @@ def _serialize_directory_client(row: dict) -> dict:
         "normalized_phone": row.get("normalized_phone") or phone,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        "preferred_language": row.get("preferred_language"),
+        "preferred_locale": row.get("preferred_locale"),
         "appointments_count": 0,
         "first_appointment_time": None,
         "last_appointment_time": None,
@@ -152,7 +157,7 @@ def _load_directory_rows(client_id: str) -> tuple[list[dict], bool]:
             supabase.table("appointment_clients")
             .select(
                 "id, user_name, user_email, user_phone, normalized_email, normalized_phone, "
-                "created_at, updated_at"
+                "preferred_language, preferred_locale, created_at, updated_at"
             )
             .eq("client_id", client_id)
             .order("updated_at", desc=True)
@@ -204,6 +209,8 @@ def _build_clients_list(client_id: str, q: Optional[str]) -> dict:
                 "normalized_phone": phone,
                 "created_at": appt.get("created_at"),
                 "updated_at": appt.get("created_at"),
+                "preferred_language": appt.get("recipient_language"),
+                "preferred_locale": appt.get("recipient_locale"),
                 "appointments_count": 0,
                 "first_appointment_time": None,
                 "last_appointment_time": None,
@@ -217,6 +224,10 @@ def _build_clients_list(client_id: str, q: Optional[str]) -> dict:
             entry["user_email"] = email
         if not entry.get("user_phone") and phone:
             entry["user_phone"] = phone
+        if not entry.get("preferred_language") and appt.get("recipient_language"):
+            entry["preferred_language"] = appt.get("recipient_language")
+        if not entry.get("preferred_locale") and appt.get("recipient_locale"):
+            entry["preferred_locale"] = appt.get("recipient_locale")
 
         entry["appointments_count"] = int(entry.get("appointments_count") or 0) + 1
 
@@ -270,12 +281,21 @@ def _validate_contact_payload(payload: AppointmentClientPayload) -> dict:
     if not user_email and not user_phone:
         raise HTTPException(status_code=400, detail="Provide at least email or phone.")
 
+    if payload.preferred_language or payload.preferred_locale:
+        preferred_language, preferred_locale = normalize_language_preferences(
+            language_family=payload.preferred_language,
+            locale_code=payload.preferred_locale,
+        )
+    else:
+        preferred_language, preferred_locale = (None, None)
     return {
         "user_name": user_name,
         "user_email": user_email,
         "user_phone": user_phone,
         "normalized_email": user_email,
         "normalized_phone": user_phone,
+        "preferred_language": preferred_language,
+        "preferred_locale": preferred_locale,
     }
 
 

@@ -70,6 +70,7 @@ class ClientSettingsPayload(BaseModel):
     plan_id: Optional[str] = None
     assistant_name: Optional[str] = "Evolvian Assistant"
     language: Optional[str] = "es"
+    appointments_template_language: Optional[str] = None
     temperature: Optional[float] = 0.7
     custom_prompt: Optional[str] = None
 
@@ -287,6 +288,7 @@ def get_client_settings(
                 client_id,
                 assistant_name,
                 language,
+                appointments_template_language,
                 temperature,
                 show_powered_by,
                 show_logo,

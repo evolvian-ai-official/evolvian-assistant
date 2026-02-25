@@ -23,6 +23,10 @@ from api.modules.whatsapp.template_sync import (
     infer_template_category,
     sync_canonical_templates_for_client,
 )
+from api.appointments.template_language_resolution import (
+    get_client_default_language_preferences,
+    normalize_language_preferences,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,40 @@ def _load_template_with_auth(request: Request, template_id: uuid.UUID) -> dict:
     return template_row.data
 
 
+def _clear_default_for_language(
+    *,
+    client_id: str,
+    channel: str,
+    template_type: str,
+    language_family: Optional[str],
+    exclude_template_id: Optional[str] = None,
+) -> None:
+    if not language_family:
+        return
+    try:
+        query = (
+            supabase
+            .table("message_templates")
+            .update({"is_default_for_language": False})
+            .eq("client_id", client_id)
+            .eq("channel", channel)
+            .eq("type", template_type)
+            .eq("language_family", language_family)
+            .eq("is_default_for_language", True)
+        )
+        if exclude_template_id:
+            query = query.neq("id", exclude_template_id)
+        query.execute()
+    except Exception:
+        logger.warning(
+            "⚠️ Failed clearing existing default template for language | client_id=%s | channel=%s | type=%s | lang=%s",
+            client_id,
+            channel,
+            template_type,
+            language_family,
+        )
+
+
 # =====================================================
 # MODELS
 # =====================================================
@@ -97,6 +135,20 @@ class CreateTemplatePayload(BaseModel):
         None,
         max_length=120
     )
+    language_family: Optional[str] = Field(
+        None,
+        description="Preferred language family for non-WhatsApp templates (es|en)"
+    )
+    locale_code: Optional[str] = Field(
+        None,
+        description="Preferred locale code for non-WhatsApp templates (e.g. es_MX, en_US)"
+    )
+    variant_key: Optional[str] = Field(
+        "default",
+        max_length=50
+    )
+    priority: Optional[int] = 0
+    is_default_for_language: Optional[bool] = True
     frequency: Optional[List[ReminderRule]] = None
     is_active: bool = True
 
@@ -106,6 +158,11 @@ class UpdateTemplatePayload(BaseModel):
     label: Optional[str] = None
     body: Optional[str] = Field(None, min_length=1)
     frequency: Optional[List[ReminderRule]] = None
+    language_family: Optional[str] = None
+    locale_code: Optional[str] = None
+    variant_key: Optional[str] = Field(None, max_length=50)
+    priority: Optional[int] = None
+    is_default_for_language: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
@@ -191,7 +248,7 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
             .table("template_types")
             .select("id")
             .eq("id", payload.type)
-            .single()
+            .maybe_single()
             .execute()
         )
 
@@ -203,6 +260,8 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
 
         meta_template_name = None
         body = None
+        language_family = None
+        locale_code = None
 
         # --------------------------
         # WHATSAPP
@@ -218,7 +277,7 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
             meta_template = (
                 supabase
                 .table("meta_approved_templates")
-                .select("id, template_name, type")
+                .select("id, template_name, type, language")
                 .eq("id", str(payload.meta_template_id))
                 .eq("is_active", True)
                 .single()
@@ -238,6 +297,9 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
                 )
 
             canonical_template_name = meta_template.data["template_name"]
+            language_family, locale_code = normalize_language_preferences(
+                locale_code=meta_template.data.get("language"),
+            )
             client_id_str = str(payload.client_id)
             sync_map = get_client_template_sync_map(client_id_str)
             synced_template = sync_map.get(str(payload.meta_template_id))
@@ -287,6 +349,12 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
                     )
 
             body = payload.body
+            default_family, _ = get_client_default_language_preferences(str(payload.client_id))
+            language_family, locale_code = normalize_language_preferences(
+                language_family=payload.language_family,
+                locale_code=payload.locale_code,
+                fallback_language=default_family,
+            )
 
         # --------------------------
         # WIDGET
@@ -310,6 +378,12 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
                 )
 
             body = str(payload.body).strip()
+            default_family, _ = get_client_default_language_preferences(str(payload.client_id))
+            language_family, locale_code = normalize_language_preferences(
+                language_family=payload.language_family,
+                locale_code=payload.locale_code,
+                fallback_language=default_family,
+            )
 
         else:
             raise HTTPException(
@@ -339,6 +413,13 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
             ),
             "template_name": meta_template_name,  # snapshot
             "label": payload.label,
+            "language_family": language_family,
+            "locale_code": locale_code,
+            "variant_key": (payload.variant_key or "default"),
+            "priority": int(payload.priority or 0),
+            "is_default_for_language": bool(
+                True if payload.is_default_for_language is None else payload.is_default_for_language
+            ),
             "body": body,
             "frequency": (
                 [rule.dict() for rule in payload.frequency]
@@ -346,6 +427,14 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
             ),
             "is_active": payload.is_active,
         }
+
+        if template_data.get("is_default_for_language") and template_data.get("language_family"):
+            _clear_default_for_language(
+                client_id=str(payload.client_id),
+                channel=payload.channel,
+                template_type=payload.type,
+                language_family=template_data.get("language_family"),
+            )
 
         res = (
             supabase
@@ -490,6 +579,13 @@ def update_message_template(
                 status_code=400,
                 detail="WhatsApp templates cannot update body"
             )
+        if channel == "whatsapp" and (
+            "language_family" in update_data or "locale_code" in update_data
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="WhatsApp template language is managed by Meta"
+            )
 
         if channel == "email" and "body" in update_data and is_marketing_template_type(template_type):
             valid_body, missing_tokens = validate_marketing_template_body(update_data.get("body"))
@@ -520,6 +616,55 @@ def update_message_template(
                 )
             if "body" in update_data:
                 update_data["body"] = str(update_data["body"]).strip()
+
+        if channel in {"email", "widget"} and (
+            "language_family" in update_data or "locale_code" in update_data
+        ):
+            default_family, _ = get_client_default_language_preferences(str(existing.get("client_id") or ""))
+            normalized_family, normalized_locale = normalize_language_preferences(
+                language_family=update_data.get("language_family"),
+                locale_code=update_data.get("locale_code"),
+                fallback_language=default_family,
+            )
+            update_data["language_family"] = normalized_family
+            update_data["locale_code"] = normalized_locale
+
+        if "variant_key" in update_data and update_data.get("variant_key") is None:
+            update_data["variant_key"] = "default"
+        if "priority" in update_data and update_data.get("priority") is None:
+            update_data["priority"] = 0
+
+        if (
+            update_data.get("is_default_for_language") is True
+            and channel in {"whatsapp", "email", "widget"}
+        ):
+            target_language_family = update_data.get("language_family")
+            if not target_language_family:
+                if channel == "whatsapp":
+                    try:
+                        meta_lookup = (
+                            supabase
+                            .table("meta_approved_templates")
+                            .select("language")
+                            .eq("id", str(existing.get("meta_template_id") or ""))
+                            .limit(1)
+                            .execute()
+                        )
+                        meta_row = (meta_lookup.data or [{}])[0]
+                        target_language_family, _ = normalize_language_preferences(
+                            locale_code=meta_row.get("language"),
+                        )
+                    except Exception:
+                        target_language_family = None
+                else:
+                    target_language_family = existing.get("language_family")
+            _clear_default_for_language(
+                client_id=str(existing.get("client_id") or ""),
+                channel=channel,
+                template_type=str(template_type or ""),
+                language_family=target_language_family,
+                exclude_template_id=str(template_id),
+            )
 
         # Frequency validation
         if "frequency" in update_data:
@@ -629,6 +774,11 @@ def get_message_templates(
                 is_active,
                 frequency,
                 meta_template_id,
+                language_family,
+                locale_code,
+                variant_key,
+                priority,
+                is_default_for_language,
                 meta_approved_templates (
                     template_name,
                     parameter_count,
@@ -658,6 +808,8 @@ def get_message_templates(
             meta = t.get("meta_approved_templates")
             is_whatsapp = t.get("channel") == "whatsapp"
             meta_template_id = str(t.get("meta_template_id") or "")
+            resolved_language_family = None
+            resolved_locale_code = None
 
             if is_whatsapp and not meta_template_id:
                 logger.warning(
@@ -673,6 +825,15 @@ def get_message_templates(
                     meta_template_id,
                 )
                 continue
+            if is_whatsapp and meta:
+                resolved_language_family, resolved_locale_code = normalize_language_preferences(
+                    locale_code=meta.get("language"),
+                )
+            else:
+                resolved_language_family, resolved_locale_code = normalize_language_preferences(
+                    language_family=t.get("language_family"),
+                    locale_code=t.get("locale_code"),
+                )
 
             sync_row = sync_map.get(meta_template_id) if meta_template_id else None
 
@@ -707,6 +868,13 @@ def get_message_templates(
                 "channel": t["channel"],
                 "type": t["type"],
                 "label": t.get("label"),
+                "language_family": resolved_language_family,
+                "locale_code": resolved_locale_code,
+                "variant_key": t.get("variant_key") or "default",
+                "priority": int(t.get("priority") or 0),
+                "is_default_for_language": bool(
+                    True if t.get("is_default_for_language") is None else t.get("is_default_for_language")
+                ),
                 "is_active": bool(t.get("is_active", True)),
                 "body": None if is_whatsapp else t.get("body"),
                 "template_name": t.get("template_name"),
