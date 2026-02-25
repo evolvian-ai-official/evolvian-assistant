@@ -224,6 +224,7 @@ def choose_best_template_for_language(
     target_locale_code: str,
     require_frequency: bool = False,
     require_body: bool = False,
+    strict_language_match: bool = False,
     allow_whatsapp_legacy: bool = False,
 ) -> Optional[dict]:
     candidates: list[dict] = []
@@ -248,6 +249,15 @@ def choose_best_template_for_language(
     if not candidates:
         return None
 
+    if strict_language_match:
+        same_language_candidates = [
+            row for row in candidates
+            if row.get("_resolved_language_family") == target_language_family
+        ]
+        if not same_language_candidates:
+            return None
+        candidates = same_language_candidates
+
     def _score(row: dict) -> tuple[int, int, int, int, str]:
         row_locale = row.get("_resolved_locale_code")
         row_family = row.get("_resolved_language_family")
@@ -270,6 +280,7 @@ def resolve_template_for_appointment(
     appointment: Optional[dict] = None,
     require_frequency: bool = False,
     require_body: bool = False,
+    strict_language_match: bool = True,
 ) -> Optional[dict]:
     target_language, target_locale = resolve_appointment_language_preferences(client_id, appointment)
     response = _safe_select_templates_with_language(client_id, channel, template_type)
@@ -280,6 +291,7 @@ def resolve_template_for_appointment(
         target_locale_code=target_locale,
         require_frequency=require_frequency,
         require_body=require_body,
+        strict_language_match=strict_language_match,
     )
 
 

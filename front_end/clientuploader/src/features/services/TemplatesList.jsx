@@ -115,10 +115,9 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
         if (tpl.channel === "email" && !tpl.is_active) return false;
         if (tpl.channel === "whatsapp" && !tpl.meta_template_id) return false;
         const langProbe = String(tpl.meta_language || tpl.locale_code || tpl.language_family || "").toLowerCase();
-        if (langProbe) {
-          const family = langProbe.startsWith("en") ? "en" : "es";
-          if (family !== (selectedLanguage === "en" ? "en" : "es")) return false;
-        }
+        if (!langProbe) return false;
+        const family = langProbe.startsWith("en") ? "en" : "es";
+        if (family !== (selectedLanguage === "en" ? "en" : "es")) return false;
         return true;
       })
       .map((tpl) => {

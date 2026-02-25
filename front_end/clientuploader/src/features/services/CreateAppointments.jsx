@@ -98,6 +98,13 @@ export default function CreateAppointment({ disabled = false }) {
     invalidTime: isEs ? "Horario inválido." : "Invalid time.",
     templateLanguageInUseLabel: isEs ? "Idioma de templates en uso" : "Template language in use",
     templateLanguageManagedInTemplates: isEs ? "Se configura en Templates" : "Managed in Templates",
+    templateCoverageWarningTitle: isEs ? "Faltan templates para el idioma activo" : "Missing templates for active language",
+    templateCoverageWarningIntro: isEs
+      ? "Algunos mensajes no se enviarán porque no hay template configurado en este idioma:"
+      : "Some messages will not be sent because no template is configured in this language:",
+    templateCoverageRemindersOnlyIfEnabled: isEs
+      ? "Los recordatorios aplican solo si activas reminders."
+      : "Reminders apply only if reminders are enabled.",
   };
   const [sessionId] = useState(() => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -208,12 +215,10 @@ export default function CreateAppointment({ disabled = false }) {
       setTemplatesLoading(true);
       try {
         const res = await authFetch(
-          `${API_BASE_URL}/message_templates?client_id=${clientId}&type=appointment_reminder`
+          `${API_BASE_URL}/message_templates?client_id=${clientId}`
         );
         const data = await res.json();
-        const filtered = (Array.isArray(data) ? data : []).filter(
-          (tpl) => tpl?.type === "appointment_reminder" && isTemplateActive(tpl)
-        );
+        const filtered = (Array.isArray(data) ? data : []).filter((tpl) => isTemplateActive(tpl));
         setTemplates(filtered);
       } catch (err) {
         console.error(t("templates_load_failed"), err);
@@ -602,7 +607,7 @@ export default function CreateAppointment({ disabled = false }) {
 
   const matchesConfiguredTemplateLanguage = (tpl) => {
     const probe = String(tpl?.meta_language || tpl?.locale_code || tpl?.language_family || "").toLowerCase();
-    if (!probe) return true;
+    if (!probe) return false;
     const family = probe.startsWith("en") ? "en" : "es";
     return family === (appointmentsTemplateLanguage === "en" ? "en" : "es");
   };
@@ -618,6 +623,9 @@ export default function CreateAppointment({ disabled = false }) {
     (tpl) => isSelectableWhatsAppTemplate(tpl) && matchesConfiguredTemplateLanguage(tpl)
   );
   const appointmentTemplateLanguageLabel = appointmentsTemplateLanguage === "en" ? "English" : "Español";
+  const templatesForActiveLanguage = templates.filter(
+    (tpl) => isTemplateActive(tpl) && matchesConfiguredTemplateLanguage(tpl)
+  );
 
   /* =========================
      Derived validation (SAFE)
@@ -630,6 +638,53 @@ export default function CreateAppointment({ disabled = false }) {
   const hasValidPhone = hasPhone && phoneValid;
 
   const canEnableReminder = hasValidEmail || hasValidPhone;
+
+  const hasEmailTemplateCoverage = (templateType, { requireFrequency = false } = {}) =>
+    templatesForActiveLanguage.some((tpl) => {
+      if (tpl?.channel !== "email" || tpl?.type !== templateType) return false;
+      if (!String(tpl?.body || "").trim()) return false;
+      if (requireFrequency && !tpl?.frequency) return false;
+      return true;
+    });
+
+  const hasWhatsappTemplateCoverage = (templateType, { requireFrequency = false } = {}) =>
+    templatesForActiveLanguage.some((tpl) => {
+      if (tpl?.channel !== "whatsapp" || tpl?.type !== templateType) return false;
+      if (!isSelectableWhatsAppTemplate(tpl)) return false;
+      if (requireFrequency && !tpl?.frequency) return false;
+      return true;
+    });
+
+  const templateCoverageWarnings = useMemo(() => {
+    const warnings = [];
+    if (hasValidPhone && !hasWhatsappTemplateCoverage("appointment_confirmation")) {
+      warnings.push(isEs ? "WhatsApp confirmation (appointment_confirmation)" : "WhatsApp confirmation (appointment_confirmation)");
+    }
+    if (hasValidEmail && !hasEmailTemplateCoverage("appointment_confirmation")) {
+      warnings.push(isEs ? "Email confirmation (appointment_confirmation)" : "Email confirmation (appointment_confirmation)");
+    }
+    if (enableReminder && reminderWhatsApp && !hasWhatsappTemplateCoverage("appointment_reminder", { requireFrequency: true })) {
+      warnings.push(isEs ? "WhatsApp reminder (appointment_reminder)" : "WhatsApp reminder (appointment_reminder)");
+    }
+    if (enableReminder && reminderEmail && !hasEmailTemplateCoverage("appointment_reminder", { requireFrequency: true })) {
+      warnings.push(isEs ? "Email reminder (appointment_reminder)" : "Email reminder (appointment_reminder)");
+    }
+    if (hasValidPhone && !hasWhatsappTemplateCoverage("appointment_cancellation")) {
+      warnings.push(isEs ? "WhatsApp cancellation (appointment_cancellation)" : "WhatsApp cancellation (appointment_cancellation)");
+    }
+    if (hasValidEmail && !hasEmailTemplateCoverage("appointment_cancellation")) {
+      warnings.push(isEs ? "Email cancellation (appointment_cancellation)" : "Email cancellation (appointment_cancellation)");
+    }
+    return warnings;
+  }, [
+    enableReminder,
+    hasValidEmail,
+    hasValidPhone,
+    isEs,
+    reminderEmail,
+    reminderWhatsApp,
+    templatesForActiveLanguage,
+  ]);
 
   const canSubmit =
     normalizeAppointmentName(form.user_name) &&
@@ -1181,6 +1236,37 @@ export default function CreateAppointment({ disabled = false }) {
               <strong>{ui.templateLanguageInUseLabel}:</strong> {appointmentTemplateLanguageLabel}
               <span style={{ marginLeft: 8, color: "#667085" }}>({ui.templateLanguageManagedInTemplates})</span>
             </div>
+
+            {templateCoverageWarnings.length > 0 && (
+              <div
+                style={{
+                  marginTop: "0.5rem",
+                  marginBottom: "0.25rem",
+                  padding: "0.8rem",
+                  borderRadius: 10,
+                  border: "1px solid #F5D7A8",
+                  backgroundColor: "#FFF7EA",
+                  color: "#7A4D00",
+                }}
+              >
+                <p style={{ margin: 0, fontWeight: 700 }}>{ui.templateCoverageWarningTitle}</p>
+                <p style={{ marginTop: "0.35rem", marginBottom: "0.35rem", fontSize: "0.86rem" }}>
+                  {ui.templateCoverageWarningIntro}
+                </p>
+                <ul style={{ margin: "0.2rem 0 0 1rem", padding: 0 }}>
+                  {templateCoverageWarnings.map((item) => (
+                    <li key={item} style={{ fontSize: "0.84rem", lineHeight: 1.35 }}>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                {(reminderEmail || reminderWhatsApp) && (
+                  <p style={{ marginTop: "0.45rem", marginBottom: 0, fontSize: "0.8rem", color: "#946200" }}>
+                    {ui.templateCoverageRemindersOnlyIfEnabled}
+                  </p>
+                )}
+              </div>
+            )}
 
 
             {/* 🔔 REMINDERS */}

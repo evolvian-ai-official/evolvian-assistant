@@ -76,6 +76,8 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [hasConsent, setHasConsent] = useState(false);
   const [consentChecked, setConsentChecked] = useState(false);
   const [clientSettings, setClientSettings] = useState({});
+  const effectiveLang =
+    String(clientSettings?.language || lang || "es").toLowerCase() === "en" ? "en" : "es";
 
   // =============================
   // ⚡️ Nuevos estados visuales
@@ -1253,7 +1255,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={wt("type_message", lang === "en" ? "Type your question..." : "Escribe tu consulta...")}
+              placeholder={wt("type_message", effectiveLang === "en" ? "Type your question..." : "Escribe tu consulta...")}
               style={{
                 ...styles.textarea,
                 ...(isMobileLayout ? styles.textareaMobile : null),
@@ -1284,10 +1286,10 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               disabled={sending || usageLimitReached}
             >
               {usageLimitReached
-                ? t("limit_button") || "Limit reached"
+                ? wt("limit_button", effectiveLang === "en" ? "Limit reached" : "Límite alcanzado")
                 : sending
-                ? `${t("thinking") || "Thinking"}${thinkingDots}`
-                : t("send") || "Send"}
+                ? `${wt("thinking", effectiveLang === "en" ? "Thinking" : "Pensando")}${thinkingDots}`
+                : wt("send", effectiveLang === "en" ? "Send" : "Enviar")}
             </button>
           </div>
         )}
@@ -1301,7 +1303,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               background: withAlpha(theme.backgroundColor, 0.72),
             }}
           >
-            Powered by <strong>Evolvian</strong> — evolvianai.com
+            {wt("widget_preview_powered_by", effectiveLang === "en" ? "Powered by" : "Impulsado por")} <strong>Evolvian</strong> — evolvianai.com
           </div>
         )}
 
@@ -1314,7 +1316,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 rel="noopener noreferrer"
                 style={{ ...styles.legalLink, color: aura.mutedText }}
               >
-                {t("terms") || "Terms & Conditions"}
+                {wt("widget_preview_terms", effectiveLang === "en" ? "Terms" : "Términos")}
               </a>
             )}
 
@@ -1327,7 +1329,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                   rel="noopener noreferrer"
                   style={{ ...styles.legalLink, color: aura.mutedText }}
                 >
-                  {t("privacy") || "Privacy Policy"}
+                  {wt("widget_preview_privacy", effectiveLang === "en" ? "Privacy" : "Privacidad")}
                 </a>
               </>
             )}
