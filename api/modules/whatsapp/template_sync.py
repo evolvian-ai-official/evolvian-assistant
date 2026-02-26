@@ -1033,8 +1033,131 @@ def _ensure_whatsapp_template_binding(
             .insert(insert_payload)
             .execute()
         )
+        return
     except Exception:
         logger.exception("❌ Failed creating WhatsApp message template binding")
+
+    # Fallback for legacy schemas/rows where a uniqueness constraint blocks inserts.
+    # Reuse an existing slot for same client+type+language and bind it to the canonical template.
+    try:
+        reusable_candidates = (
+            supabase
+            .table("message_templates")
+            .select("id, meta_template_id, language_family, locale_code, frequency, is_active")
+            .eq("client_id", client_id)
+            .eq("channel", "whatsapp")
+            .eq("type", template_type)
+            .limit(20)
+            .execute()
+        )
+        rows = reusable_candidates.data or []
+        target_family, target_locale = normalize_language_preferences(locale_code=language)
+
+        def _row_score(row: dict) -> tuple[int, int, int]:
+            row_meta = bool(row.get("meta_template_id"))
+            row_family = str(row.get("language_family") or "").strip().lower()
+            row_locale = str(row.get("locale_code") or "").strip().lower()
+            same_family = row_family == target_family
+            same_locale = row_locale == str(target_locale or "").lower()
+            # Prefer rows without canonical binding, then same locale/family.
+            return (
+                0 if not row_meta else 1,
+                0 if same_locale else (1 if same_family else 2),
+                0 if row.get("is_active") else 1,
+            )
+
+        if rows:
+            rows = sorted(rows, key=_row_score)
+            candidate = rows[0]
+            existing_frequency = candidate.get("frequency")
+            update_payload = {
+                "meta_template_id": meta_template_id,
+                "template_name": canonical_template_name,
+                "label": canonical_template_name,
+                "channel": "whatsapp",
+                "type": template_type,
+                "language_family": target_family,
+                "locale_code": target_locale,
+                "variant_key": "default",
+                "priority": 100 if preferred_active else 0,
+                "is_default_for_language": bool(preferred_active and meta_status_active),
+                "is_active": bool(meta_status_active),
+                "frequency": (
+                    existing_frequency
+                    if template_type == "appointment_reminder" and existing_frequency
+                    else (frequency if preferred_active else None)
+                ),
+                "updated_at": _utcnow_iso(),
+            }
+            (
+                supabase
+                .table("message_templates")
+                .update(update_payload)
+                .eq("id", candidate["id"])
+                .execute()
+            )
+    except Exception:
+        logger.exception(
+            "❌ Fallback reuse failed for WhatsApp message template binding | client_id=%s | type=%s | language=%s",
+            client_id,
+            template_type,
+            language,
+        )
+
+
+def _reconcile_whatsapp_message_bindings_from_sync_rows(*, client_id: str) -> None:
+    """
+    Ensure local message_templates bindings stay aligned with client_whatsapp_templates statuses.
+    This is used after refresh_status so "Meta ready" and "Appointments ready" don't drift.
+    """
+    try:
+        rows_res = (
+            supabase
+            .table("client_whatsapp_templates")
+            .select("meta_template_id, canonical_template_name, template_type, language, status, is_active")
+            .eq("client_id", client_id)
+            .execute()
+        )
+    except Exception:
+        logger.exception("❌ Failed loading client_whatsapp_templates for binding reconciliation | client_id=%s", client_id)
+        return
+
+    rows = rows_res.data or []
+    if not rows:
+        return
+
+    preferred_meta_by_type_language: dict[tuple[str, str], str] = {}
+    for row in _load_canonical_templates():
+        row_type = str(row.get("type") or "")
+        row_id = str(row.get("id") or "")
+        if not row_type or not row_id:
+            continue
+        row_family, _ = normalize_language_preferences(locale_code=row.get("language"))
+        preferred_meta_by_type_language.setdefault((row_type, row_family), row_id)
+
+    for row in rows:
+        meta_template_id = str(row.get("meta_template_id") or "")
+        template_type = row.get("template_type")
+        language = row.get("language")
+        if not meta_template_id or not template_type:
+            continue
+
+        row_family, _ = normalize_language_preferences(locale_code=language)
+        preferred_active = (
+            preferred_meta_by_type_language.get((str(template_type or ""), row_family))
+            == meta_template_id
+        )
+        meta_status_active = bool(row.get("is_active")) and is_status_active(row.get("status"))
+
+        _ensure_whatsapp_template_binding(
+            client_id=client_id,
+            meta_template_id=meta_template_id,
+            canonical_template_name=str(row.get("canonical_template_name") or ""),
+            template_type=template_type,
+            language=language,
+            meta_status_active=meta_status_active,
+            preferred_active=preferred_active,
+        )
 
 
 def sync_canonical_templates_for_client(
@@ -1270,6 +1393,15 @@ def refresh_client_template_statuses(*, client_id: str) -> dict:
             outcome["inactive"] += 1
         else:
             outcome["pending"] += 1
+
+    try:
+        _reconcile_whatsapp_message_bindings_from_sync_rows(client_id=client_id)
+    except Exception:
+        logger.exception(
+            "❌ Failed post-refresh WhatsApp message_templates reconciliation | client_id=%s",
+            client_id,
+        )
+        outcome["errors"].append("message_template_binding_reconcile_failed")
 
     outcome["success"] = len(outcome["errors"]) == 0
     return outcome

@@ -285,6 +285,39 @@ async def execute_pending_reminders(request: Request):
             if not appointment:
                 raise Exception("Appointment not found")
 
+            # Skip overdue reminders for appointments that already passed.
+            scheduled_time_raw = appointment.get("scheduled_time")
+            if scheduled_time_raw:
+                try:
+                    appointment_dt = datetime.fromisoformat(
+                        str(scheduled_time_raw).replace("Z", "+00:00")
+                    )
+                    if appointment_dt.tzinfo is None:
+                        appointment_dt = appointment_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        appointment_dt = appointment_dt.astimezone(timezone.utc)
+
+                    if appointment_dt <= now:
+                        skipped += 1
+                        logger.info(
+                            "⏭️ REMINDER SKIPPED (appointment already passed) | reminder_id=%s | appointment_id=%s | appointment_time=%s",
+                            reminder_id,
+                            appointment_id,
+                            appointment_dt.isoformat(),
+                        )
+                        supabase.table("appointment_reminders").update({
+                            "status": "cancelled",
+                            "updated_at": now.isoformat(),
+                        }).eq("id", reminder_id).execute()
+                        continue
+                except Exception:
+                    logger.exception(
+                        "⚠️ Failed parsing appointment scheduled_time for reminder skip check | reminder_id=%s | appointment_id=%s | raw=%s",
+                        reminder_id,
+                        appointment_id,
+                        scheduled_time_raw,
+                    )
+
             # -------------------------------------------------
             # 2️⃣ Load Template
             # -------------------------------------------------

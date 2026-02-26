@@ -659,10 +659,24 @@ export default function CreateAppointment({ disabled = false }) {
 
   const activeWhatsAppConfirmationTemplate = pickPreferredTemplate("whatsapp", "appointment_confirmation");
   const activeEmailConfirmationTemplate = pickPreferredTemplate("email", "appointment_confirmation");
+  const reminderWhatsAppTemplateCandidate = pickPreferredTemplate("whatsapp", "appointment_reminder");
+  const reminderEmailTemplateCandidate = pickPreferredTemplate("email", "appointment_reminder");
   const activeReminderWhatsAppTemplate = pickPreferredTemplate("whatsapp", "appointment_reminder", { requireFrequency: true });
   const activeReminderEmailTemplate = pickPreferredTemplate("email", "appointment_reminder", { requireFrequency: true });
   const activeWhatsAppCancellationTemplate = pickPreferredTemplate("whatsapp", "appointment_cancellation");
   const activeEmailCancellationTemplate = pickPreferredTemplate("email", "appointment_cancellation");
+  const whatsappReminderNeedsFrequency = Boolean(
+    reminderWhatsAppTemplateCandidate &&
+      !activeReminderWhatsAppTemplate &&
+      (reminderWhatsAppTemplateCandidate?.needs_frequency === true ||
+        parseTemplateFrequency(reminderWhatsAppTemplateCandidate?.frequency).length === 0)
+  );
+  const emailReminderNeedsFrequency = Boolean(
+    reminderEmailTemplateCandidate &&
+      !activeReminderEmailTemplate &&
+      (reminderEmailTemplateCandidate?.needs_frequency === true ||
+        parseTemplateFrequency(reminderEmailTemplateCandidate?.frequency).length === 0)
+  );
 
   const formatReminderSchedule = (tpl) => {
     const entries = parseTemplateFrequency(tpl?.frequency);
@@ -712,14 +726,16 @@ export default function CreateAppointment({ disabled = false }) {
     {
       key: "wa-reminder",
       title: isEs ? "Reminder por WhatsApp" : "WhatsApp reminder",
-      template: activeReminderWhatsAppTemplate,
+      template: activeReminderWhatsAppTemplate || reminderWhatsAppTemplateCandidate,
       schedule: activeReminderWhatsAppTemplate ? formatReminderSchedule(activeReminderWhatsAppTemplate) : "",
+      needsFrequency: whatsappReminderNeedsFrequency,
     },
     {
       key: "email-reminder",
       title: isEs ? "Reminder por email" : "Email reminder",
-      template: activeReminderEmailTemplate,
+      template: activeReminderEmailTemplate || reminderEmailTemplateCandidate,
       schedule: activeReminderEmailTemplate ? formatReminderSchedule(activeReminderEmailTemplate) : "",
+      needsFrequency: emailReminderNeedsFrequency,
     },
     {
       key: "wa-cancellation",
@@ -764,10 +780,22 @@ export default function CreateAppointment({ disabled = false }) {
       warnings.push(isEs ? "Email confirmation (appointment_confirmation)" : "Email confirmation (appointment_confirmation)");
     }
     if (enableReminder && reminderWhatsApp && !hasWhatsappTemplateCoverage("appointment_reminder", { requireFrequency: true })) {
-      warnings.push(isEs ? "WhatsApp reminder (appointment_reminder)" : "WhatsApp reminder (appointment_reminder)");
+      warnings.push(
+        whatsappReminderNeedsFrequency
+          ? (isEs
+              ? "WhatsApp reminder (appointment_reminder) — falta frecuencia"
+              : "WhatsApp reminder (appointment_reminder) — needs frequency")
+          : "WhatsApp reminder (appointment_reminder)"
+      );
     }
     if (enableReminder && reminderEmail && !hasEmailTemplateCoverage("appointment_reminder", { requireFrequency: true })) {
-      warnings.push(isEs ? "Email reminder (appointment_reminder)" : "Email reminder (appointment_reminder)");
+      warnings.push(
+        emailReminderNeedsFrequency
+          ? (isEs
+              ? "Email reminder (appointment_reminder) — falta frecuencia"
+              : "Email reminder (appointment_reminder) — needs frequency")
+          : "Email reminder (appointment_reminder)"
+      );
     }
     if (hasValidPhone && !hasWhatsappTemplateCoverage("appointment_cancellation")) {
       warnings.push(isEs ? "WhatsApp cancellation (appointment_cancellation)" : "WhatsApp cancellation (appointment_cancellation)");
@@ -782,7 +810,9 @@ export default function CreateAppointment({ disabled = false }) {
     hasValidPhone,
     isEs,
     reminderEmail,
+    emailReminderNeedsFrequency,
     reminderWhatsApp,
+    whatsappReminderNeedsFrequency,
     templatesForActiveLanguage,
   ]);
 
@@ -1399,6 +1429,11 @@ export default function CreateAppointment({ disabled = false }) {
                               {getTemplateDisplayName(tpl)}
                               {badge ? <span style={templateLangChip}>{badge}</span> : null}
                             </p>
+                            {item.needsFrequency ? (
+                              <p style={{ ...templateUsageCardMeta, color: "#A66A00", fontWeight: 600 }}>
+                                {isEs ? "Falta frecuencia de reminder" : "Reminder schedule required"}
+                              </p>
+                            ) : null}
                             {item.schedule ? (
                               <p style={templateUsageCardMeta}>
                                 <strong>{isEs ? "Frecuencia" : "Schedule"}:</strong> {item.schedule}
@@ -1504,6 +1539,13 @@ export default function CreateAppointment({ disabled = false }) {
                         {t("create_appointment_whatsapp_reminder_setup_notice")}
                       </p>
                     )}
+                    {hasValidPhone && !activeReminderWhatsAppTemplate && whatsappReminderNeedsFrequency && (
+                      <p style={{ ...reminderHint, color: "#A66A00" }}>
+                        {isEs
+                          ? "Existe template de WhatsApp, pero falta configurar la frecuencia del reminder en Templates."
+                          : "A WhatsApp template exists, but the reminder schedule is missing in Templates."}
+                      </p>
+                    )}
                   </div>
 
                   {/* Email */}
@@ -1550,7 +1592,11 @@ export default function CreateAppointment({ disabled = false }) {
                     )}
                     {hasValidEmail && !activeReminderEmailTemplate && (
                       <p style={reminderHint}>
-                        {t("create_appointment_no_email_templates_for_reminders")}
+                        {emailReminderNeedsFrequency
+                          ? (isEs
+                              ? "Existe template de email, pero falta configurar la frecuencia del reminder en Templates."
+                              : "An email template exists, but the reminder schedule is missing in Templates.")
+                          : t("create_appointment_no_email_templates_for_reminders")}
                       </p>
                     )}
                   </div>

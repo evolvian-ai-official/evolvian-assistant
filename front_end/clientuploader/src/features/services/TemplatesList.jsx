@@ -43,8 +43,21 @@ const formatLanguageBadge = (value) => {
   return raw.toUpperCase();
 };
 
+const appointmentSetupLabel = ({ isEs, state, needsFrequency = false }) => {
+  if (state === "ready") return isEs ? "Appointments: Listo" : "Appointments: Ready";
+  if (needsFrequency) return isEs ? "Appointments: Falta frecuencia" : "Appointments: Needs frequency";
+  return isEs ? "Appointments: Falta setup" : "Appointments: Needs setup";
+};
+
+const appointmentSetupPalette = ({ state, needsFrequency = false }) => {
+  if (state === "ready") return { bg: "#E9F9EF", color: "#1F8F4D" };
+  if (needsFrequency) return { bg: "#FFF7E8", color: "#A66A00" };
+  return { bg: "#FDEBEC", color: "#B42318" };
+};
+
 export default function TemplatesList({ clientId, refreshKey, selectedLanguage = "es" }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const isEs = lang === "es";
   const API = import.meta.env.VITE_API_URL;
 
   const [configuredTemplates, setConfiguredTemplates] = useState([]);
@@ -60,6 +73,7 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [focusReminderFrequency, setFocusReminderFrequency] = useState(false);
 
   const fetchTemplates = async () => {
     if (!clientId) return;
@@ -141,6 +155,17 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
         pricingCurrency: isWhatsApp ? tpl.pricing_currency || "USD" : null,
         metaParameterCount: tpl.meta_parameter_count,
         languageBadge: formatLanguageBadge(tpl.meta_language || tpl.locale_code || tpl.language_family),
+        needsFrequency: Boolean(tpl.needs_frequency),
+        appointmentSetupState:
+          isWhatsApp
+            ? (
+                normalizeMetaStatus(tpl.whatsapp_template_status) === "ready" &&
+                !!tpl.is_active &&
+                !(tpl.type === "appointment_reminder" && tpl.needs_frequency)
+              ? "ready"
+              : "needs_setup"
+            )
+            : (tpl.is_active ? "ready" : "needs_setup"),
         raw: tpl,
         };
       });
@@ -162,6 +187,8 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
         pricingCurrency: tpl.pricing_currency || "USD",
         metaParameterCount: tpl.parameter_count,
         languageBadge: formatLanguageBadge(tpl.language),
+        needsFrequency: false,
+        appointmentSetupState: "needs_setup",
         raw: tpl,
       }));
 
@@ -205,9 +232,10 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
     });
   }, [allCards, search, channelFilter, typeFilter, activityFilter, metaStatusFilter]);
 
-  const openEditModal = (card) => {
+  const openEditModal = (card, options = {}) => {
     if (!card?.canEdit) return;
     setSelectedTemplate(card.raw);
+    setFocusReminderFrequency(Boolean(options?.focusReminderFrequency));
     setIsModalOpen(true);
   };
 
@@ -352,6 +380,12 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
             const isWhatsApp = card.channel === "whatsapp";
             const statusColors = metaStatusPalette(card.metaStatus);
             const emailStatusActive = card.active;
+            const setupColors = appointmentSetupPalette({
+              state: card.appointmentSetupState,
+              needsFrequency: card.needsFrequency,
+            });
+            const showSetupCta =
+              isWhatsApp && (card.source === "meta_catalog" || card.needsFrequency === true);
 
             return (
               <div
@@ -441,19 +475,38 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
 
                   <div style={{ marginTop: "0.55rem", display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
                     {isWhatsApp ? (
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          fontSize: "0.72rem",
-                          fontWeight: 700,
-                          borderRadius: "999px",
-                          padding: "0.2rem 0.5rem",
-                          backgroundColor: statusColors.bg,
-                          color: statusColors.color,
-                        }}
-                      >
-                        {metaStatusLabel(card.metaStatus, t)}
-                      </span>
+                      <>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            fontSize: "0.72rem",
+                            fontWeight: 700,
+                            borderRadius: "999px",
+                            padding: "0.2rem 0.5rem",
+                            backgroundColor: statusColors.bg,
+                            color: statusColors.color,
+                          }}
+                        >
+                          {metaStatusLabel(card.metaStatus, t)}
+                        </span>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            fontSize: "0.72rem",
+                            fontWeight: 700,
+                            borderRadius: "999px",
+                            padding: "0.2rem 0.5rem",
+                            backgroundColor: setupColors.bg,
+                            color: setupColors.color,
+                          }}
+                        >
+                          {appointmentSetupLabel({
+                            isEs,
+                            state: card.appointmentSetupState,
+                            needsFrequency: card.needsFrequency,
+                          })}
+                        </span>
+                      </>
                     ) : (
                       <span
                         style={{
@@ -502,25 +555,46 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
                   )}
                 </div>
 
-                {card.canEdit ? (
-                  <button
-                    type="button"
-                    onClick={() => openEditModal(card)}
-                    className="ia-button ia-button-ghost"
-                    style={{ marginTop: "0.75rem", width: "100%" }}
-                  >
-                    ✎ {t("edit") || "Edit"}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="ia-button ia-button-ghost"
-                    disabled
-                    style={{ marginTop: "0.75rem", width: "100%", opacity: 0.7, cursor: "not-allowed" }}
-                  >
-                    {t("templates_managed_by_meta_sync")}
-                  </button>
-                )}
+                <div style={{ marginTop: "0.75rem", display: "grid", gap: "0.45rem" }}>
+                  {showSetupCta && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (card.needsFrequency && card.canEdit) {
+                          openEditModal(card, { focusReminderFrequency: true });
+                          return;
+                        }
+                        refreshMetaStatuses();
+                      }}
+                      className="ia-button ia-button-primary"
+                      style={{ width: "100%" }}
+                    >
+                      {card.needsFrequency
+                        ? (isEs ? "Configurar frecuencia" : "Set reminder schedule")
+                        : (isEs ? "Completar setup" : "Complete setup")}
+                    </button>
+                  )}
+
+                  {card.canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(card)}
+                      className="ia-button ia-button-ghost"
+                      style={{ width: "100%" }}
+                    >
+                      ✎ {t("edit") || "Edit"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ia-button ia-button-ghost"
+                      disabled
+                      style={{ width: "100%", opacity: 0.7, cursor: "not-allowed" }}
+                    >
+                      {t("templates_managed_by_meta_sync")}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -532,9 +606,11 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
         mode="edit"
         initialData={selectedTemplate}
         clientId={clientId}
+        focusReminderFrequency={focusReminderFrequency}
         onClose={() => {
           setIsModalOpen(false);
           setSelectedTemplate(null);
+          setFocusReminderFrequency(false);
         }}
         onSuccess={handleTemplateModalSuccess}
       />

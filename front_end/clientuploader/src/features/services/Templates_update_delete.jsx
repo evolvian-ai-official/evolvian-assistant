@@ -101,10 +101,12 @@ export default function TemplatesUpdateDelete({
   isOpen,
   initialData = null,
   clientId,
+  focusReminderFrequency = false,
   onClose,
   onSuccess,
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const isEs = lang === "es";
   const SUBJECT_VARIABLES = SUBJECT_VARIABLE_TOKENS.map((item) => ({
     label: t(item.key),
     token: item.token,
@@ -131,10 +133,14 @@ export default function TemplatesUpdateDelete({
   );
   const subjectInputRef = useRef(null);
   const bodyTextareaRef = useRef(null);
+  const reminderSectionRef = useRef(null);
+  const firstReminderValueRef = useRef(null);
 
   const isWhatsApp = initialData?.channel === "whatsapp";
   const isWidget = initialData?.channel === "widget";
   const isEmail = initialData?.channel === "email";
+  const supportsReminderFrequency =
+    !isWidget && initialData?.type === "appointment_reminder";
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -155,13 +161,30 @@ export default function TemplatesUpdateDelete({
       setBody(initialData.body || "");
     }
 
-    if (initialData.type === "appointment_reminder" && Array.isArray(initialData.frequency)) {
-      setReminders(initialData.frequency.map((f) => fromOffsetMinutes(f.offset_minutes)));
+    if (initialData.type === "appointment_reminder") {
+      if (Array.isArray(initialData.frequency) && initialData.frequency.length > 0) {
+        setReminders(initialData.frequency.map((f) => fromOffsetMinutes(f.offset_minutes)));
+      } else {
+        setReminders([{ value: 1, unit: "hours" }]);
+      }
     }
     setIncludeFooterImage(false);
     setFooterImageFile(null);
     setFooterImageName("");
   }, [initialData]);
+
+  useEffect(() => {
+    if (!isOpen || !supportsReminderFrequency || !focusReminderFrequency) return;
+    const id = requestAnimationFrame(() => {
+      if (reminderSectionRef.current?.scrollIntoView) {
+        reminderSectionRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      if (firstReminderValueRef.current?.focus) {
+        firstReminderValueRef.current.focus();
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [isOpen, supportsReminderFrequency, focusReminderFrequency, initialData?.id]);
 
   if (!isOpen || !initialData) return null;
 
@@ -198,13 +221,12 @@ export default function TemplatesUpdateDelete({
     setError(null);
 
     try {
-      const frequency =
-        isEmail && initialData.type === "appointment_reminder"
-          ? reminders.map((r) => ({
-              offset_minutes: toMinutes(r.value, r.unit),
-              label: buildLabel(r.value, r.unit),
-            }))
-          : null;
+      const frequency = supportsReminderFrequency
+        ? reminders.map((r) => ({
+            offset_minutes: toMinutes(r.value, r.unit),
+            label: buildLabel(r.value, r.unit),
+          }))
+        : null;
 
       const payload = {
         label,
@@ -342,6 +364,25 @@ export default function TemplatesUpdateDelete({
           {t("template_edit_title")}
         </div>
 
+        {focusReminderFrequency && supportsReminderFrequency && (
+          <div
+            style={{
+              marginBottom: "0.8rem",
+              padding: "0.6rem 0.7rem",
+              borderRadius: 10,
+              border: "1px solid #F5D7A8",
+              backgroundColor: "#FFF7EA",
+              color: "#7A4D00",
+              fontSize: "0.86rem",
+              lineHeight: 1.4,
+            }}
+          >
+            {isEs
+              ? "Configura la frecuencia del reminder para habilitar el envío automático en appointments."
+              : "Set the reminder schedule to enable automatic appointment reminder routing."}
+          </div>
+        )}
+
         {error && <div style={{ color: "#D9534F", marginBottom: "0.6rem" }}>{error}</div>}
 
         <div>
@@ -468,8 +509,17 @@ export default function TemplatesUpdateDelete({
           </>
         )}
 
-        {isEmail && initialData.type === "appointment_reminder" && (
-          <>
+        {supportsReminderFrequency && (
+          <div
+            ref={reminderSectionRef}
+            style={{
+              marginTop: "0.6rem",
+              padding: "0.6rem",
+              borderRadius: 10,
+              border: focusReminderFrequency ? "1px solid #F5D7A8" : "1px solid #EDEDED",
+              background: focusReminderFrequency ? "#FFF7EA" : "transparent",
+            }}
+          >
             <div className="ia-form-label">{t("reminders")}</div>
 
             {reminders.map((r, idx) => (
@@ -487,6 +537,7 @@ export default function TemplatesUpdateDelete({
                   min="1"
                   value={r.value}
                   onChange={(e) => updateReminder(idx, "value", e.target.value)}
+                  ref={idx === 0 ? firstReminderValueRef : null}
                   className="ia-form-input"
                   style={{ width: isMobile ? "100%" : "90px" }}
                 />
@@ -516,7 +567,7 @@ export default function TemplatesUpdateDelete({
             <button type="button" onClick={addReminder} className="ia-button ia-button-ghost">
               ➕ {t("add_reminder")}
             </button>
-          </>
+          </div>
         )}
 
         <div

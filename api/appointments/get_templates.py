@@ -62,6 +62,7 @@ class MessageTemplateResponse(BaseModel):
     variant_key: Optional[str] = None
     priority: Optional[int] = None
     is_default_for_language: Optional[bool] = None
+    needs_frequency: Optional[bool] = None
 
     is_meta_template: bool
     template_category: Optional[str] = None
@@ -255,6 +256,11 @@ def get_message_templates(
 
                     label=t.get("label"),
                     frequency=t.get("frequency"),
+                    needs_frequency=(
+                        bool(t.get("is_active", True))
+                        and str(t.get("type") or "") == "appointment_reminder"
+                        and not bool(t.get("frequency"))
+                    ),
                     language_family=resolved_language_family,
                     locale_code=resolved_locale_code,
                     variant_key=t.get("variant_key") or "default",

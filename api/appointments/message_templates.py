@@ -883,6 +883,11 @@ def get_message_templates(
                 "meta_language": meta.get("language") if meta else None,
                 "meta_preview_body": meta.get("preview_body") if meta else None,
                 "frequency": t.get("frequency"),
+                "needs_frequency": (
+                    bool(t.get("is_active", True))
+                    and str(t.get("type") or "") == "appointment_reminder"
+                    and not bool(t.get("frequency"))
+                ),
                 "meta_template_id": t.get("meta_template_id"),
                 "is_meta_template": bool(meta),
                 "template_category": template_category,
