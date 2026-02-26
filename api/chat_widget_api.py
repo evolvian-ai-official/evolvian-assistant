@@ -954,10 +954,22 @@ async def chat_widget(request: Request):
             message,
             channel,
             provider="widget",
+            return_metadata=True,
         )
 
         print("✅ Generated answer:", answer)
-
+        if isinstance(answer, dict):
+            response_payload = {
+                "answer": str(answer.get("answer") or ""),
+                "session_id": session_id,
+                "confidence_score": answer.get("confidence_score"),
+                "handoff_recommended": bool(answer.get("handoff_recommended")),
+                "human_intervention_recommended": bool(answer.get("human_intervention_recommended")),
+                "needs_human": bool(answer.get("needs_human")),
+                "handoff_reason": answer.get("handoff_reason"),
+                "confidence_reason": answer.get("confidence_reason"),
+            }
+            return response_payload
 
         return {"answer": answer, "session_id": session_id}
 

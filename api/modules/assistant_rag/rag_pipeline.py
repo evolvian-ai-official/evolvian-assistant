@@ -6,7 +6,7 @@ BASE5 - Evolvian RAG Final (seguro, flexible y anti-hallucination)
 import os
 import logging
 
-from typing import List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional, Union
 import uuid
 import re
 import unicodedata
@@ -313,9 +313,37 @@ def ask_question(
     disable_rag: bool = False,
     channel: str = "chat",
     provider: str = "internal",
-) -> str:
+    return_metadata: bool = False,
+) -> Union[str, Dict[str, Any]]:
     try:
         session_id = session_id or str(uuid.uuid4())
+
+        def _result(
+            answer_text: str,
+            confidence_score: float = 0.9,
+            handoff_recommended: Optional[bool] = None,
+            handoff_reason: Optional[str] = None,
+            confidence_reason: Optional[str] = None,
+        ) -> Union[str, Dict[str, Any]]:
+            try:
+                confidence = float(confidence_score)
+            except Exception:
+                confidence = 0.5
+            confidence = max(0.0, min(1.0, confidence))
+            if handoff_recommended is None:
+                handoff_recommended = confidence < 0.35
+            if handoff_recommended and not handoff_reason:
+                handoff_reason = "low_confidence"
+            payload: Dict[str, Any] = {
+                "answer": str(answer_text or ""),
+                "confidence_score": confidence,
+                "handoff_recommended": bool(handoff_recommended),
+                "human_intervention_recommended": bool(handoff_recommended),
+                "needs_human": bool(handoff_recommended),
+                "handoff_reason": handoff_reason,
+                "confidence_reason": confidence_reason,
+            }
+            return payload if return_metadata else payload["answer"]
 
         prompt = get_prompt_for_client(client_id)
         temperature = get_temperature_for_client(client_id)
@@ -340,7 +368,12 @@ def ask_question(
 
         question = (last_user_msg["content"] if last_user_msg else "").strip()
         if not question:
-            return "No logré entender tu mensaje ¿Podrías intentarlo de nuevo?"
+            return _result(
+                "No logré entender tu mensaje ¿Podrías intentarlo de nuevo?",
+                confidence_score=0.25,
+                handoff_recommended=False,
+                confidence_reason="empty_or_unparseable_question",
+            )
             
         
 
@@ -377,7 +410,7 @@ def ask_question(
             save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
             save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
-            return answer
+            return _result(answer, confidence_score=0.98, handoff_recommended=False, confidence_reason="greeting")
 
         # =====================================================
         # 🚀 Modo directo (sin RAG)
@@ -406,7 +439,7 @@ Rules:
             save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
             save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
-            return answer
+            return _result(answer, confidence_score=0.8, handoff_recommended=False, confidence_reason="direct_mode")
 
 
 
@@ -426,7 +459,13 @@ Rules:
 
             save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
             save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
-            return fallback_limit
+            return _result(
+                fallback_limit,
+                confidence_score=0.05,
+                handoff_recommended=True,
+                handoff_reason="no_active_documents",
+                confidence_reason="no_active_documents",
+            )
 
 
 
@@ -449,7 +488,13 @@ Rules:
 
             save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
             save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
-            return fallback_limit
+            return _result(
+                fallback_limit,
+                confidence_score=0.05,
+                handoff_recommended=True,
+                handoff_reason="vectorstore_unavailable",
+                confidence_reason="vectorstore_missing",
+            )
 
 
 
@@ -508,7 +553,13 @@ Rules:
         if not retrieved_docs:
             save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
             save_history(client_id, session_id, "assistant", fallback, channel=channel, provider=provider)
-            return fallback
+            return _result(
+                fallback,
+                confidence_score=0.2,
+                handoff_recommended=True,
+                handoff_reason="no_retrieval_match",
+                confidence_reason="retriever_returned_no_docs",
+            )
 
 
         # =====================================================
@@ -592,10 +643,12 @@ Rules:
         logging.info("🧪 RAW ANSWER PREVIEW:")
         logging.info(answer)
 
+        anti_hallucination_fallback = False
         if corpus_lang == turn_lang:
             keywords = [w.lower() for w in context_text.split()[:80]]
             if answer != fallback and not any(k in answer.lower() for k in keywords):
                 answer = fallback
+                anti_hallucination_fallback = True
 
 
         if show_sources and answer != fallback and sources:
@@ -609,17 +662,40 @@ Rules:
         save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
         logging.info(f"✅ Respuesta generada para {client_id}: {answer}")
-        return answer
+        if answer == fallback:
+            return _result(
+                answer,
+                confidence_score=0.15 if anti_hallucination_fallback else 0.22,
+                handoff_recommended=True,
+                handoff_reason="low_confidence",
+                confidence_reason=(
+                    "anti_hallucination_fallback"
+                    if anti_hallucination_fallback
+                    else "rag_fallback_response"
+                ),
+            )
+        return _result(
+            answer,
+            confidence_score=0.82,
+            handoff_recommended=False,
+            confidence_reason="rag_answer_with_retrieval",
+        )
 
     except Exception as e:
         logging.exception(
             f"❌ Error inesperado procesando pregunta para client_id={client_id}: {e}"
         )
 
-        return (
-            "Ups, ocurrió un problema inesperado. Por favor intenta de nuevo."
-            if FALLBACK_BY_LANG.get("es")
-            else "Oops, something went wrong. Please try again."
+        return _result(
+            (
+                "Ups, ocurrió un problema inesperado. Por favor intenta de nuevo."
+                if FALLBACK_BY_LANG.get("es")
+                else "Oops, something went wrong. Please try again."
+            ),
+            confidence_score=0.0,
+            handoff_recommended=True,
+            handoff_reason="processing_error",
+            confidence_reason="rag_pipeline_exception",
         )
 
 # ------------------------------------------------------------------

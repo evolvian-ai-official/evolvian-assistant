@@ -183,6 +183,7 @@ export default function CreateAppointment({ disabled = false }) {
   const [gmailAddress, setGmailAddress] = useState("");
   const [whatsAppMetaConnected, setWhatsAppMetaConnected] = useState(false);
   const [appointmentsTemplateLanguage, setAppointmentsTemplateLanguage] = useState("es");
+  const [templatesUsageExpanded, setTemplatesUsageExpanded] = useState(false);
   const prevEmailValidRef = useRef(false);
 
   useEffect(() => {
@@ -785,6 +786,13 @@ export default function CreateAppointment({ disabled = false }) {
     templatesForActiveLanguage,
   ]);
 
+  useEffect(() => {
+    if (!showModal) return;
+    if (templateCoverageWarnings.length > 0) {
+      setTemplatesUsageExpanded(true);
+    }
+  }, [showModal, templateCoverageWarnings.length]);
+
   const canSubmit =
     normalizeAppointmentName(form.user_name) &&
     form.scheduled_time &&
@@ -945,6 +953,7 @@ export default function CreateAppointment({ disabled = false }) {
     setInlineClientSaveError("");
     setPhoneCountryCode(ownerPhoneCountryCode || "+1");
     setPhoneLocalNumber("");
+    setTemplatesUsageExpanded(false);
   };
 
   /* =========================
@@ -1364,37 +1373,48 @@ export default function CreateAppointment({ disabled = false }) {
             )}
 
             <div style={templateUsagePanel}>
-              <p style={templateUsageTitle}>
-                {isEs ? "Templates activos para este idioma" : "Active templates for this language"}
-              </p>
-              <div style={templateUsageGrid}>
-                {templateUsageCards.map((item) => {
-                  const tpl = item.template;
-                  const badge = getTemplateLanguageBadge(tpl);
-                  return (
-                    <div key={item.key} style={templateUsageCard}>
-                      <p style={templateUsageCardLabel}>{item.title}</p>
-                      {tpl ? (
-                        <>
-                          <p style={templateUsageCardValue}>
-                            {getTemplateDisplayName(tpl)}
-                            {badge ? <span style={templateLangChip}>{badge}</span> : null}
-                          </p>
-                          {item.schedule ? (
-                            <p style={templateUsageCardMeta}>
-                              <strong>{isEs ? "Frecuencia" : "Schedule"}:</strong> {item.schedule}
+              <button
+                type="button"
+                style={templateUsageToggle}
+                onClick={() => setTemplatesUsageExpanded((prev) => !prev)}
+                aria-expanded={templatesUsageExpanded}
+              >
+                <span style={templateUsageToggleLabel}>
+                  {isEs ? "Templates activos para este idioma" : "Active templates for this language"}
+                </span>
+                <span style={templateUsageToggleIcon}>{templatesUsageExpanded ? "▾" : "▸"}</span>
+              </button>
+
+              {templatesUsageExpanded && (
+                <div style={templateUsageGrid}>
+                  {templateUsageCards.map((item) => {
+                    const tpl = item.template;
+                    const badge = getTemplateLanguageBadge(tpl);
+                    return (
+                      <div key={item.key} style={templateUsageCard}>
+                        <p style={templateUsageCardLabel}>{item.title}</p>
+                        {tpl ? (
+                          <>
+                            <p style={templateUsageCardValue}>
+                              {getTemplateDisplayName(tpl)}
+                              {badge ? <span style={templateLangChip}>{badge}</span> : null}
                             </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <p style={{ ...templateUsageCardMeta, color: "#B42318" }}>
-                          {isEs ? "No configurado para este idioma" : "Not configured for this language"}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                            {item.schedule ? (
+                              <p style={templateUsageCardMeta}>
+                                <strong>{isEs ? "Frecuencia" : "Schedule"}:</strong> {item.schedule}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <p style={{ ...templateUsageCardMeta, color: "#B42318" }}>
+                            {isEs ? "No configurado para este idioma" : "Not configured for this language"}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
 
@@ -1736,10 +1756,36 @@ const templateUsageTitle = {
   color: "#274472",
 };
 
+const templateUsageToggle = {
+  width: "100%",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.5rem",
+  backgroundColor: "transparent",
+  border: "none",
+  padding: 0,
+  margin: 0,
+  cursor: "pointer",
+  textAlign: "left",
+};
+
+const templateUsageToggleLabel = {
+  ...templateUsageTitle,
+  margin: 0,
+};
+
+const templateUsageToggleIcon = {
+  color: "#667085",
+  fontSize: "0.95rem",
+  lineHeight: 1,
+};
+
 const templateUsageGrid = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
   gap: "0.55rem",
+  marginTop: "0.6rem",
 };
 
 const templateUsageCard = {

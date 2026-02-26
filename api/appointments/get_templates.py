@@ -163,20 +163,27 @@ def get_message_templates(
             meta = None
 
             if t.get("meta_template_id"):
-
-                meta_res = (
-                    supabase
-                    .table("meta_approved_templates")
-                    .select(
-                        "template_name, parameter_count, language, preview_body"
+                try:
+                    meta_res = (
+                        supabase
+                        .table("meta_approved_templates")
+                        .select(
+                            "template_name, parameter_count, language, preview_body"
+                        )
+                        .eq("id", t["meta_template_id"])
+                        .eq("is_active", True)
+                        .limit(1)
+                        .execute()
                     )
-                    .eq("id", t["meta_template_id"])
-                    .eq("is_active", True)
-                    .single()
-                    .execute()
-                )
-
-                meta = meta_res.data if hasattr(meta_res, "data") else None
+                    rows = meta_res.data if hasattr(meta_res, "data") else []
+                    meta = rows[0] if isinstance(rows, list) and rows else None
+                except Exception:
+                    logger.exception(
+                        "⚠️ Failed resolving canonical meta template row | template_id=%s | meta_template_id=%s",
+                        t.get("id"),
+                        t.get("meta_template_id"),
+                    )
+                    meta = None
 
                 if not meta:
                     logger.warning(

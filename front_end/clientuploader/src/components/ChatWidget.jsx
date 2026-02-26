@@ -17,6 +17,12 @@ const generateSessionId = () => {
 const consentStorageKey = (publicClientId) =>
   `evolvian_widget_consent_token:${publicClientId}`;
 
+const normalizeFeatureKey = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_");
+
 const withAlpha = (color, alpha) => {
   if (!color) return `rgba(17, 24, 39, ${alpha})`;
 
@@ -76,6 +82,20 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [hasConsent, setHasConsent] = useState(false);
   const [consentChecked, setConsentChecked] = useState(false);
   const [clientSettings, setClientSettings] = useState({});
+  const handoffFeatureEnabled = useMemo(() => {
+    const rawPlanFeatures = Array.isArray(clientSettings?.plan?.plan_features)
+      ? clientSettings.plan.plan_features
+      : Array.isArray(clientSettings?.plan_features)
+        ? clientSettings.plan_features
+        : [];
+
+    return rawPlanFeatures.some((f) => {
+      if (typeof f === "string") return normalizeFeatureKey(f) === "handoff";
+      if (!f || typeof f !== "object") return false;
+      if (f.is_active === false) return false;
+      return normalizeFeatureKey(f.feature) === "handoff";
+    });
+  }, [clientSettings]);
   const effectiveLang =
     String(clientSettings?.language || lang || "es").toLowerCase() === "en" ? "en" : "es";
 
@@ -136,6 +156,20 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   const [thinkingDots, setThinkingDots] = useState("");
   const [, setUsageCount] = useState(0);
   const [usageLimitReached, setUsageLimitReached] = useState(false);
+  const [showHumanHandoffPrompt, setShowHumanHandoffPrompt] = useState(false);
+  const [humanHandoffFormOpen, setHumanHandoffFormOpen] = useState(false);
+  const [humanHandoffSubmitted, setHumanHandoffSubmitted] = useState(false);
+  const [humanHandoffSubmitting, setHumanHandoffSubmitting] = useState(false);
+  const [humanHandoffError, setHumanHandoffError] = useState("");
+  const [humanHandoffSuccess, setHumanHandoffSuccess] = useState("");
+  const [humanHandoffTrigger, setHumanHandoffTrigger] = useState("manual_request");
+  const [humanHandoffReason, setHumanHandoffReason] = useState("user_requested_human");
+  const [humanHandoffLastAiMessage, setHumanHandoffLastAiMessage] = useState("");
+  const [humanHandoffName, setHumanHandoffName] = useState("");
+  const [humanHandoffEmail, setHumanHandoffEmail] = useState("");
+  const [humanHandoffPhone, setHumanHandoffPhone] = useState("");
+  const [humanHandoffAcceptedTerms, setHumanHandoffAcceptedTerms] = useState(false);
+  const [humanHandoffAcceptedMarketing, setHumanHandoffAcceptedMarketing] = useState(false);
   const messagesEndRef = useRef(null);
   const openingTemplateInjectedRef = useRef(false);
   const lastSendTriggerAtRef = useRef(0);
@@ -385,9 +419,149 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     return () => clearInterval(interval);
   }, [sending]);
 
+  useEffect(() => {
+    if (hasConsent) {
+      setHumanHandoffAcceptedTerms(true);
+    }
+  }, [hasConsent]);
+
+  useEffect(() => {
+    if (handoffFeatureEnabled) return;
+    setShowHumanHandoffPrompt(false);
+    setHumanHandoffFormOpen(false);
+  }, [handoffFeatureEnabled]);
+
   // =============================
   // 💬 Enviar mensaje
   // =============================
+  const openHumanHandoffPrompt = ({
+    trigger = "manual_request",
+    reason = "user_requested_human",
+    aiMessage = "",
+  } = {}) => {
+    if (!handoffFeatureEnabled) return;
+    setShowHumanHandoffPrompt(true);
+    if (!humanHandoffSubmitted) setHumanHandoffFormOpen(true);
+    setHumanHandoffError("");
+    setHumanHandoffSuccess("");
+    setHumanHandoffTrigger(trigger);
+    setHumanHandoffReason(reason);
+    if (aiMessage) setHumanHandoffLastAiMessage(aiMessage);
+  };
+
+  const submitHumanHandoffRequest = async () => {
+    if (!publicClientId) return;
+    if (!handoffFeatureEnabled) {
+      setHumanHandoffError(
+        wt(
+          "widget_handoff_premium_required",
+          "Human follow-up is available on the Premium plan."
+        )
+      );
+      return;
+    }
+    const userName = humanHandoffName.trim();
+    const email = humanHandoffEmail.trim();
+    const phone = humanHandoffPhone.trim();
+
+    if (!userName) {
+      setHumanHandoffError(wt("widget_handoff_name_required", "Please share your name."));
+      return;
+    }
+    if (!email && !phone) {
+      setHumanHandoffError(
+        wt("widget_handoff_contact_required", "Please share an email or phone number.")
+      );
+      return;
+    }
+    if (!humanHandoffAcceptedTerms) {
+      setHumanHandoffError(
+        wt("widget_handoff_terms_required", "Please accept the terms to request human follow-up.")
+      );
+      return;
+    }
+
+    setHumanHandoffSubmitting(true);
+    setHumanHandoffError("");
+
+    try {
+      const lastUserMessage =
+        [...messages].reverse().find((m) => m?.from === "user")?.text || "";
+      const lastBotMessage =
+        humanHandoffLastAiMessage ||
+        [...messages].reverse().find((m) => m?.from === "bot")?.text ||
+        "";
+
+      let consentToken = null;
+      try {
+        consentToken = localStorage.getItem(consentStorageKey(publicClientId));
+      } catch {
+        consentToken = null;
+      }
+
+      const apiUrl = resolveApiBaseUrl();
+      const res = await fetch(`${apiUrl}/widget/handoff/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          public_client_id: publicClientId,
+          session_id: sessionId || generateSessionId(),
+          channel: "widget",
+          trigger: humanHandoffTrigger || "manual_request",
+          reason: humanHandoffReason || "user_requested_human",
+          user_name: userName,
+          email: email || null,
+          phone: phone || null,
+          accepted_terms: !!humanHandoffAcceptedTerms,
+          accepted_email_marketing: !!humanHandoffAcceptedMarketing,
+          consent_token: consentToken || null,
+          last_user_message: lastUserMessage || null,
+          last_ai_message: lastBotMessage || null,
+          language: effectiveLang,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 403) {
+          throw new Error(
+            wt(
+              "widget_handoff_premium_required",
+              "Human follow-up is available on the Premium plan."
+            )
+          );
+        }
+        throw new Error(data?.detail || `HTTP ${res.status}`);
+      }
+
+      if (data?.consent_token) {
+        try {
+          localStorage.setItem(consentStorageKey(publicClientId), data.consent_token);
+        } catch {
+          // ignore storage failures
+        }
+      }
+
+      if (data?.confirmation_message) {
+        setHumanHandoffSuccess(data.confirmation_message);
+      }
+      if (data?.fallback_message) {
+        const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        setMessages((prev) => [...prev, { from: "bot", text: data.fallback_message, timestamp: now }]);
+      }
+
+      setHumanHandoffSubmitted(true);
+      setHumanHandoffFormOpen(false);
+      setShowHumanHandoffPrompt(true);
+    } catch (err) {
+      setHumanHandoffError(
+        err?.message || wt("widget_handoff_submit_error", "Could not request human follow-up.")
+      );
+    } finally {
+      setHumanHandoffSubmitting(false);
+    }
+  };
+
   const sendMessage = async (overrideText = null) => {
     const outboundText = (overrideText ?? input).trim();
     if (!outboundText || usageLimitReached) return;
@@ -442,6 +616,21 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         if (next >= usageLimit) setUsageLimitReached(true);
         return next;
       });
+
+      if (data?.limit_reached) {
+        setUsageLimitReached(true);
+        openHumanHandoffPrompt({
+          trigger: "usage_limit",
+          reason: "session_limit_reached",
+          aiMessage: botMsg.text,
+        });
+      } else if (data?.needs_human || data?.handoff_recommended || data?.human_intervention_recommended) {
+        openHumanHandoffPrompt({
+          trigger: "ai_handoff_recommended",
+          reason: data?.handoff_reason || "low_confidence",
+          aiMessage: botMsg.text,
+        });
+      }
     } catch (err) {
       console.error("❌ Error al enviar mensaje:", err);
       const fallback = {
@@ -450,6 +639,11 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, fallback]);
+      openHumanHandoffPrompt({
+        trigger: "chat_error",
+        reason: "delivery_error",
+        aiMessage: fallback.text,
+      });
     } finally {
       setSending(false);
     }
@@ -969,6 +1163,245 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
           {usageLimitReached && (
             <div style={{ ...styles.limitNotice, color: theme.buttonColor }}>
               ⚠️ {t("usage_limit_reached") || "Has alcanzado tu límite de mensajes."}
+            </div>
+          )}
+          {activePanel === "chat" &&
+            handoffFeatureEnabled &&
+            renderedMessages.length > 0 &&
+            !showHumanHandoffPrompt &&
+            !humanHandoffSubmitted && (
+            <div
+              style={{
+                marginTop: "0.5rem",
+                border: `1px solid ${aura.softBorder}`,
+                borderRadius: "12px",
+                padding: "0.75rem",
+                background: withAlpha(theme.backgroundColor, 0.82),
+                boxShadow: `0 8px 18px ${withAlpha(theme.headerTextColor, 0.06)}`,
+              }}
+            >
+              <div style={{ fontSize: "0.85rem", color: withAlpha(theme.headerTextColor, 0.82) }}>
+                {wt(
+                  "widget_handoff_cta_copy",
+                  "Need a human agent? Share your contact details and we will follow up as soon as possible."
+                )}
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    openHumanHandoffPrompt({
+                      trigger: "manual_request",
+                      reason: "user_requested_human",
+                    })
+                  }
+                  style={{
+                    border: "none",
+                    borderRadius: "10px",
+                    padding: "0.55rem 0.85rem",
+                    background: theme.buttonColor,
+                    color: theme.buttonTextColor,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {wt("widget_handoff_cta_button", "Request human help")}
+                </button>
+              </div>
+            </div>
+          )}
+          {handoffFeatureEnabled && (showHumanHandoffPrompt || humanHandoffSubmitted) && (
+            <div
+              style={{
+                marginTop: "0.5rem",
+                border: `1px solid ${withAlpha(theme.buttonColor, 0.28)}`,
+                borderRadius: "12px",
+                padding: "0.85rem",
+                background: `linear-gradient(180deg, ${withAlpha(theme.backgroundColor, 0.94)} 0%, ${withAlpha(theme.buttonColor, 0.06)} 100%)`,
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: "0.88rem", color: theme.headerTextColor }}>
+                {wt("widget_handoff_title", "Human intervention")}
+              </div>
+              <div
+                style={{
+                  marginTop: "0.35rem",
+                  fontSize: "0.8rem",
+                  lineHeight: 1.35,
+                  color: withAlpha(theme.headerTextColor, 0.78),
+                }}
+              >
+                {humanHandoffSubmitted
+                  ? humanHandoffSuccess ||
+                    wt(
+                      "widget_handoff_success_default",
+                      "We received your request and a human agent will review it as soon as possible."
+                    )
+                  : wt(
+                      "widget_handoff_form_intro",
+                      "Share your details so we can follow up outside this chat session if needed."
+                    )}
+              </div>
+
+              {!humanHandoffSubmitted && (
+                <>
+                  {!humanHandoffFormOpen && (
+                    <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={() => setHumanHandoffFormOpen(true)}
+                        style={{
+                          border: "none",
+                          borderRadius: "10px",
+                          padding: "0.5rem 0.8rem",
+                          background: theme.buttonColor,
+                          color: theme.buttonTextColor,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {wt("widget_handoff_open_form", "Open form")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowHumanHandoffPrompt(false)}
+                        style={{
+                          borderRadius: "10px",
+                          padding: "0.5rem 0.8rem",
+                          border: `1px solid ${aura.softBorder}`,
+                          background: withAlpha(theme.backgroundColor, 0.8),
+                          color: withAlpha(theme.headerTextColor, 0.84),
+                          cursor: "pointer",
+                        }}
+                      >
+                        {wt("widget_handoff_keep_chatting", "Keep chatting")}
+                      </button>
+                    </div>
+                  )}
+
+                  {humanHandoffFormOpen && (
+                    <div style={{ marginTop: "0.7rem", display: "grid", gap: "0.45rem" }}>
+                      <input
+                        type="text"
+                        placeholder={wt("widget_handoff_name_placeholder", "Your name")}
+                        value={humanHandoffName}
+                        onChange={(e) => setHumanHandoffName(e.target.value)}
+                        style={styles.formInput}
+                      />
+                      <input
+                        type="email"
+                        placeholder={wt("widget_handoff_email_placeholder", "Email (optional if phone)")}
+                        value={humanHandoffEmail}
+                        onChange={(e) => setHumanHandoffEmail(e.target.value)}
+                        style={styles.formInput}
+                      />
+                      <input
+                        type="tel"
+                        placeholder={wt("widget_handoff_phone_placeholder", "Phone (optional if email)")}
+                        value={humanHandoffPhone}
+                        onChange={(e) => setHumanHandoffPhone(e.target.value)}
+                        style={styles.formInput}
+                      />
+
+                      <label
+                        style={{
+                          display: "flex",
+                          gap: "0.45rem",
+                          alignItems: "flex-start",
+                          fontSize: "0.76rem",
+                          color: withAlpha(theme.headerTextColor, 0.82),
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={humanHandoffAcceptedTerms}
+                          onChange={(e) => setHumanHandoffAcceptedTerms(e.target.checked)}
+                          style={{ marginTop: "0.15rem" }}
+                        />
+                        <span>
+                          {wt("widget_handoff_terms_label", "I accept the Terms & Conditions for follow-up.")}
+                          {termsUrl ? (
+                            <>
+                              {" "}
+                              <a
+                                href={termsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ color: theme.buttonColor, textDecoration: "underline" }}
+                              >
+                                {wt("terms", "Terms & Conditions")}
+                              </a>
+                            </>
+                          ) : null}
+                        </span>
+                      </label>
+
+                      <label
+                        style={{
+                          display: "flex",
+                          gap: "0.45rem",
+                          alignItems: "flex-start",
+                          fontSize: "0.76rem",
+                          color: withAlpha(theme.headerTextColor, 0.82),
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={humanHandoffAcceptedMarketing}
+                          onChange={(e) => setHumanHandoffAcceptedMarketing(e.target.checked)}
+                          style={{ marginTop: "0.15rem" }}
+                        />
+                        <span>
+                          {wt(
+                            "widget_handoff_marketing_label",
+                            "I want to receive updates and marketing communications (optional)."
+                          )}
+                        </span>
+                      </label>
+
+                      {humanHandoffError ? (
+                        <div style={{ ...styles.formError, marginTop: "0.2rem" }}>{humanHandoffError}</div>
+                      ) : null}
+
+                      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.2rem" }}>
+                        <button
+                          type="button"
+                          onClick={submitHumanHandoffRequest}
+                          disabled={humanHandoffSubmitting}
+                          style={{
+                            border: "none",
+                            borderRadius: "10px",
+                            padding: "0.55rem 0.85rem",
+                            background: humanHandoffSubmitting ? "#999" : theme.buttonColor,
+                            color: theme.buttonTextColor,
+                            fontWeight: 600,
+                            cursor: humanHandoffSubmitting ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          {humanHandoffSubmitting
+                            ? wt("widget_handoff_submitting", "Sending...")
+                            : wt("widget_handoff_submit", "Request follow-up")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHumanHandoffFormOpen(false)}
+                          disabled={humanHandoffSubmitting}
+                          style={{
+                            borderRadius: "10px",
+                            padding: "0.55rem 0.85rem",
+                            border: `1px solid ${aura.softBorder}`,
+                            background: withAlpha(theme.backgroundColor, 0.8),
+                            color: withAlpha(theme.headerTextColor, 0.84),
+                            cursor: humanHandoffSubmitting ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          {wt("widget_handoff_cancel", "Cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
           <div ref={messagesEndRef} />

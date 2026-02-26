@@ -23,6 +23,7 @@ import PrivateRoutes from "./PrivateRoutes";
 import WidgetPreview from "../pages/WidgetPreview";
 import Terms from "../pages/Terms";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
+import InboxHandoff from "../pages/InboxHandoff";
 
 /* ✅ NUEVO */
 import Templates from "../features/services/Templates";
@@ -53,6 +54,17 @@ export default function AppRouter() {
           <PrivateRoutes>
             <MainLayout>
               <Dashboard />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/inbox-handoff"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <InboxHandoff />
             </MainLayout>
           </PrivateRoutes>
         }

@@ -51,6 +51,11 @@ from api.terms_api import router as terms_router
 from api.clear_new_user_flag import router as clear_new_user_flag_router
 from api.client_profile_api import router as client_profile_router
 from api.client_event_log_api import router as client_event_log_router
+from api.conversation_alerts_api import router as conversation_alerts_router
+from api.conversation_notes_api import router as conversation_notes_router
+from api.conversation_handoffs_api import router as conversation_handoffs_router
+from api.conversation_suggestions_api import router as conversation_suggestions_router
+from api.conversation_send_reply_api import router as conversation_send_reply_router
 from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
@@ -68,6 +73,7 @@ from api.modules.email_integration import disconnect_gmail
 # ✅ Widget Consents
 from api.register_consent import router as register_consent_router
 from api.check_consent import router as check_consent_router
+from api.widget_handoff_api import router as widget_handoff_router
 from api.blog.blog_router import router as blog_router
 
 
@@ -295,6 +301,11 @@ routers = [
     initialize_user_router, client_settings_router, link_whatsapp_router,
     chat_widget_router, check_email_router, dashboard_summary_router,
     user_flags_router, terms_router, client_event_log_router,
+    conversation_alerts_router,
+    conversation_notes_router,
+    conversation_handoffs_router,
+    conversation_suggestions_router,
+    conversation_send_reply_router,
     clear_new_user_flag_router, client_profile_router,
     list_files_router, list_chunks_router, delete_chunks_router,
     embed_router, public_plans_router, public_contact_router, public_privacy_router,
@@ -302,6 +313,7 @@ routers = [
     stripe_router, checkout_router,
     stripe_cancel_router, stripe_change_plan_router,
     reactivate_subscription_router, channels_router, register_consent_router, check_consent_router,
+    widget_handoff_router,
     blog_router,
 
 ]

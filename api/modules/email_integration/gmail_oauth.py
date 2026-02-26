@@ -422,7 +422,13 @@ async def send_reply(payload: dict, request: Request):
             provider_message_id=(result or {}).get("id") if isinstance(result, dict) else None,
         )
         print(f"✅ Correo enviado correctamente. ID: {result.get('id')}")
-        return JSONResponse({"status": "sent", "message_id": result.get("id")})
+        return JSONResponse(
+            {
+                "status": "sent",
+                "message_id": result.get("id"),
+                "thread_id": result.get("threadId"),
+            }
+        )
     except Exception as e:
         complete_email_send_audit(
             client_id=client_id,

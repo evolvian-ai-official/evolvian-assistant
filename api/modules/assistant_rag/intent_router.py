@@ -55,6 +55,30 @@ AGENDA_KEYWORDS = {
 # ============================================================
 def detect_language(text: str) -> str:
     """Detección robusta de idioma (langdetect → heurística)."""
+    t = (text or "").lower()
+
+    # Priorizar señales fuertes en español para evitar falsos "en" en frases cortas.
+    strong_spanish_signals = {
+        "hola",
+        "gracias",
+        "quiero",
+        "necesito",
+        "agendar",
+        "reservar",
+        "cita",
+        "sesión",
+        "sesion",
+        "horario",
+        "disponibilidad",
+        "correo",
+        "estoy",
+        "comparando",
+        "opciones",
+        "incluye",
+    }
+    if any(c in t for c in "áéíóúñ¿¡") or any(w in t for w in strong_spanish_signals):
+        return "es"
+
     try:
         from langdetect import detect
         code = detect(text or "")
@@ -62,7 +86,6 @@ def detect_language(text: str) -> str:
     except Exception:
         pass
 
-    t = (text or "").lower()
     spanish_words = {
         "hola", "gracias", "quiero", "necesito", "por favor", "cómo", "cita",
         "agendar", "reservar", "dónde", "porque", "favor", "ayuda", "plan",
@@ -341,6 +364,7 @@ async def process_user_message(
     message: str,
     channel: str = "chat",
     provider: str = "internal",
+    return_metadata: bool = False,
 ):
     """
     Entrada principal de intents:
@@ -374,6 +398,16 @@ async def process_user_message(
             provider=provider,
             source_type="appointment",
         )
+        if return_metadata:
+            return {
+                "answer": str(route),
+                "confidence_score": 0.95,
+                "handoff_recommended": False,
+                "human_intervention_recommended": False,
+                "needs_human": False,
+                "handoff_reason": None,
+                "confidence_reason": "router_direct_message",
+            }
         return route
 
     # 📅 Flujo de calendario
@@ -399,8 +433,29 @@ async def process_user_message(
                 provider=provider,
                 source_type="appointment",
             )
+            if return_metadata:
+                return {
+                    "answer": str(answer),
+                    "confidence_score": 0.88,
+                    "handoff_recommended": False,
+                    "human_intervention_recommended": False,
+                    "needs_human": False,
+                    "handoff_reason": None,
+                    "confidence_reason": "calendar_handler_response",
+                }
             return answer
-        return "🗓️ It seems you’d like to schedule an appointment, but this feature isn’t available yet."
+        calendar_unavailable = "🗓️ It seems you’d like to schedule an appointment, but this feature isn’t available yet."
+        if return_metadata:
+            return {
+                "answer": calendar_unavailable,
+                "confidence_score": 0.3,
+                "handoff_recommended": True,
+                "human_intervention_recommended": True,
+                "needs_human": True,
+                "handoff_reason": "calendar_handler_unavailable",
+                "confidence_reason": "calendar_feature_unavailable",
+            }
+        return calendar_unavailable
 
     # 💬 Flujo RAG
     print("💬 Routing → RAG")
@@ -411,7 +466,13 @@ async def process_user_message(
         session_id=session_id,
         channel=channel,
         provider=provider,
+        return_metadata=return_metadata,
     )
-    if lang == "es" and answer and not answer.strip().endswith("."):
-        answer += "."
+    if return_metadata and isinstance(answer, dict):
+        text = str(answer.get("answer") or "")
+        if lang == "es" and text and not text.strip().endswith("."):
+            answer["answer"] = text + "."
+        return answer
+    if lang == "es" and answer and not str(answer).strip().endswith("."):
+        answer = str(answer) + "."
     return answer

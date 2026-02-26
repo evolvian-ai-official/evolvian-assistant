@@ -718,25 +718,42 @@ def _load_canonical_templates() -> list[dict]:
             .select("id, template_name, preview_body, language, parameter_count, type, buttons_json")
             .eq("channel", "whatsapp")
             .eq("is_active", True)
+            .eq("provision_enabled", True)
             .order("template_name")
             .execute()
         )
         return response.data or []
     except Exception as exc:
         logger.warning(
-            "⚠️ meta_approved_templates.buttons_json unavailable; using legacy canonical template query | error=%s",
+            "⚠️ meta_approved_templates provision_enabled/buttons_json unavailable; retrying canonical template query without provision_enabled | error=%s",
             exc,
         )
-        response = (
-            supabase
-            .table("meta_approved_templates")
-            .select("id, template_name, preview_body, language, parameter_count, type")
-            .eq("channel", "whatsapp")
-            .eq("is_active", True)
-            .order("template_name")
-            .execute()
-        )
-        return response.data or []
+        try:
+            response = (
+                supabase
+                .table("meta_approved_templates")
+                .select("id, template_name, preview_body, language, parameter_count, type, buttons_json")
+                .eq("channel", "whatsapp")
+                .eq("is_active", True)
+                .order("template_name")
+                .execute()
+            )
+            return response.data or []
+        except Exception as exc_legacy:
+            logger.warning(
+                "⚠️ meta_approved_templates.buttons_json unavailable; using legacy canonical template query | error=%s",
+                exc_legacy,
+            )
+            response = (
+                supabase
+                .table("meta_approved_templates")
+                .select("id, template_name, preview_body, language, parameter_count, type")
+                .eq("channel", "whatsapp")
+                .eq("is_active", True)
+                .order("template_name")
+                .execute()
+            )
+            return response.data or []
 
 
 def _list_meta_templates(*, waba_id: str, wa_token: str) -> dict[str, dict]:

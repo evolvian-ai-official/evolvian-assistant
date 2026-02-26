@@ -20,6 +20,11 @@ import "../components/ui/internal-admin-responsive.css";
 
 export default function Dashboard() {
   const [dashboardData, setDashboardData] = useState(null);
+  const [humanAlertsData, setHumanAlertsData] = useState({ items: [], counts: {}, status_filter: "open" });
+  const [humanAlertsFilter, setHumanAlertsFilter] = useState("open");
+  const [humanAlertsLoading, setHumanAlertsLoading] = useState(false);
+  const [humanAlertsError, setHumanAlertsError] = useState("");
+  const [humanAlertUpdatingId, setHumanAlertUpdatingId] = useState(null);
   const [user, setUser] = useState(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [reactivating, setReactivating] = useState(false);
@@ -56,6 +61,51 @@ export default function Dashboard() {
   useEffect(() => {
     fetchDashboardData();
   }, [clientId]);
+
+  const fetchHumanAlerts = async (statusFilter = humanAlertsFilter) => {
+    if (!clientId) return;
+    setHumanAlertsLoading(true);
+    setHumanAlertsError("");
+    try {
+      const query = new URLSearchParams({
+        client_id: clientId,
+        status: statusFilter || "open",
+        limit: "20",
+      });
+      const res = await authFetch(`${import.meta.env.VITE_API_URL}/conversation_alerts?${query.toString()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Could not load human intervention alerts");
+      }
+      setHumanAlertsData({
+        items: Array.isArray(data?.items) ? data.items : [],
+        counts: data?.counts || {},
+        status_filter: data?.status_filter || (statusFilter || "open"),
+      });
+    } catch (err) {
+      setHumanAlertsError(err?.message || "Could not load human intervention alerts");
+    } finally {
+      setHumanAlertsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!clientId) return;
+    const handoffEnabled = Array.isArray(dashboardData?.plan?.plan_features)
+      && dashboardData.plan.plan_features.some((f) => {
+        if (typeof f === "string") return String(f).toLowerCase() === "handoff";
+        if (!f || typeof f !== "object") return false;
+        if (f.is_active === false) return false;
+        return String(f.feature || "").toLowerCase() === "handoff";
+      });
+    if (!handoffEnabled) {
+      setHumanAlertsData({ items: [], counts: {}, status_filter: humanAlertsFilter || "open" });
+      setHumanAlertsError("");
+      setHumanAlertsLoading(false);
+      return;
+    }
+    fetchHumanAlerts(humanAlertsFilter);
+  }, [clientId, humanAlertsFilter, dashboardData]);
 
   useEffect(() => {
     if (!clientId) return;
@@ -172,7 +222,10 @@ export default function Dashboard() {
   const hasEmailFeature = activeFeatures.includes("email_support");
   const hasCalendarFeature = activeFeatures.includes("calendar_sync");
   const hasTemplatesFeature = activeFeatures.includes("templates");
+  const hasHandoffFeature = activeFeatures.includes("handoff");
   const isFreeOrStarter = ["free", "starter"].includes((plan?.id || "").toLowerCase());
+  const humanAlerts = humanAlertsData?.items || [];
+  const humanAlertCounts = humanAlertsData?.counts || {};
   const calendarConnected = Boolean(onboarding_signals?.calendar_connected);
   const templatesActiveCount = Number(onboarding_signals?.templates_active_count || 0);
   const appointmentsCount = Number(onboarding_signals?.appointments_count || 0);
@@ -458,6 +511,27 @@ export default function Dashboard() {
     }
   };
 
+  const updateHumanAlertStatus = async (alertId, status) => {
+    if (!clientId || !alertId) return;
+    try {
+      setHumanAlertUpdatingId(alertId);
+      const res = await authFetch(`${import.meta.env.VITE_API_URL}/conversation_alerts/${alertId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, status }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Could not update alert");
+      }
+      await fetchHumanAlerts(humanAlertsFilter);
+    } catch (err) {
+      setHumanAlertsError(err?.message || "Could not update alert");
+    } finally {
+      setHumanAlertUpdatingId(null);
+    }
+  };
+
   return (
     <div className="ia-page">
       <div className="ia-shell">
@@ -614,6 +688,231 @@ export default function Dashboard() {
             >
               {onboardingCopy.allDone}
             </div>
+          )}
+        </section>
+
+        <section className="ia-card">
+          <h2 className="ia-card-title">
+            {lang === "es" ? "Alertas de intervención humana" : "Human intervention alerts"}
+          </h2>
+          <p className="ia-dashboard-subtext" style={{ marginTop: "-0.2rem", marginBottom: "0.8rem" }}>
+            {lang === "es"
+              ? "Conversaciones que requieren revisión del equipo humano."
+              : "Conversations that require human team review."}
+          </p>
+
+          {!hasHandoffFeature ? (
+            <div
+              style={{
+                border: "1px solid #F3D28E",
+                background: "#FFF8EB",
+                color: "#7A5900",
+                borderRadius: "12px",
+                padding: "0.85rem",
+              }}
+            >
+              <strong style={{ display: "block", marginBottom: "0.35rem" }}>
+                {lang === "es" ? "Disponible en Premium" : "Available on Premium"}
+              </strong>
+              <span>
+                {lang === "es"
+                  ? "Activa Inbox / Handoff para escalar conversaciones a agentes humanos, gestionar alertas y responder por email o WhatsApp."
+                  : "Enable Inbox / Handoff to escalate conversations to human agents, manage alerts, and reply via email or WhatsApp."}
+              </span>
+            </div>
+          ) : (
+            <>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.9rem" }}>
+            {[
+              { id: "open", label: lang === "es" ? "Abiertas" : "Open" },
+              { id: "acknowledged", label: lang === "es" ? "En revisión" : "Acknowledged" },
+              { id: "resolved", label: lang === "es" ? "Resueltas" : "Resolved" },
+              { id: "all", label: lang === "es" ? "Todas" : "All" },
+            ].map((opt) => {
+              const active = humanAlertsFilter === opt.id;
+              const countValue =
+                opt.id === "all"
+                  ? (humanAlertCounts.open || 0) + (humanAlertCounts.acknowledged || 0) + (humanAlertCounts.resolved || 0)
+                  : (humanAlertCounts[opt.id] ?? null);
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setHumanAlertsFilter(opt.id)}
+                  className="ia-button"
+                  style={{
+                    padding: "0.45rem 0.7rem",
+                    borderRadius: "999px",
+                    border: active ? "1px solid #2EB39A" : "1px solid #EDEDED",
+                    background: active ? "#ECFAF5" : "#FFFFFF",
+                    color: active ? "#1F7C67" : "#274472",
+                    fontWeight: 600,
+                  }}
+                >
+                  {opt.label}
+                  {countValue !== null ? ` (${countValue})` : ""}
+                </button>
+              );
+            })}
+          </div>
+
+          {humanAlertsError ? (
+            <div
+              style={{
+                marginBottom: "0.8rem",
+                padding: "0.65rem 0.8rem",
+                borderRadius: "10px",
+                border: "1px solid #F1B8B8",
+                background: "#FFF6F6",
+                color: "#9F2D2D",
+              }}
+            >
+              {humanAlertsError}
+            </div>
+          ) : null}
+
+          {humanAlertsLoading ? (
+            <p>{lang === "es" ? "Cargando alertas..." : "Loading alerts..."}</p>
+          ) : humanAlerts.length === 0 ? (
+            <p>{lang === "es" ? "No hay alertas para este filtro." : "No alerts for this filter."}</p>
+          ) : (
+            <div style={{ display: "grid", gap: "0.75rem" }}>
+              {humanAlerts.map((alert) => {
+                const handoff = alert?.handoff || {};
+                const contactLine =
+                  handoff.contact_name ||
+                  handoff.contact_email ||
+                  handoff.contact_phone ||
+                  null;
+                const isUpdating = humanAlertUpdatingId === alert.id;
+                const currentStatus = String(alert.status || "").toLowerCase();
+                return (
+                  <div
+                    key={alert.id}
+                    style={{
+                      border: "1px solid #EDEDED",
+                      borderRadius: "12px",
+                      padding: "0.85rem",
+                      background: "#FFFFFF",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: "0.75rem",
+                        alignItems: "flex-start",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "0.45rem",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            marginBottom: "0.25rem",
+                          }}
+                        >
+                          <strong style={{ color: "#274472" }}>
+                            {alert.title || (lang === "es" ? "Intervención humana" : "Human intervention")}
+                          </strong>
+                          <span
+                            style={{
+                              fontSize: "0.72rem",
+                              lineHeight: 1,
+                              padding: "0.2rem 0.45rem",
+                              borderRadius: "999px",
+                              background: "#F5F8FC",
+                              border: "1px solid #DCE7F5",
+                              color: "#274472",
+                              fontWeight: 700,
+                            }}
+                          >
+                            {currentStatus}
+                          </span>
+                          {handoff.channel ? (
+                            <span
+                              style={{
+                                fontSize: "0.72rem",
+                                lineHeight: 1,
+                                padding: "0.2rem 0.45rem",
+                                borderRadius: "999px",
+                                background: "#FFF7E8",
+                                border: "1px solid #F6D58A",
+                                color: "#8A6400",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {handoff.channel}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="ia-dashboard-subtext ia-break-anywhere" style={{ margin: 0 }}>
+                          {alert.body || handoff.last_user_message || (lang === "es" ? "Sin mensaje" : "No message")}
+                        </p>
+                        {contactLine ? (
+                          <p className="ia-dashboard-subtext ia-break-anywhere" style={{ margin: "0.35rem 0 0" }}>
+                            {lang === "es" ? "Contacto" : "Contact"}:{" "}
+                            <strong style={{ color: "#274472" }}>{contactLine}</strong>
+                          </p>
+                        ) : null}
+                        {(handoff.contact_email || handoff.contact_phone) && (
+                          <p className="ia-dashboard-subtext ia-break-anywhere" style={{ margin: "0.2rem 0 0" }}>
+                            {[handoff.contact_email, handoff.contact_phone].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                        {(handoff.reason || alert.created_at) && (
+                          <p className="ia-dashboard-subtext" style={{ margin: "0.2rem 0 0" }}>
+                            {handoff.reason ? `${handoff.reason}` : ""}
+                            {handoff.reason && alert.created_at ? " · " : ""}
+                            {alert.created_at ? new Date(alert.created_at).toLocaleString() : ""}
+                          </p>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                        {currentStatus !== "acknowledged" && currentStatus !== "resolved" && (
+                          <button
+                            type="button"
+                            className="ia-button"
+                            disabled={isUpdating}
+                            onClick={() => updateHumanAlertStatus(alert.id, "acknowledged")}
+                            style={{
+                              border: "1px solid #DCE7F5",
+                              background: "#F5F8FC",
+                              color: "#274472",
+                              borderRadius: "9px",
+                              padding: "0.45rem 0.65rem",
+                            }}
+                          >
+                            {isUpdating
+                              ? (lang === "es" ? "Guardando..." : "Saving...")
+                              : (lang === "es" ? "Marcar en revisión" : "Acknowledge")}
+                          </button>
+                        )}
+                        {currentStatus !== "resolved" && (
+                          <button
+                            type="button"
+                            className="ia-button ia-button-primary"
+                            disabled={isUpdating}
+                            onClick={() => updateHumanAlertStatus(alert.id, "resolved")}
+                            style={{ borderRadius: "9px", padding: "0.45rem 0.65rem" }}
+                          >
+                            {isUpdating
+                              ? (lang === "es" ? "Guardando..." : "Saving...")
+                              : (lang === "es" ? "Resolver" : "Resolve")}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+            </>
           )}
         </section>
 

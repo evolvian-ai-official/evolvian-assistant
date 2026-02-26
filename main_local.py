@@ -44,9 +44,15 @@ from api.check_email_exists import router as check_email_router
 from api.dashboard_summary import router as dashboard_summary_router
 from api.user_flags import router as user_flags_router
 from api.widget_consents_api import router as widget_consents_router
+from api.widget_handoff_api import router as widget_handoff_router
 from api.terms_api import router as terms_router
 from api.clear_new_user_flag import router as clear_new_user_flag_router
 from api.client_profile_api import router as client_profile_router
+from api.conversation_alerts_api import router as conversation_alerts_router
+from api.conversation_notes_api import router as conversation_notes_router
+from api.conversation_handoffs_api import router as conversation_handoffs_router
+from api.conversation_suggestions_api import router as conversation_suggestions_router
+from api.conversation_send_reply_api import router as conversation_send_reply_router
 from api.list_files_api import router as list_files_router
 from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
@@ -105,9 +111,15 @@ app.include_router(check_email_router, prefix="/api")
 app.include_router(dashboard_summary_router, prefix="/api")
 app.include_router(user_flags_router, prefix="/api")
 app.include_router(widget_consents_router, prefix="/api")
+app.include_router(widget_handoff_router, prefix="/api")
 app.include_router(terms_router, prefix="/api")
 app.include_router(clear_new_user_flag_router, prefix="/api")
 app.include_router(client_profile_router, prefix="/api")
+app.include_router(conversation_alerts_router, prefix="/api")
+app.include_router(conversation_notes_router, prefix="/api")
+app.include_router(conversation_handoffs_router, prefix="/api")
+app.include_router(conversation_suggestions_router, prefix="/api")
+app.include_router(conversation_send_reply_router, prefix="/api")
 app.include_router(list_files_router, prefix="/api")
 app.include_router(list_chunks_router, prefix="/api")
 app.include_router(delete_chunks_router, prefix="/api")

@@ -1,0 +1,39 @@
+name: Direct Scheduling Guardrails
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  direct-scheduling-guardrails:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+      OPENAI_API_KEY: sk-test
+      STRIPE_SECRET_KEY: sk_test_dummy
+      META_WHATSAPP_VERIFY_TOKEN: test-verify-token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run direct scheduling guardrail tests
+        run: |
+          PYTHONPATH=. pytest -q tests/test_direct_scheduling_user_flows.py

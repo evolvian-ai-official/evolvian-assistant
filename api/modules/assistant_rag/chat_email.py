@@ -3,7 +3,7 @@ import logging
 import uuid
 from pydantic import BaseModel
 from api.modules.assistant_rag.supabase_client import supabase, save_history
-from api.modules.assistant_rag.rag_pipeline import ask_question
+from api.modules.assistant_rag.intent_router import process_user_message
 from api.utils.usage_limiter import check_and_increment_usage
 from api.internal_auth import require_internal_request
 
@@ -125,16 +125,16 @@ async def process_chat_email_payload(body: dict) -> dict:
     # Añadir mensaje actual
     history_messages.append({"role": "user", "content": message})
 
-    # 🔥 Ejecutar pipeline RAG
+    # 🔥 Ejecutar router de intents (agenda + RAG)
     logging.info(f"📜 Contenido: {message}")
-    answer = ask_question(
-        history_messages,
-        client_id,
+    answer = await process_user_message(
+        client_id=client_id,
         session_id=session_id,
+        message=message,
         channel=channel,
         provider=provider,
     )
-    logging.info(f"✅ Respuesta generada correctamente desde el RAG.")
+    logging.info("✅ Respuesta generada correctamente desde el router de intents.")
 
     # Responder
     return {

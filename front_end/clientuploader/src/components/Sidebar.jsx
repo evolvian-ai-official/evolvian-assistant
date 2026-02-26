@@ -5,11 +5,70 @@ import { supabase } from "../lib/supabaseClient";
 import { authFetch } from "../lib/authFetch";
 import { useLanguage } from "../contexts/LanguageContext";
 
+const PLAN_ORDER = { free: 0, starter: 1, premium: 2, white_label: 3 };
+
+const normalizeFeature = (str) =>
+  String(str || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_");
+
+const normalizePlanId = (str) => {
+  const value = String(str || "free").toLowerCase().trim();
+  return value === "enterprise" ? "white_label" : (value || "free");
+};
+
+const featureMinPlanFromAvailablePlans = (availablePlans, featureKey) => {
+  const key = normalizeFeature(featureKey);
+  let winner = null;
+  for (const planRow of Array.isArray(availablePlans) ? availablePlans : []) {
+    const planId = normalizePlanId(planRow?.id);
+    const rawFeatures = Array.isArray(planRow?.plan_features) ? planRow.plan_features : [];
+    const active = rawFeatures.some((f) => {
+      if (typeof f === "string") return normalizeFeature(f) === key;
+      return f && typeof f === "object" && f.is_active !== false && normalizeFeature(f.feature) === key;
+    });
+    if (!active) continue;
+    if (!winner || (PLAN_ORDER[planId] ?? 99) < (PLAN_ORDER[winner] ?? 99)) {
+      winner = planId;
+    }
+  }
+  return winner;
+};
+
+const marketingCopyById = (id, isEs, requiredPlanLabel) => {
+  const tier = requiredPlanLabel || (isEs ? "un plan superior" : "a higher plan");
+  const map = {
+    "inbox-handoff": isEs
+      ? `Convierte conversaciones perdidas en ventas y soporte resuelto: IA + agente humano, alertas, notas y seguimiento desde un solo inbox. Disponible en ${tier}.`
+      : `Turn unresolved chats into resolved support and revenue: AI + human agent handoff, alerts, notes, and follow-up in one inbox. Available on ${tier}.`,
+    "/services/whatsapp": isEs
+      ? `Responde clientes donde realmente te escriben. WhatsApp centraliza atención y acelera cierre de ventas. Disponible en ${tier}.`
+      : `Reply where customers actually message you. WhatsApp support centralizes conversations and speeds up conversions. Available on ${tier}.`,
+    "/services/email": isEs
+      ? `Haz seguimiento profesional por email con historial y automatización. Ideal para tickets y leads de mayor intención. Disponible en ${tier}.`
+      : `Deliver professional email follow-up with history and automation. Ideal for tickets and high-intent leads. Available on ${tier}.`,
+    "/services/calendar": isEs
+      ? `Convierte preguntas en citas agendadas automáticamente. Menos fricción, más reservas. Disponible en ${tier}.`
+      : `Convert conversations into booked appointments automatically. Less friction, more bookings. Available on ${tier}.`,
+    "/services/templates": isEs
+      ? `Escala respuestas consistentes con templates reutilizables por canal y caso de uso. Disponible en ${tier}.`
+      : `Scale consistent replies with reusable templates by channel and use case. Available on ${tier}.`,
+    "/services/chat": isEs
+      ? `Activa un asistente en tu web para captar y responder 24/7. Disponible en ${tier}.`
+      : `Launch a web assistant to capture and answer leads 24/7. Available on ${tier}.`,
+  };
+  return map[id] || (isEs ? `Disponible en ${tier}.` : `Available on ${tier}.`);
+};
+
 export default function Sidebar({ mobile = false, onNavigate }) {
   const navigate = useNavigate();
   const clientId = useClientId();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const isEs = lang === "es";
   const [features, setFeatures] = useState([]);
+  const [currentPlanId, setCurrentPlanId] = useState("free");
+  const [availablePlans, setAvailablePlans] = useState([]);
   const [hovered, setHovered] = useState(null);
   const [animateLogo, setAnimateLogo] = useState(false);
 
@@ -27,25 +86,21 @@ export default function Sidebar({ mobile = false, onNavigate }) {
         const data = await res.json();
 
         if (res.ok) {
-          const normalize = (str) =>
-            String(str || "")
-              .toLowerCase()
-              .trim()
-              .replace(/\s+/g, "_");
-
           const rawFeatures = data.plan?.plan_features || [];
+          setCurrentPlanId(normalizePlanId(data?.plan?.id || data?.plan_id || "free"));
+          setAvailablePlans(Array.isArray(data?.available_plans) ? data.available_plans : []);
 
           const featuresArray = rawFeatures
             .map((f) => {
               // Caso 1: backend ya envía string
               if (typeof f === "string") {
-                return normalize(f);
+                return normalizeFeature(f);
               }
 
               // Caso 2: backend envía objeto { feature, is_active }
               if (typeof f === "object") {
                 if (f.is_active === true) {
-                  return normalize(f.feature);
+                  return normalizeFeature(f.feature);
                 }
                 return null; // 🔥 ignorar inactivos
               }
@@ -80,6 +135,81 @@ export default function Sidebar({ mobile = false, onNavigate }) {
   };
 
   const isEnabled = (feature) => features.includes(feature);
+
+  const hasPlanAccess = (requiredPlanId) => {
+    if (!requiredPlanId) return true;
+    const current = PLAN_ORDER[normalizePlanId(currentPlanId)] ?? 0;
+    const required = PLAN_ORDER[normalizePlanId(requiredPlanId)] ?? 99;
+    return current >= required;
+  };
+
+  const serviceItems = [
+    {
+      id: "inbox-handoff",
+      label: "Inbox / Handoff",
+      path: "/inbox-handoff",
+      feature: "handoff",
+      fallbackRequiredPlan: "premium",
+    },
+    { id: "/services/chat", label: `${t("chat_assistant")}`, path: "/services/chat", feature: "chat_widget" },
+    {
+      id: "/services/whatsapp",
+      label: `${t("whatsapp")}`,
+      path: "/services/whatsapp",
+      feature: "whatsapp_integration",
+      fallbackRequiredPlan: "premium",
+    },
+    {
+      id: "/services/email",
+      label: `${t("email")}`,
+      path: "/services/email",
+      feature: "email_support",
+      fallbackRequiredPlan: "premium",
+    },
+    {
+      id: "/services/calendar",
+      label: `${t("appointments_nav")}`,
+      path: "/services/calendar",
+      feature: "calendar_sync",
+      fallbackRequiredPlan: "starter",
+    },
+    {
+      id: "/services/templates",
+      label: `${t("templates_nav")}`,
+      path: "/services/templates",
+      feature: "templates",
+      fallbackRequiredPlan: "starter",
+    },
+  ].map((item) => {
+    const inferredPlan = item.feature
+      ? featureMinPlanFromAvailablePlans(availablePlans, item.feature)
+      : null;
+    const requiredPlan = inferredPlan || item.fallbackRequiredPlan || null;
+    const featureAccess = item.feature ? isEnabled(item.feature) : true;
+    const planAccess = hasPlanAccess(requiredPlan);
+    const locked = !(featureAccess && planAccess);
+    const requiredPlanLabel = requiredPlan
+      ? normalizePlanId(requiredPlan) === "starter"
+        ? t("starter")
+        : t("premium")
+      : "";
+    const currentPlanNormalized = normalizePlanId(currentPlanId);
+    const currentPlanOrder = PLAN_ORDER[currentPlanNormalized] ?? 0;
+    const requiredPlanOrder = PLAN_ORDER[normalizePlanId(requiredPlan)] ?? 99;
+    const shouldShowUpsell =
+      locked &&
+      Boolean(requiredPlan) &&
+      currentPlanOrder < requiredPlanOrder &&
+      ["free", "starter"].includes(currentPlanNormalized);
+    return {
+      ...item,
+      requiredPlan,
+      requiredPlanLabel,
+      locked,
+      showTierBadge: shouldShowUpsell,
+      marketingCopy: shouldShowUpsell ? marketingCopyById(item.id, isEs, requiredPlanLabel) : "",
+    };
+  });
 
   return (
     <aside style={mobile ? asideStyleMobile : asideStyle}>
@@ -131,56 +261,21 @@ export default function Sidebar({ mobile = false, onNavigate }) {
             id="history"
             onNavigate={onNavigate}
           />
-
-          {[
-            { label: `${t("chat_assistant")}`, path: "/services/chat", feature: "chat_widget" },
-            { label: `${t("whatsapp")}`, path: "/services/whatsapp", feature: "whatsapp_integration" },
-            { label: `${t("email")}`, path: "/services/email", feature: "email_support" },
-            { label: `${t("appointments_nav")}`, path: "/services/calendar", feature: "calendar_sync" },
-            { label: `${t("templates_nav")}`, path: "/services/templates", feature: "templates" },
-          ]
-            .filter(({ feature }) => isEnabled(feature)) // 🔥 SOLO mostrar si está activo
-            .map(({ label, path, feature }) => {
-
-            const enabled = isEnabled(feature);
-            const id = path;
-
-            return (
-              <div key={feature} style={navItemBlock}>
-                <Link
-                  to={enabled ? path : "#"}
-                  style={{
-                    ...linkStyle,
-                    backgroundColor: hovered === id ? "#EAF3FC" : "transparent",
-                    color: enabled
-                      ? hovered === id
-                        ? "#4A90E2"
-                        : "#274472"
-                      : "#999",
-                    pointerEvents: enabled ? "auto" : "none",
-                    borderLeft:
-                      hovered === id
-                        ? "4px solid #F5A623"
-                        : "4px solid transparent",
-                    paddingLeft: "12px",
-                  }}
-                  onMouseEnter={() => setHovered(id)}
-                  onMouseLeave={() => setHovered(null)}
-                  onClick={() => {
-                    if (enabled) onNavigate?.();
-                  }}
-                >
-                  {label}
-                </Link>
-
-                {!enabled && (
-                  <span style={{ ...premiumBadge, marginLeft: "8px" }}>
-                    {t("premium")}
-                  </span>
-                )}
-              </div>
-            );
-          })}
+          {serviceItems.map((item) => (
+            <FeatureHoverLink
+              key={item.id}
+              id={item.id}
+              to={item.path}
+              label={item.label}
+              hovered={hovered}
+              setHovered={setHovered}
+              onNavigate={onNavigate}
+              locked={item.locked}
+              badgeLabel={item.requiredPlanLabel}
+              marketingCopy={item.marketingCopy}
+              showTierBadge={item.showTierBadge}
+            />
+          ))}
 
           <HoverLink
             label={`${t("settings")}`}
@@ -223,6 +318,68 @@ function HoverLink({ to, label, hovered, setHovered, id, onNavigate }) {
       >
         {label}
       </Link>
+    </div>
+  );
+}
+
+function FeatureHoverLink({
+  to,
+  label,
+  hovered,
+  setHovered,
+  id,
+  onNavigate,
+  locked,
+  badgeLabel,
+  marketingCopy,
+  showTierBadge,
+}) {
+  const isHovered = hovered === id;
+  return (
+    <div style={{ ...navItemBlock, position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
+        <Link
+          to={locked ? "#" : to}
+          title={locked ? marketingCopy : undefined}
+          onMouseEnter={() => setHovered(id)}
+          onMouseLeave={() => setHovered(null)}
+          onClick={(e) => {
+            if (locked) {
+              e.preventDefault();
+              return;
+            }
+            onNavigate?.();
+          }}
+          style={{
+            ...linkStyle,
+            flex: 1,
+            backgroundColor: isHovered ? "#EAF3FC" : "transparent",
+            color: locked ? "#8A94A6" : isHovered ? "#4A90E2" : "#274472",
+            borderLeft: isHovered ? "4px solid #F5A623" : "4px solid transparent",
+            paddingLeft: "12px",
+            cursor: locked ? "not-allowed" : "pointer",
+          }}
+        >
+          {label}
+        </Link>
+        {showTierBadge ? (
+          <span
+            style={{
+              ...(locked ? premiumBadge : tierOutlineBadge),
+              marginLeft: "4px",
+              opacity: locked ? 1 : 0.7,
+            }}
+          >
+            {badgeLabel}
+          </span>
+        ) : null}
+      </div>
+
+      {locked && isHovered && marketingCopy ? (
+        <div style={lockedTooltipStyle}>
+          {marketingCopy}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -303,6 +460,31 @@ const premiumBadge = {
   borderRadius: "999px",
   fontWeight: "bold",
   verticalAlign: "middle",
+};
+
+const tierOutlineBadge = {
+  backgroundColor: "#FFF8EB",
+  color: "#9A6A00",
+  fontSize: "0.7rem",
+  padding: "2px 6px",
+  borderRadius: "999px",
+  fontWeight: "bold",
+  border: "1px solid #F3D28E",
+  verticalAlign: "middle",
+  whiteSpace: "nowrap",
+};
+
+const lockedTooltipStyle = {
+  marginTop: "0.45rem",
+  marginLeft: "0.5rem",
+  marginRight: "0.25rem",
+  padding: "0.55rem 0.65rem",
+  borderRadius: "10px",
+  background: "#FFF8EB",
+  border: "1px solid #F3D28E",
+  color: "#7A5900",
+  fontSize: "0.78rem",
+  lineHeight: 1.35,
 };
 
 const footerContainer = {
