@@ -202,6 +202,7 @@ def enrich_template_language_fields(row: dict) -> dict:
     template = dict(row or {})
     meta = template.get("meta_approved_templates") if isinstance(template.get("meta_approved_templates"), dict) else None
     is_whatsapp = str(template.get("channel") or "").lower() == "whatsapp"
+    meta_is_active = bool(meta.get("is_active")) if isinstance(meta, dict) else None
 
     if is_whatsapp and meta:
         family, locale = normalize_language_preferences(locale_code=meta.get("language"))
@@ -214,6 +215,7 @@ def enrich_template_language_fields(row: dict) -> dict:
     template["_resolved_language_family"] = family
     template["_resolved_locale_code"] = locale
     template["_resolved_meta"] = meta
+    template["_resolved_meta_is_active"] = meta_is_active
     return template
 
 
@@ -243,6 +245,9 @@ def choose_best_template_for_language(
                     continue
             if enriched.get("_resolved_meta") is None:
                 # Skip broken/missing canonical metadata; sender depends on it.
+                continue
+            if enriched.get("_resolved_meta_is_active") is False:
+                # Canonical catalog is the source of truth for WhatsApp runtime availability.
                 continue
         candidates.append(enriched)
 
