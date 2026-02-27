@@ -1235,11 +1235,13 @@ async def create_appointment(payload: CreateAppointmentPayload):
 
     # 3️⃣ Create reminders (NO cambiado)
     reminders_created = 0
+    reminders_skipped_past_due = 0
 
     if payload.send_reminders:
         chosen_templates: list[dict] = []
         chosen_ids: set[str] = set()
         reminders_pref = payload.reminders or {}
+        now_utc_for_reminders = datetime.now(timezone.utc)
         appointment_language_ctx = {
             "recipient_language": recipient_language,
             "recipient_locale": recipient_locale,
@@ -1321,6 +1323,19 @@ async def create_appointment(payload: CreateAppointmentPayload):
                     minutes=offset_minutes
                 )
 
+                # Do not schedule reminders that are already in the past at creation time.
+                if scheduled_at <= now_utc_for_reminders:
+                    reminders_skipped_past_due += 1
+                    logger.info(
+                        "⏭️ Reminder rule skipped (past due at creation) | appointment_id=%s | template_id=%s | offset=%s | scheduled_at=%s | now=%s",
+                        appointment_id,
+                        template.get("id"),
+                        offset_minutes,
+                        scheduled_at.isoformat(),
+                        now_utc_for_reminders.isoformat(),
+                    )
+                    continue
+
                 supabase.table("appointment_reminders").insert({
                     "client_id": str(payload.client_id),
                     "appointment_id": appointment_id,
@@ -1334,7 +1349,11 @@ async def create_appointment(payload: CreateAppointmentPayload):
 
                 reminders_created += 1
 
-        logger.info(f"⏰ Reminders created: {reminders_created}")
+        logger.info(
+            "⏰ Reminders created: %s | skipped_past_due=%s",
+            reminders_created,
+            reminders_skipped_past_due,
+        )
 
     else:
         logger.info("ℹ️ No reminders requested for this appointment")
@@ -1345,6 +1364,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
         "scheduled_time": appointment["scheduled_time"],
         "status": appointment["status"],
         "reminders_created": reminders_created,
+        "reminders_skipped_past_due": reminders_skipped_past_due,
     }
 
 

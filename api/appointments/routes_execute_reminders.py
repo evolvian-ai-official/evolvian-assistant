@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import logging
 from babel.dates import format_datetime
@@ -16,6 +16,7 @@ from api.internal_auth import require_internal_request
 router = APIRouter()
 logger = logging.getLogger(__name__)
 LANGUAGE_TO_LOCALE = {"es": "es_MX", "en": "en_US"}
+MAX_REMINDER_LAG_MINUTES = 20
 
 
 def get_client_locale(client_id: str) -> str:
@@ -245,6 +246,7 @@ async def execute_pending_reminders(request: Request):
         .select("*")
         .eq("status", "pending")
         .lte("scheduled_at", now.isoformat())
+        .order("scheduled_at")
         .execute()
     )
 
@@ -261,6 +263,37 @@ async def execute_pending_reminders(request: Request):
         client_id = reminder["client_id"]
         channel = reminder["channel"]
 
+        # Claim reminder atomically to avoid duplicate sends in overlapping cron runs.
+        try:
+            claim_res = (
+                supabase
+                .table("appointment_reminders")
+                .update({
+                    "status": "processing",
+                    "updated_at": now.isoformat(),
+                })
+                .eq("id", reminder_id)
+                .eq("status", "pending")
+                .execute()
+            )
+            claimed_rows = claim_res.data or []
+            if not claimed_rows:
+                skipped += 1
+                logger.info(
+                    "⏭️ REMINDER SKIPPED (already claimed/processed) | id=%s",
+                    reminder_id,
+                )
+                continue
+        except Exception:
+            skipped += 1
+            logger.exception(
+                "❌ REMINDER CLAIM FAILED | id=%s | appointment_id=%s | client_id=%s",
+                reminder_id,
+                appointment_id,
+                client_id,
+            )
+            continue
+
         logger.info(
             "🔔 Processing reminder | id=%s | client_id=%s | channel=%s",
             reminder_id,
@@ -269,6 +302,39 @@ async def execute_pending_reminders(request: Request):
         )
 
         try:
+            # Skip stale reminders that are too late (prevents clustered sends after cron outages).
+            scheduled_at_raw = reminder.get("scheduled_at")
+            if scheduled_at_raw:
+                try:
+                    scheduled_at_dt = datetime.fromisoformat(
+                        str(scheduled_at_raw).replace("Z", "+00:00")
+                    )
+                    if scheduled_at_dt.tzinfo is None:
+                        scheduled_at_dt = scheduled_at_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        scheduled_at_dt = scheduled_at_dt.astimezone(timezone.utc)
+
+                    if now - scheduled_at_dt > timedelta(minutes=MAX_REMINDER_LAG_MINUTES):
+                        skipped += 1
+                        logger.info(
+                            "⏭️ REMINDER SKIPPED (stale lag) | reminder_id=%s | scheduled_at=%s | now=%s | lag_minutes=%s",
+                            reminder_id,
+                            scheduled_at_dt.isoformat(),
+                            now.isoformat(),
+                            int((now - scheduled_at_dt).total_seconds() // 60),
+                        )
+                        supabase.table("appointment_reminders").update({
+                            "status": "cancelled",
+                            "updated_at": now.isoformat(),
+                        }).eq("id", reminder_id).execute()
+                        continue
+                except Exception:
+                    logger.exception(
+                        "⚠️ Failed parsing reminder scheduled_at for stale check | reminder_id=%s | raw=%s",
+                        reminder_id,
+                        scheduled_at_raw,
+                    )
+
             # -------------------------------------------------
             # 1️⃣ Load Appointment
             # -------------------------------------------------
