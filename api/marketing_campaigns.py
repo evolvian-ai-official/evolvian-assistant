@@ -329,9 +329,18 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
         "is_active": True,
         "type": template_type,
         "provision_enabled": True,
+        "owner_client_id": client_id,
+        "visibility_scope": "client_private",
     }
 
-    meta_res = supabase.table("meta_approved_templates").insert(meta_insert).execute()
+    try:
+        meta_res = supabase.table("meta_approved_templates").insert(meta_insert).execute()
+    except Exception:
+        # Backward-compatible fallback before tenant isolation columns are migrated.
+        legacy_insert = dict(meta_insert)
+        legacy_insert.pop("owner_client_id", None)
+        legacy_insert.pop("visibility_scope", None)
+        meta_res = supabase.table("meta_approved_templates").insert(legacy_insert).execute()
     meta_row = (meta_res.data or [None])[0]
     if not meta_row:
         raise HTTPException(status_code=500, detail="Could not create Meta template record")
@@ -899,6 +908,7 @@ def list_campaigns(
     q: Optional[str] = Query(None),
     channel: Optional[Literal["email", "whatsapp"]] = Query(None),
     status: Optional[str] = Query(None),
+    include_archived: bool = Query(False),
 ):
     try:
         authorize_client_request(request, client_id)
@@ -910,6 +920,8 @@ def list_campaigns(
             .eq("client_id", client_id)
             .order("created_at", desc=True)
         )
+        if not include_archived:
+            query = query.eq("is_active", True)
         if channel:
             query = query.eq("channel", channel)
         if status:
@@ -1125,6 +1137,48 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
             updates["template_id"] = wa_templates["message_template"].get("id")
             updates["meta_template_id"] = wa_templates["meta"].get("id")
             updates["meta_template_name"] = wa_templates.get("meta_template_name")
+        elif str(campaign.get("channel") or "") == "email":
+            touched_fields = {"name", "body", "image_url", "cta_mode", "cta_label", "cta_url", "language_family"}
+            should_refresh_email_snapshot = any(field in updates for field in touched_fields)
+            if should_refresh_email_snapshot:
+                merged_body = str(updates.get("body") if "body" in updates else campaign.get("body") or "")
+                merged_image_url = str(updates.get("image_url") if "image_url" in updates else campaign.get("image_url") or "").strip() or None
+                merged_cta_url = str(updates.get("cta_url") if "cta_url" in updates else campaign.get("cta_url") or "").strip() or None
+                merged_cta_label = str(updates.get("cta_label") if "cta_label" in updates else campaign.get("cta_label") or "").strip() or None
+                merged_language = str(
+                    updates.get("language_family") if "language_family" in updates else campaign.get("language_family") or "es"
+                ).strip().lower() or "es"
+                if not merged_cta_url:
+                    merged_cta_label = None
+
+                rendered = _build_email_template_body(
+                    body_text=merged_body,
+                    image_url=merged_image_url,
+                    cta_mode="url" if merged_cta_url else None,
+                    cta_label=merged_cta_label,
+                    cta_url=merged_cta_url,
+                )
+
+                template_id = str(campaign.get("template_id") or "").strip()
+                if template_id:
+                    template_updates = {
+                        "label": str(updates.get("name") if "name" in updates else campaign.get("name") or "Campaign"),
+                        "body": rendered,
+                        "language_family": merged_language,
+                        "locale_code": _format_locale(merged_language),
+                        "updated_at": _now_iso(),
+                    }
+                    try:
+                        (
+                            supabase.table("message_templates")
+                            .update(template_updates)
+                            .eq("id", template_id)
+                            .eq("client_id", payload.client_id)
+                            .execute()
+                        )
+                    except Exception:
+                        # Snapshot update should not block campaign edit.
+                        pass
 
         if not updates:
             raise HTTPException(status_code=400, detail="No updatable fields provided")
@@ -1151,6 +1205,58 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
                 detail="Marketing tables are not available yet. Run docs/sql/2026-02-27_marketing_campaigns.sql first.",
             )
         raise HTTPException(status_code=500, detail=f"Failed updating campaign: {exc}")
+
+
+@router.delete("/campaigns/{campaign_id}")
+def archive_campaign(request: Request, campaign_id: str, client_id: str = Query(...)):
+    try:
+        authorize_client_request(request, client_id)
+        _ensure_premium_access(client_id)
+
+        campaign = _load_campaign(client_id, campaign_id)
+        if not bool(campaign.get("is_active", True)):
+            return {"campaign": campaign, "archived": True}
+
+        updates = {
+            "status": "archived",
+            "is_active": False,
+            "updated_at": _now_iso(),
+        }
+        result = (
+            supabase.table("marketing_campaigns")
+            .update(updates)
+            .eq("id", campaign_id)
+            .eq("client_id", client_id)
+            .execute()
+        )
+        row = (result.data or [None])[0]
+        if not row:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        template_id = str(campaign.get("template_id") or "").strip()
+        if template_id:
+            try:
+                (
+                    supabase.table("message_templates")
+                    .update({"is_active": False, "updated_at": _now_iso()})
+                    .eq("id", template_id)
+                    .eq("client_id", client_id)
+                    .execute()
+                )
+            except Exception:
+                # Non-blocking cleanup to keep archive flow robust.
+                pass
+
+        return {"campaign": row, "archived": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if _is_missing_marketing_tables(exc):
+            raise HTTPException(
+                status_code=503,
+                detail="Marketing tables are not available yet. Run docs/sql/2026-02-27_marketing_campaigns.sql first.",
+            )
+        raise HTTPException(status_code=500, detail=f"Failed archiving campaign: {exc}")
 
 
 @router.post("/campaigns/{campaign_id}/send")

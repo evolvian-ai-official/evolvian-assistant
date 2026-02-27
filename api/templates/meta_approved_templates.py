@@ -51,6 +51,144 @@ class MetaApprovedTemplateResponse(BaseModel):
     pricing_disclaimer: Optional[str] = None
 
 
+def _is_campaign_meta_type(template_type: Optional[str]) -> bool:
+    probe = str(template_type or "").strip().lower()
+    return probe.startswith("campaign_whatsapp")
+
+
+def _normalize_visibility_scope(row: dict) -> str:
+    raw = str((row or {}).get("visibility_scope") or "").strip().lower()
+    if raw in {"global", "client_private"}:
+        return raw
+    return ""
+
+
+def _normalize_owner_client_id(row: dict) -> Optional[str]:
+    value = str((row or {}).get("owner_client_id") or "").strip()
+    return value or None
+
+
+def _is_private_template_row(row: dict) -> bool:
+    scope = _normalize_visibility_scope(row)
+    if scope == "client_private":
+        return True
+    if scope == "global":
+        return False
+    # Legacy fallback before visibility_scope existed.
+    return _is_campaign_meta_type((row or {}).get("type"))
+
+
+def _load_client_owned_campaign_meta_ids(*, client_id: str, candidate_ids: list[str]) -> set[str]:
+    ids = [str(value or "").strip() for value in candidate_ids if str(value or "").strip()]
+    if not ids:
+        return set()
+    try:
+        try:
+            res = (
+                supabase
+                .table("message_templates")
+                .select("meta_template_id,type")
+                .eq("client_id", client_id)
+                .eq("channel", "whatsapp")
+                .eq("variant_key", "campaign")
+                .eq("is_active", True)
+                .in_("meta_template_id", ids)
+                .execute()
+            )
+        except Exception:
+            # Fallback for environments where variant_key is not available yet.
+            res = (
+                supabase
+                .table("message_templates")
+                .select("meta_template_id,type")
+                .eq("client_id", client_id)
+                .eq("channel", "whatsapp")
+                .eq("is_active", True)
+                .in_("meta_template_id", ids)
+                .execute()
+            )
+        return {
+            str((row or {}).get("meta_template_id") or "").strip()
+            for row in (res.data or [])
+            if str((row or {}).get("meta_template_id") or "").strip()
+            and _is_campaign_meta_type((row or {}).get("type"))
+        }
+    except Exception:
+        logger.exception("❌ Failed loading campaign template ownership for catalog | client_id=%s", client_id)
+        return set()
+
+
+def _filter_templates_visibility(templates: list[dict], *, client_id: Optional[str]) -> list[dict]:
+    if not templates:
+        return []
+
+    visible_rows: list[dict] = []
+    unresolved_private_rows: list[dict] = []
+
+    for row in templates:
+        template = row or {}
+        scope = _normalize_visibility_scope(template)
+        owner_client_id = _normalize_owner_client_id(template)
+
+        if scope == "global":
+            visible_rows.append(template)
+            continue
+
+        if scope == "client_private":
+            if client_id and owner_client_id and str(owner_client_id) == str(client_id):
+                visible_rows.append(template)
+            elif not owner_client_id:
+                # Defensive fallback for partially backfilled rows.
+                unresolved_private_rows.append(template)
+            continue
+
+        if _is_private_template_row(template):
+            unresolved_private_rows.append(template)
+        else:
+            visible_rows.append(template)
+
+    if not unresolved_private_rows:
+        return visible_rows
+    if not client_id:
+        return visible_rows
+
+    fallback_ids = [str((row or {}).get("id") or "").strip() for row in unresolved_private_rows]
+    owned_ids = _load_client_owned_campaign_meta_ids(client_id=client_id, candidate_ids=fallback_ids)
+    if not owned_ids:
+        return visible_rows
+
+    owned_rows = [
+        row for row in unresolved_private_rows
+        if str((row or {}).get("id") or "").strip() in owned_ids
+    ]
+    return [*visible_rows, *owned_rows]
+
+
+def _load_meta_catalog_rows(*, channel: Optional[str], type: Optional[str]) -> list[dict]:
+    select_attempts = [
+        "id, template_name, preview_body, language, parameter_count, type, owner_client_id, visibility_scope",
+        "id, template_name, preview_body, language, parameter_count, type",
+    ]
+
+    for select_fields in select_attempts:
+        try:
+            query = (
+                supabase
+                .table("meta_approved_templates")
+                .select(select_fields)
+                .eq("is_active", True)
+            )
+            if type:
+                query = query.eq("type", type)
+            if channel:
+                query = query.eq("channel", channel)
+            return query.order("template_name").execute().data or []
+        except Exception:
+            continue
+
+    raise HTTPException(status_code=500, detail="Internal server error")
+
+
 # ======================================
 # Endpoint
 # ======================================
@@ -145,24 +283,10 @@ def get_meta_approved_templates(
         # ======================================
         # Query canonical catalog
         # ======================================
-        query = (
-            supabase
-            .table("meta_approved_templates")
-            .select(
-                "id, template_name, preview_body, language, parameter_count, type"
-            )
-            .eq("is_active", True)
+        templates = _filter_templates_visibility(
+            _load_meta_catalog_rows(channel=channel, type=type),
+            client_id=client_id,
         )
-
-        if type:
-            query = query.eq("type", type)
-
-        if channel:
-            query = query.eq("channel", channel)
-
-        res = query.order("template_name").execute()
-
-        templates = res.data or []
         if language_family:
             family = str(language_family).strip().lower()
             templates = [

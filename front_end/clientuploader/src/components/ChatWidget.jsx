@@ -98,6 +98,126 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   }, [clientSettings]);
   const effectiveLang =
     String(clientSettings?.language || lang || "es").toLowerCase() === "en" ? "en" : "es";
+  const isEnglish = effectiveLang === "en";
+  const agendaText = useMemo(
+    () =>
+      isEnglish
+        ? {
+            loadAvailabilityError: "Could not load availability",
+            calendarInactive: "Calendar is inactive for this assistant.",
+            cancelNeedContact: "Add an email or phone number to find your appointment.",
+            cancelValidateError: "Could not validate your appointment.",
+            cancelNotFound: "We could not find an active appointment with those details.",
+            cancelLookupError: "Could not search for your appointment.",
+            cancelMissingAppointment: "No appointment found to cancel.",
+            cancelError: "Could not cancel the appointment.",
+            cancelFallbackSuccess: "Your appointment has been cancelled.",
+            dayView: "Day",
+            weekView: "Week",
+            monthView: "Month",
+            loadingSlots: "Loading available time slots...",
+            selectedPrefix: "Selected:",
+            nameRequired: "Name is required.",
+            addContactRequired: "Add at least email or phone.",
+            bookError: "Could not book the appointment.",
+            bookSuccessMessage:
+              "✅ Your session was booked. If you need to cancel, use the 'Find my appointment' option in Book.",
+            bookSuccessStatus: "Appointment booked successfully.",
+            bookingInProgress: "Booking...",
+            confirmAppointment: "Confirm appointment",
+            duplicateActive: "An active appointment already exists for this contact",
+            replaceError: "Could not replace the appointment.",
+            rescheduleSuccessMessage:
+              "✅ Your session was rescheduled. If you need to cancel, use the 'Find my appointment' option in Book.",
+            rescheduleSuccessStatus: "Appointment rescheduled successfully.",
+            replaceCurrentWithNew: "Cancel current and create new",
+            hideLookup: "Hide search",
+            findMyAppointment: "Find my appointment",
+            findAppointmentTitle: "Find your appointment:",
+            searching: "Searching...",
+            dateRangeHint: "Only dates from today up to 1 year ahead are shown.",
+            timezoneLabel: "Time zone",
+            sessionBookedTitle: "Session booked",
+            sessionBookedBodyLine1: "Your session was booked successfully.",
+            sessionBookedBodyLine2: "If you need to cancel, use the 'Find my appointment' option in Book.",
+            understood: "Understood",
+            confirmCancellation: "Confirm cancellation",
+            foundAppointment: "We found this appointment:",
+            labelName: "Name",
+            labelDate: "Date",
+            labelType: "Type",
+            labelEmail: "Email",
+            labelPhone: "Phone",
+            appointmentTypeFallback: "Appointment",
+            keepAppointment: "Keep appointment",
+            cancelling: "Cancelling...",
+            cancelAppointment: "Cancel appointment",
+            noSlotsThisDay: "No available time slots this day.",
+            nextAvailablePrefix: "Next available:",
+            noNextSlots: "No upcoming time slots in the loaded range.",
+            available: "Available",
+            availableShort: "avail.",
+            noDate: "no date",
+          }
+        : {
+            loadAvailabilityError: "No se pudo cargar disponibilidad",
+            calendarInactive: "El calendario está inactivo para este asistente.",
+            cancelNeedContact: "Agrega email o teléfono para ubicar tu cita.",
+            cancelValidateError: "No se pudo validar tu cita.",
+            cancelNotFound: "No encontramos una cita activa con esos datos.",
+            cancelLookupError: "No se pudo buscar tu cita.",
+            cancelMissingAppointment: "No se encontró la cita a cancelar.",
+            cancelError: "No se pudo cancelar la cita.",
+            cancelFallbackSuccess: "Tu cita ha sido cancelada.",
+            dayView: "Día",
+            weekView: "Semana",
+            monthView: "Mes",
+            loadingSlots: "Cargando horarios disponibles...",
+            selectedPrefix: "Seleccionado:",
+            nameRequired: "El nombre es obligatorio.",
+            addContactRequired: "Agrega al menos email o teléfono.",
+            bookError: "No se pudo agendar.",
+            bookSuccessMessage:
+              "✅ Tu sesión fue agendada. Si necesitas cancelar, usa la opción 'Buscar mi cita' en Agendar.",
+            bookSuccessStatus: "Cita agendada correctamente.",
+            bookingInProgress: "Agendando...",
+            confirmAppointment: "Confirmar cita",
+            duplicateActive: "Ya existe una cita activa para este contacto",
+            replaceError: "No se pudo reemplazar la cita.",
+            rescheduleSuccessMessage:
+              "✅ Tu sesión fue reagendada. Si necesitas cancelar, usa la opción 'Buscar mi cita' en Agendar.",
+            rescheduleSuccessStatus: "Cita reagendada correctamente.",
+            replaceCurrentWithNew: "Cancelar actual y crear nueva",
+            hideLookup: "Ocultar búsqueda",
+            findMyAppointment: "Buscar mi cita",
+            findAppointmentTitle: "Busca tu cita:",
+            searching: "Buscando...",
+            dateRangeHint: "Solo se muestran fechas desde hoy y hasta 1 año adelante.",
+            timezoneLabel: "Zona horaria",
+            sessionBookedTitle: "Sesión agendada",
+            sessionBookedBodyLine1: "Tu sesión fue agendada correctamente.",
+            sessionBookedBodyLine2: 'Si necesitas cancelar, usa la opción "Buscar mi cita" en Agendar.',
+            understood: "Entendido",
+            confirmCancellation: "Confirmar cancelación",
+            foundAppointment: "Encontramos esta cita:",
+            labelName: "Nombre",
+            labelDate: "Fecha",
+            labelType: "Tipo",
+            labelEmail: "Email",
+            labelPhone: "Teléfono",
+            appointmentTypeFallback: "Cita",
+            keepAppointment: "Mantener cita",
+            cancelling: "Cancelando...",
+            cancelAppointment: "Cancelar cita",
+            noSlotsThisDay: "No hay horarios disponibles este día.",
+            nextAvailablePrefix: "Próximo disponible:",
+            noNextSlots: "No hay próximos horarios en el rango cargado.",
+            available: "Disponible",
+            availableShort: "disp.",
+            noDate: "sin fecha",
+          },
+    [isEnglish]
+  );
 
   // =============================
   // ⚡️ Nuevos estados visuales
@@ -701,8 +821,9 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
   };
 
   const calendarTitle = useMemo(() => {
+    const locale = isEnglish ? "en-US" : "es-ES";
     if (calendarViewMode === "month") {
-      return calendarDate.toLocaleDateString(lang === "en" ? "en-US" : "es-ES", {
+      return calendarDate.toLocaleDateString(locale, {
         month: "long",
         year: "numeric",
       });
@@ -712,20 +833,20 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       start.setDate(start.getDate() - start.getDay());
       const end = new Date(start);
       end.setDate(end.getDate() + 6);
-      return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
+      return `${start.toLocaleDateString(locale)} - ${end.toLocaleDateString(locale)}`;
     }
-    return calendarDate.toLocaleDateString();
-  }, [calendarDate, calendarViewMode, lang]);
+    return calendarDate.toLocaleDateString(locale);
+  }, [calendarDate, calendarViewMode, isEnglish]);
 
   const formatDuplicateSlot = (existing) => {
-    if (!existing) return "sin fecha";
+    if (!existing) return agendaText.noDate;
     if (existing.formatted_time) return existing.formatted_time;
     const raw = existing.scheduled_time;
-    if (!raw) return "sin fecha";
+    if (!raw) return agendaText.noDate;
     try {
       const dt = new Date(raw);
       if (Number.isNaN(dt.getTime())) return raw;
-      const local = dt.toLocaleString(lang === "en" ? "en-US" : "es-ES", {
+      const local = dt.toLocaleString(isEnglish ? "en-US" : "es-ES", {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
@@ -783,7 +904,11 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         url.searchParams.set("public_client_id", publicClientId);
         const res = await fetch(url.toString());
         const data = await res.json();
-        if (!res.ok) throw new Error(data?.detail || "No se pudo cargar visibilidad de agenda");
+        if (!res.ok) {
+          throw new Error(
+            data?.detail || (isEnglish ? "Could not load calendar visibility" : "No se pudo cargar visibilidad de agenda")
+          );
+        }
 
         const showAgenda = Boolean(data?.show_agenda_in_chat_widget ?? false);
         const status = String(data?.calendar_status || "inactive").toLowerCase();
@@ -803,7 +928,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     };
 
     loadCalendarVisibility();
-  }, [publicClientId, activePanel]);
+  }, [publicClientId, activePanel, isEnglish]);
 
   useEffect(() => {
     if (activePanel !== "calendar" || !publicClientId) return;
@@ -823,14 +948,14 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         const res = await fetch(url.toString());
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data?.detail || "No se pudo cargar disponibilidad");
+          throw new Error(data?.detail || agendaText.loadAvailabilityError);
         }
         if (data?.available === false) {
           setCalendarEnabled(false);
           setCalendarSlots([]);
           setCalendarCountsByDay({});
           setCalendarTimezone(data.timezone || "");
-          setCalendarError(data?.message || "El calendario está inactivo para este asistente.");
+          setCalendarError(data?.message || agendaText.calendarInactive);
           return;
         }
 
@@ -840,14 +965,14 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       } catch (err) {
         setCalendarSlots([]);
         setCalendarCountsByDay({});
-        setCalendarError(err?.message || "No se pudo cargar disponibilidad");
+        setCalendarError(err?.message || agendaText.loadAvailabilityError);
       } finally {
         setCalendarLoading(false);
       }
     };
 
     fetchAvailability();
-  }, [activePanel, publicClientId, calendarRange, calendarRefreshTick]);
+  }, [activePanel, publicClientId, calendarRange, calendarRefreshTick, agendaText]);
 
   useEffect(() => {
     if (!selectedCalendarSlot) return;
@@ -872,7 +997,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
 
   const lookupAppointmentForCancellation = async () => {
     if (!cancelEmail.trim() && !cancelPhone.trim()) {
-      setCancelError("Agrega email o teléfono para ubicar tu cita.");
+      setCancelError(agendaText.cancelNeedContact);
       return;
     }
 
@@ -894,17 +1019,17 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.detail || data?.message || "No se pudo validar tu cita.");
+        throw new Error(data?.detail || data?.message || agendaText.cancelValidateError);
       }
       if (!data?.found || !data?.appointment) {
-        setCancelError(data?.message || "No encontramos una cita activa con esos datos.");
+        setCancelError(data?.message || agendaText.cancelNotFound);
         return;
       }
 
       setCancelPreviewAppt(data.appointment);
       setShowCancelConfirmModal(true);
     } catch (err) {
-      setCancelError(err?.message || "No se pudo buscar tu cita.");
+      setCancelError(err?.message || agendaText.cancelLookupError);
     } finally {
       setCancelLookupLoading(false);
     }
@@ -912,7 +1037,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
 
   const confirmWidgetCancellation = async () => {
     if (!cancelPreviewAppt?.id) {
-      setCancelError("No se encontró la cita a cancelar.");
+      setCancelError(agendaText.cancelMissingAppointment);
       return;
     }
 
@@ -933,10 +1058,10 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.detail || data?.message || "No se pudo cancelar la cita.");
+        throw new Error(data?.detail || data?.message || agendaText.cancelError);
       }
 
-      const finalMessage = data?.message || "Tu cita ha sido cancelada.";
+      const finalMessage = data?.message || agendaText.cancelFallbackSuccess;
       const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setMessages((prev) => [...prev, { from: "bot", text: `✅ ${finalMessage}`, timestamp: now }]);
       setCancelSuccess(finalMessage);
@@ -944,7 +1069,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       setCancelPreviewAppt(null);
       setCalendarRefreshTick((v) => v + 1);
     } catch (err) {
-      setCancelError(err?.message || "No se pudo cancelar la cita.");
+      setCancelError(err?.message || agendaText.cancelError);
     } finally {
       setCancelSubmitting(false);
     }
@@ -1116,7 +1241,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               }}
               onClick={() => setActivePanel("calendar")}
             >
-              {wt("widget_book_tab", "Agenda")}
+              {wt("widget_book_tab", isEnglish ? "Book" : "Agenda")}
             </button>
           )}
         </div>
@@ -1413,19 +1538,19 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               style={styles.calendarModeBtn(calendarViewMode === "day")}
               onClick={() => setCalendarViewMode("day")}
             >
-              Día
+              {agendaText.dayView}
             </button>
             <button
               style={styles.calendarModeBtn(calendarViewMode === "week")}
               onClick={() => setCalendarViewMode("week")}
             >
-              Semana
+              {agendaText.weekView}
             </button>
             <button
               style={styles.calendarModeBtn(calendarViewMode === "month")}
               onClick={() => setCalendarViewMode("month")}
             >
-              Mes
+              {agendaText.monthView}
             </button>
           </div>
 
@@ -1444,7 +1569,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
           </div>
 
           {calendarLoading ? (
-            <div style={styles.calendarStatus}>Cargando horarios disponibles...</div>
+            <div style={styles.calendarStatus}>{agendaText.loadingSlots}</div>
           ) : calendarError ? (
             <div style={styles.calendarStatusError}>{calendarError}</div>
           ) : (
@@ -1462,31 +1587,33 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
               selectedSlot={selectedCalendarSlot}
               onSelectSlot={(slot) => setSelectedCalendarSlot(slot)}
               isMobile={isMobileLayout}
+              lang={effectiveLang}
+              labels={agendaText}
             />
           )}
           {selectedCalendarSlot && (
             <div style={styles.selectedSlotBar}>
               <div style={styles.selectedSlotText}>
-                Seleccionado: {selectedCalendarSlot.date} {selectedCalendarSlot.time}
+                {agendaText.selectedPrefix} {selectedCalendarSlot.date} {selectedCalendarSlot.time}
               </div>
               <div style={styles.formGrid}>
                 <input
                   type="text"
-                  placeholder="Nombre *"
+                  placeholder={`${agendaText.labelName} *`}
                   value={bookingName}
                   onChange={(e) => setBookingName(e.target.value)}
                   style={styles.formInput}
                 />
                 <input
                   type="email"
-                  placeholder="Email (opcional)"
+                  placeholder={`${agendaText.labelEmail} (${isEnglish ? "optional" : "opcional"})`}
                   value={bookingEmail}
                   onChange={(e) => setBookingEmail(e.target.value)}
                   style={styles.formInput}
                 />
                 <input
                   type="text"
-                  placeholder="Teléfono (opcional)"
+                  placeholder={`${agendaText.labelPhone} (${isEnglish ? "optional" : "opcional"})`}
                   value={bookingPhone}
                   onChange={(e) => setBookingPhone(e.target.value)}
                   style={styles.formInput}
@@ -1500,11 +1627,11 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 disabled={bookingSubmitting}
                 onClick={async () => {
                   if (!bookingName.trim()) {
-                    setBookingError("El nombre es obligatorio.");
+                    setBookingError(agendaText.nameRequired);
                     return;
                   }
                   if (!bookingEmail.trim() && !bookingPhone.trim()) {
-                    setBookingError("Agrega al menos email o teléfono.");
+                    setBookingError(agendaText.addContactRequired);
                     return;
                   }
 
@@ -1540,15 +1667,15 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                     }
 
                     if (!res.ok) {
-                      throw new Error(data?.detail || data?.message || "No se pudo agendar.");
+                      throw new Error(data?.detail || data?.message || agendaText.bookError);
                     }
 
                     setBookingSubmitting(false);
 
-                    const successMsg = "✅ Tu sesión fue agendada. Si necesitas cancelar, usa la opción 'Buscar mi cita' en Agendar.";
+                    const successMsg = agendaText.bookSuccessMessage;
                     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
                     setMessages((prev) => [...prev, { from: "bot", text: successMsg, timestamp: now }]);
-                    setBookingSuccess("Cita agendada correctamente.");
+                    setBookingSuccess(agendaText.bookSuccessStatus);
                     setSelectedCalendarSlot(null);
                     setBookingName("");
                     setBookingEmail("");
@@ -1556,18 +1683,18 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                     setCalendarRefreshTick((v) => v + 1);
                     setShowBookingSuccessModal(true);
                   } catch (err) {
-                    setBookingError(err?.message || "No se pudo agendar.");
+                    setBookingError(err?.message || agendaText.bookError);
                   } finally {
                     setBookingSubmitting(false);
                   }
                 }}
               >
-                {bookingSubmitting ? "Agendando..." : "Confirmar cita"}
+                {bookingSubmitting ? agendaText.bookingInProgress : agendaText.confirmAppointment}
               </button>
               {duplicateExistingAppt && (
                 <div style={styles.duplicateBox}>
                   <div style={styles.formError}>
-                    Ya existe una cita activa para este contacto ({formatDuplicateSlot(duplicateExistingAppt)}).
+                    {agendaText.duplicateActive} ({formatDuplicateSlot(duplicateExistingAppt)}).
                   </div>
                   <button
                     type="button"
@@ -1592,12 +1719,12 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                           }),
                         });
                         const data = await res.json();
-                        if (!res.ok) throw new Error(data?.detail || data?.message || "No se pudo reemplazar la cita.");
+                        if (!res.ok) throw new Error(data?.detail || data?.message || agendaText.replaceError);
 
-                        const successMsg = "✅ Tu sesión fue reagendada. Si necesitas cancelar, usa la opción 'Buscar mi cita' en Agendar.";
+                        const successMsg = agendaText.rescheduleSuccessMessage;
                         const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
                         setMessages((prev) => [...prev, { from: "bot", text: successMsg, timestamp: now }]);
-                        setBookingSuccess("Cita reagendada correctamente.");
+                        setBookingSuccess(agendaText.rescheduleSuccessStatus);
                         setDuplicateExistingAppt(null);
                         setSelectedCalendarSlot(null);
                         setBookingName("");
@@ -1606,13 +1733,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                         setCalendarRefreshTick((v) => v + 1);
                         setShowBookingSuccessModal(true);
                       } catch (err) {
-                        setBookingError(err?.message || "No se pudo reemplazar la cita.");
+                        setBookingError(err?.message || agendaText.replaceError);
                       } finally {
                         setBookingSubmitting(false);
                       }
                     }}
                   >
-                    Cancelar actual y crear nueva
+                    {agendaText.replaceCurrentWithNew}
                   </button>
                 </div>
               )}
@@ -1629,23 +1756,23 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 setShowCancelConfirmModal(false);
               }}
             >
-              {showCancelLookup ? "Ocultar Busqueda" : "Buscar mi cita"}
+              {showCancelLookup ? agendaText.hideLookup : agendaText.findMyAppointment}
             </button>
           </div>
           {showCancelLookup && (
             <div style={styles.cancelLookupCard}>
-              <div style={styles.cancelLookupTitle}>Busca tu cita:</div>
+              <div style={styles.cancelLookupTitle}>{agendaText.findAppointmentTitle}</div>
               <div style={styles.formGrid}>
                 <input
                   type="email"
-                  placeholder="Email (opcional)"
+                  placeholder={`${agendaText.labelEmail} (${isEnglish ? "optional" : "opcional"})`}
                   value={cancelEmail}
                   onChange={(e) => setCancelEmail(e.target.value)}
                   style={styles.formInput}
                 />
                 <input
                   type="text"
-                  placeholder="Teléfono (opcional)"
+                  placeholder={`${agendaText.labelPhone} (${isEnglish ? "optional" : "opcional"})`}
                   value={cancelPhone}
                   onChange={(e) => setCancelPhone(e.target.value)}
                   style={styles.formInput}
@@ -1659,13 +1786,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 onClick={lookupAppointmentForCancellation}
                 disabled={cancelLookupLoading || cancelSubmitting}
               >
-                {cancelLookupLoading ? "Buscando..." : "Buscar mi cita"}
+                {cancelLookupLoading ? agendaText.searching : agendaText.findMyAppointment}
               </button>
             </div>
           )}
           <div style={styles.calendarHint}>
-            Solo se muestran fechas desde hoy y hasta 1 año adelante.
-            {calendarTimezone ? ` Zona horaria: ${calendarTimezone}.` : ""}
+            {agendaText.dateRangeHint}
+            {calendarTimezone ? ` ${agendaText.timezoneLabel}: ${calendarTimezone}.` : ""}
           </div>
         </div>
       )}
@@ -1772,11 +1899,11 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       {showBookingSuccessModal && (
         <div style={styles.successOverlay}>
           <div style={styles.successModal}>
-            <h4 style={styles.successTitle}>Sesión agendada</h4>
+            <h4 style={styles.successTitle}>{agendaText.sessionBookedTitle}</h4>
             <p style={styles.successBody}>
-              Tu sesión fue agendada correctamente.
+              {agendaText.sessionBookedBodyLine1}
               <br />
-              Si necesitas cancelar, usa la opción "Buscar mi cita" en Agendar.
+              {agendaText.sessionBookedBodyLine2}
             </p>
             <button
               type="button"
@@ -1792,7 +1919,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 }
               }}
             >
-              Entendido
+              {agendaText.understood}
             </button>
           </div>
         </div>
@@ -1800,14 +1927,14 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       {showCancelConfirmModal && cancelPreviewAppt && (
         <div style={styles.cancelOverlay}>
           <div style={styles.cancelModal}>
-            <h4 style={styles.cancelModalTitle}>Confirmar cancelación</h4>
-            <p style={styles.cancelModalBody}>Encontramos esta cita:</p>
+            <h4 style={styles.cancelModalTitle}>{agendaText.confirmCancellation}</h4>
+            <p style={styles.cancelModalBody}>{agendaText.foundAppointment}</p>
             <div style={styles.cancelDataGrid}>
-              <div><strong>Nombre:</strong> {cancelPreviewAppt.user_name || "—"}</div>
-              <div><strong>Fecha:</strong> {cancelPreviewAppt.formatted_time || cancelPreviewAppt.scheduled_time || "—"}</div>
-              <div><strong>Tipo:</strong> {cancelPreviewAppt.appointment_type || "Cita"}</div>
-              <div><strong>Email:</strong> {cancelPreviewAppt.user_email || "—"}</div>
-              <div><strong>Teléfono:</strong> {cancelPreviewAppt.user_phone || "—"}</div>
+              <div><strong>{agendaText.labelName}:</strong> {cancelPreviewAppt.user_name || "—"}</div>
+              <div><strong>{agendaText.labelDate}:</strong> {cancelPreviewAppt.formatted_time || cancelPreviewAppt.scheduled_time || "—"}</div>
+              <div><strong>{agendaText.labelType}:</strong> {cancelPreviewAppt.appointment_type || agendaText.appointmentTypeFallback}</div>
+              <div><strong>{agendaText.labelEmail}:</strong> {cancelPreviewAppt.user_email || "—"}</div>
+              <div><strong>{agendaText.labelPhone}:</strong> {cancelPreviewAppt.user_phone || "—"}</div>
             </div>
             <div style={styles.cancelActionsRow}>
               <button
@@ -1819,7 +1946,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 }}
                 disabled={cancelSubmitting}
               >
-                Mantener cita
+                {agendaText.keepAppointment}
               </button>
               <button
                 type="button"
@@ -1827,7 +1954,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
                 onClick={confirmWidgetCancellation}
                 disabled={cancelSubmitting}
               >
-                {cancelSubmitting ? "Cancelando..." : "Cancelar cita"}
+                {cancelSubmitting ? agendaText.cancelling : agendaText.cancelAppointment}
               </button>
             </div>
           </div>
@@ -1848,7 +1975,29 @@ function CalendarVisualView({
   selectedSlot,
   onSelectSlot,
   isMobile = false,
+  lang = "es",
+  labels = {},
 }) {
+  const isEnglish = lang === "en";
+  const fallbackLabels = isEnglish
+    ? {
+        noSlotsThisDay: "No available time slots this day.",
+        nextAvailablePrefix: "Next available:",
+        noNextSlots: "No upcoming time slots in the loaded range.",
+        available: "Available",
+        availableShort: "avail.",
+      }
+    : {
+        noSlotsThisDay: "No hay horarios disponibles este día.",
+        nextAvailablePrefix: "Próximo disponible:",
+        noNextSlots: "No hay próximos horarios en el rango cargado.",
+        available: "Disponible",
+        availableShort: "disp.",
+      };
+  const text = { ...fallbackLabels, ...labels };
+  const locale = isEnglish ? "en-US" : "es-ES";
+  const monthHeaders = isEnglish ? ["S", "M", "T", "W", "T", "F", "S"] : ["D", "L", "M", "M", "J", "V", "S"];
+
   const slotsForDay = (dateObj) => {
     const key = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}-${String(dateObj.getDate()).padStart(2, "0")}`;
     return (slots || []).filter((slot) => slot.date === key);
@@ -1865,7 +2014,7 @@ function CalendarVisualView({
       <div style={styles.calendarScrollArea}>
         {daySlots.length === 0 ? (
           <div style={styles.calendarEmptyState}>
-            <div>No hay horarios disponibles este día.</div>
+            <div>{text.noSlotsThisDay}</div>
             {nextAvailable ? (
               <button
                 type="button"
@@ -1875,10 +2024,10 @@ function CalendarVisualView({
                   if (!Number.isNaN(dt.getTime())) onSelectDate?.(dt);
                 }}
               >
-                Próximo disponible: {nextAvailable.date} {nextAvailable.time}
+                {text.nextAvailablePrefix} {nextAvailable.date} {nextAvailable.time}
               </button>
             ) : (
-              <div style={styles.nextAvailableText}>No hay próximos horarios en el rango cargado.</div>
+              <div style={styles.nextAvailableText}>{text.noNextSlots}</div>
             )}
           </div>
         ) : (
@@ -1896,7 +2045,7 @@ function CalendarVisualView({
                 onClick={() => onSelectSlot?.(slot)}
               >
                 <span>{slot.time}</span>
-                <span>Disponible</span>
+                <span>{text.available}</span>
               </button>
             ))
         )}
@@ -1933,9 +2082,11 @@ function CalendarVisualView({
                 if (!disabled) onSelectDate?.(day);
               }}
             >
-              <div style={styles.weekDay}>{day.toLocaleDateString("es-ES", { weekday: "short" })}</div>
+              <div style={styles.weekDay}>{day.toLocaleDateString(locale, { weekday: "short" })}</div>
               <div style={styles.weekDate}>{day.getDate()}</div>
-              <div style={styles.weekCount}>{count} disp.</div>
+              <div style={styles.weekCount}>
+                {count} {text.availableShort}
+              </div>
             </button>
           );
         })}
@@ -1961,7 +2112,7 @@ function CalendarVisualView({
 
   return (
     <div style={{ ...styles.monthGrid, ...(isMobile ? styles.monthGridMobile : null) }}>
-      {["D", "L", "M", "M", "J", "V", "S"].map((label, idx) => (
+      {monthHeaders.map((label, idx) => (
         <div key={`${label}-${idx}`} style={styles.monthHeaderCell}>{label}</div>
       ))}
       {cells.map((day, idx) => {

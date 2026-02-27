@@ -86,6 +86,125 @@ def build_client_template_name(canonical_name: str, client_id: str) -> str:
     return (canonical_name or "").strip() or _sanitize_template_name(canonical_name)
 
 
+def _is_campaign_meta_type(template_type: Optional[str]) -> bool:
+    probe = str(template_type or "").strip().lower()
+    return probe.startswith("campaign_whatsapp")
+
+
+def _normalize_visibility_scope(row: dict) -> str:
+    raw = str((row or {}).get("visibility_scope") or "").strip().lower()
+    if raw in {"global", "client_private"}:
+        return raw
+    return ""
+
+
+def _normalize_owner_client_id(row: dict) -> Optional[str]:
+    value = str((row or {}).get("owner_client_id") or "").strip()
+    return value or None
+
+
+def _is_private_template_row(row: dict) -> bool:
+    scope = _normalize_visibility_scope(row)
+    if scope == "client_private":
+        return True
+    if scope == "global":
+        return False
+    # Legacy fallback before visibility_scope existed.
+    return _is_campaign_meta_type((row or {}).get("type"))
+
+
+def _load_client_owned_campaign_meta_ids(*, client_id: str, candidate_ids: list[str]) -> set[str]:
+    ids = [str(value or "").strip() for value in candidate_ids if str(value or "").strip()]
+    if not ids:
+        return set()
+    try:
+        try:
+            res = (
+                supabase
+                .table("message_templates")
+                .select("meta_template_id,type")
+                .eq("client_id", client_id)
+                .eq("channel", "whatsapp")
+                .eq("variant_key", "campaign")
+                .eq("is_active", True)
+                .in_("meta_template_id", ids)
+                .execute()
+            )
+        except Exception:
+            # Fallback for environments where variant_key is not available yet.
+            res = (
+                supabase
+                .table("message_templates")
+                .select("meta_template_id,type")
+                .eq("client_id", client_id)
+                .eq("channel", "whatsapp")
+                .eq("is_active", True)
+                .in_("meta_template_id", ids)
+                .execute()
+            )
+        return {
+            str((row or {}).get("meta_template_id") or "").strip()
+            for row in (res.data or [])
+            if str((row or {}).get("meta_template_id") or "").strip()
+            and _is_campaign_meta_type((row or {}).get("type"))
+        }
+    except Exception:
+        logger.exception(
+            "❌ Failed loading campaign meta ownership map | client_id=%s",
+            client_id,
+        )
+        return set()
+
+
+def _filter_canonical_templates_for_client(
+    templates: list[dict],
+    *,
+    client_id: str | None,
+) -> list[dict]:
+    if not templates:
+        return []
+
+    visible_rows: list[dict] = []
+    unresolved_private_rows: list[dict] = []
+
+    for row in templates:
+        template = row or {}
+        scope = _normalize_visibility_scope(template)
+        owner_client_id = _normalize_owner_client_id(template)
+
+        if scope == "global":
+            visible_rows.append(template)
+            continue
+
+        if scope == "client_private":
+            if client_id and owner_client_id and str(owner_client_id) == str(client_id):
+                visible_rows.append(template)
+            elif not owner_client_id:
+                unresolved_private_rows.append(template)
+            continue
+
+        if _is_private_template_row(template):
+            unresolved_private_rows.append(template)
+        else:
+            visible_rows.append(template)
+
+    if not unresolved_private_rows:
+        return visible_rows
+    if not client_id:
+        return visible_rows
+
+    fallback_ids = [str((row or {}).get("id") or "").strip() for row in unresolved_private_rows]
+    owned_ids = _load_client_owned_campaign_meta_ids(client_id=client_id, candidate_ids=fallback_ids)
+    if not owned_ids:
+        return visible_rows
+
+    owned_rows = [
+        row for row in unresolved_private_rows
+        if str((row or {}).get("id") or "").strip() in owned_ids
+    ]
+    return [*visible_rows, *owned_rows]
+
+
 def _format_meta_error(response: requests.Response) -> str:
     try:
         payload = response.json()
@@ -710,50 +829,51 @@ def _resolve_channel_waba_id(*, client_id: str, channel: dict) -> Optional[str]:
     return resolved
 
 
-def _load_canonical_templates() -> list[dict]:
-    try:
-        response = (
-            supabase
-            .table("meta_approved_templates")
-            .select("id, template_name, preview_body, language, parameter_count, type, buttons_json")
-            .eq("channel", "whatsapp")
-            .eq("is_active", True)
-            .eq("provision_enabled", True)
-            .order("template_name")
-            .execute()
-        )
-        return response.data or []
-    except Exception as exc:
-        logger.warning(
-            "⚠️ meta_approved_templates provision_enabled/buttons_json unavailable; retrying canonical template query without provision_enabled | error=%s",
-            exc,
-        )
+def _load_canonical_templates(*, client_id: str | None = None) -> list[dict]:
+    attempts: list[tuple[str, bool]] = [
+        (
+            "id, template_name, preview_body, language, parameter_count, type, "
+            "buttons_json, owner_client_id, visibility_scope",
+            True,
+        ),
+        (
+            "id, template_name, preview_body, language, parameter_count, type, "
+            "buttons_json, owner_client_id, visibility_scope",
+            False,
+        ),
+        (
+            "id, template_name, preview_body, language, parameter_count, type, "
+            "owner_client_id, visibility_scope",
+            False,
+        ),
+        ("id, template_name, preview_body, language, parameter_count, type, buttons_json", True),
+        ("id, template_name, preview_body, language, parameter_count, type, buttons_json", False),
+        ("id, template_name, preview_body, language, parameter_count, type", False),
+    ]
+
+    last_error: Exception | None = None
+    for select_fields, with_provision_enabled in attempts:
         try:
-            response = (
+            query = (
                 supabase
                 .table("meta_approved_templates")
-                .select("id, template_name, preview_body, language, parameter_count, type, buttons_json")
+                .select(select_fields)
                 .eq("channel", "whatsapp")
                 .eq("is_active", True)
-                .order("template_name")
-                .execute()
             )
-            return response.data or []
-        except Exception as exc_legacy:
-            logger.warning(
-                "⚠️ meta_approved_templates.buttons_json unavailable; using legacy canonical template query | error=%s",
-                exc_legacy,
-            )
-            response = (
-                supabase
-                .table("meta_approved_templates")
-                .select("id, template_name, preview_body, language, parameter_count, type")
-                .eq("channel", "whatsapp")
-                .eq("is_active", True)
-                .order("template_name")
-                .execute()
-            )
-            return response.data or []
+            if with_provision_enabled:
+                query = query.eq("provision_enabled", True)
+            rows = query.order("template_name").execute().data or []
+            return _filter_canonical_templates_for_client(rows, client_id=client_id)
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    logger.warning(
+        "⚠️ Failed loading canonical Meta templates after compatibility fallbacks | error=%s",
+        last_error,
+    )
+    return []
 
 
 def _list_meta_templates(*, waba_id: str, wa_token: str) -> dict[str, dict]:
@@ -1127,7 +1247,7 @@ def _reconcile_whatsapp_message_bindings_from_sync_rows(*, client_id: str) -> No
         return
 
     preferred_meta_by_type_language: dict[tuple[str, str], str] = {}
-    for row in _load_canonical_templates():
+    for row in _load_canonical_templates(client_id=client_id):
         row_type = str(row.get("type") or "")
         row_id = str(row.get("id") or "")
         if not row_type or not row_id:
@@ -1191,7 +1311,7 @@ def sync_canonical_templates_for_client(
         result["errors"].append("unable_to_resolve_waba_id")
         return result
 
-    canonical_templates = _load_canonical_templates()
+    canonical_templates = _load_canonical_templates(client_id=client_id)
     if not canonical_templates:
         result["success"] = True
         return result

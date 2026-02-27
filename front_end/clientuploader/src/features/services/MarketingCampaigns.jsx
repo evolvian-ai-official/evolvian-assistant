@@ -91,6 +91,16 @@ export default function MarketingCampaigns() {
     failed: isEs ? "Fallidos" : "Failed",
     blocked: isEs ? "Bloqueados política" : "Policy blocked",
     skipped: isEs ? "Omitidos" : "Skipped",
+    updateCampaign: isEs ? "Actualizar campaña" : "Update campaign",
+    editCampaign: isEs ? "Editar" : "Edit",
+    cancelEdit: isEs ? "Cancelar edición" : "Cancel edit",
+    archiveCampaign: isEs ? "Eliminar (lógico)" : "Archive (logical)",
+    archiveConfirm: isEs ? "¿Eliminar esta campaña de forma lógica?" : "Archive this campaign logically?",
+    archiveSuccess: isEs ? "Campaña archivada." : "Campaign archived.",
+    campaignPreview: isEs ? "Ver preview" : "View preview",
+    whatsappEditVersions: isEs
+      ? "Campaña WhatsApp actualizada. Se creó una nueva plantilla para Meta."
+      : "WhatsApp campaign updated. A new Meta template version was created.",
   };
 
   const [loading, setLoading] = useState(true);
@@ -116,11 +126,13 @@ export default function MarketingCampaigns() {
   const [recipientHistory, setRecipientHistory] = useState([]);
   const [selectedRecipients, setSelectedRecipients] = useState({});
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [contentPreviewOpen, setContentPreviewOpen] = useState(false);
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [imageFileName, setImageFileName] = useState("");
   const [whatsAppMetaConnected, setWhatsAppMetaConnected] = useState(false);
+  const [editingCampaignId, setEditingCampaignId] = useState("");
 
   const [form, setForm] = useState({
     name: "",
@@ -282,7 +294,7 @@ export default function MarketingCampaigns() {
 
   const isRecipientBlocked = (row) => {
     if (!row) return false;
-    if (Boolean(row?.selection_blocked)) return true;
+    if (row?.selection_blocked) return true;
     return String(row?.selection_blocked_reason || "").toLowerCase() === "opt_out";
   };
 
@@ -455,6 +467,68 @@ export default function MarketingCampaigns() {
     }
   };
 
+  const startEditCampaign = () => {
+    if (!selectedCampaign) return;
+    setEditingCampaignId(String(selectedCampaign.id || ""));
+    setForm((prev) => ({
+      ...prev,
+      name: selectedCampaign.name || "",
+      channel: selectedCampaign.channel || "email",
+      subject: selectedCampaign.subject || "",
+      body: selectedCampaign.body || "",
+      image_url: selectedCampaign.image_url || "",
+      cta_label: selectedCampaign.cta_label || "",
+      cta_url: selectedCampaign.cta_url || "",
+      language_family: selectedCampaign.language_family || (isEs ? "es" : "en"),
+    }));
+    setImageFileName("");
+    setNotice(null);
+    setError("");
+  };
+
+  const cancelCampaignEdit = () => {
+    setEditingCampaignId("");
+    setForm((prev) => ({
+      ...prev,
+      name: "",
+      subject: "",
+      body: "",
+      image_url: "",
+      cta_label: "",
+      cta_url: "",
+    }));
+    setImageFileName("");
+  };
+
+  const archiveSelectedCampaign = async () => {
+    if (!clientId || !selectedCampaign?.id) return;
+    if (!window.confirm(text.archiveConfirm)) return;
+
+    setBusy(true);
+    setError("");
+    setNotice(null);
+    try {
+      const params = new URLSearchParams({ client_id: clientId });
+      const res = await authFetch(`${API}/marketing/campaigns/${selectedCampaign.id}?${params.toString()}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || "Failed archiving campaign");
+
+      setNotice({ type: "success", message: text.archiveSuccess });
+      await refreshAll();
+      setSelectedCampaignId("");
+      setSelectedCampaignDetail(null);
+      if (String(editingCampaignId || "") === String(selectedCampaign.id || "")) {
+        cancelCampaignEdit();
+      }
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createCampaign = async () => {
     if (!clientId) return;
     if (!form.name.trim() || !form.body.trim()) {
@@ -479,16 +553,31 @@ export default function MarketingCampaigns() {
         language_family: form.language_family,
       };
 
-      const res = await authFetch(`${API}/marketing/campaigns`, {
-        method: "POST",
+      const isEditing = Boolean(editingCampaignId);
+      const endpoint = isEditing
+        ? `${API}/marketing/campaigns/${editingCampaignId}`
+        : `${API}/marketing/campaigns`;
+      const method = isEditing ? "PATCH" : "POST";
+      const requestPayload = isEditing
+        ? { ...payload, channel: undefined }
+        : payload;
+      const res = await authFetch(endpoint, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(requestPayload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.detail || "Failed creating campaign");
+      if (!res.ok) throw new Error(data?.detail || `Failed ${method === "POST" ? "creating" : "updating"} campaign`);
+
+      if (isEditing && String(form.channel || "").toLowerCase() === "whatsapp") {
+        setNotice({ type: "warning", message: text.whatsappEditVersions });
+      } else if (isEditing) {
+        setNotice({ type: "success", message: isEs ? "Campaña actualizada." : "Campaign updated." });
+      }
 
       setForm((prev) => ({ ...prev, name: "", subject: "", body: "", image_url: "", cta_label: "", cta_url: "" }));
       setImageFileName("");
+      setEditingCampaignId("");
       await refreshAll();
       const createdId = data?.campaign?.id;
       if (createdId) setSelectedCampaignId(createdId);
@@ -622,7 +711,12 @@ export default function MarketingCampaigns() {
                 onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
               />
 
-              <select className="ia-form-input" value={form.channel} onChange={(e) => setForm((prev) => ({ ...prev, channel: e.target.value }))}>
+              <select
+                className="ia-form-input"
+                value={form.channel}
+                onChange={(e) => setForm((prev) => ({ ...prev, channel: e.target.value }))}
+                disabled={Boolean(editingCampaignId)}
+              >
                 <option value="email">Email</option>
                 <option value="whatsapp">WhatsApp</option>
               </select>
@@ -718,9 +812,16 @@ export default function MarketingCampaigns() {
                 <option value="en">English</option>
               </select>
 
-              <button type="button" className="ia-button ia-button-primary" disabled={busy || uploadingImage} onClick={createCampaign}>
-                {busy ? text.loading : text.create}
-              </button>
+              <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                <button type="button" className="ia-button ia-button-primary" disabled={busy || uploadingImage} onClick={createCampaign}>
+                  {busy ? text.loading : (editingCampaignId ? text.updateCampaign : text.create)}
+                </button>
+                {editingCampaignId ? (
+                  <button type="button" className="ia-button ia-button-ghost" disabled={busy} onClick={cancelCampaignEdit}>
+                    {text.cancelEdit}
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             <div style={panelStyle}>
@@ -931,9 +1032,36 @@ export default function MarketingCampaigns() {
                     {selectedCampaign.body || ""}
                   </p>
                   <div style={{ marginTop: "0.5rem" }}>
-                    <button type="button" className="ia-button ia-button-ghost" onClick={openCampaignPicker} style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}>
-                      {text.openCampaignPicker}
-                    </button>
+                    <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                      <button type="button" className="ia-button ia-button-ghost" onClick={openCampaignPicker} style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}>
+                        {text.openCampaignPicker}
+                      </button>
+                      <button
+                        type="button"
+                        className="ia-button ia-button-ghost"
+                        style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                        onClick={() => setContentPreviewOpen(true)}
+                      >
+                        {text.campaignPreview}
+                      </button>
+                      <button
+                        type="button"
+                        className="ia-button ia-button-ghost"
+                        style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                        onClick={startEditCampaign}
+                      >
+                        {text.editCampaign}
+                      </button>
+                      <button
+                        type="button"
+                        className="ia-button ia-button-ghost"
+                        style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem", color: "#b91c1c", borderColor: "#fecaca", background: "#fff1f2" }}
+                        onClick={archiveSelectedCampaign}
+                        disabled={busy}
+                      >
+                        {text.archiveCampaign}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -1028,7 +1156,6 @@ export default function MarketingCampaigns() {
                     <option value="active">Active</option>
                     <option value="sent">Sent</option>
                     <option value="paused">Paused</option>
-                    <option value="archived">Archived</option>
                   </select>
                 </div>
 
@@ -1048,6 +1175,54 @@ export default function MarketingCampaigns() {
                       <small style={smallStyle}>{campaign.status}{campaign.subject ? ` · ${campaign.subject}` : ""}</small>
                     </button>
                   ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {contentPreviewOpen && selectedCampaign ? (
+            <div style={modalOverlayStyle} role="dialog" aria-modal="true">
+              <div style={modalCardStyle}>
+                <div style={{ ...rowBetweenStyle, marginBottom: "0.55rem" }}>
+                  <div>
+                    <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{text.campaignPreview}</strong>
+                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.previewContent}</p>
+                  </div>
+                  <button type="button" className="ia-button ia-button-ghost" onClick={() => setContentPreviewOpen(false)}>
+                    {text.close}
+                  </button>
+                </div>
+
+                <div style={{ ...itemCardStyle, background: "#fff" }}>
+                  <div style={{ ...rowBetweenStyle, marginBottom: "0.4rem" }}>
+                    <strong>{selectedCampaign.name}</strong>
+                    <span style={badgeStyle}>{selectedCampaign.channel}</span>
+                  </div>
+                  {selectedCampaign.channel === "email" ? (
+                    <small style={{ ...smallStyle, display: "block", marginBottom: "0.4rem" }}>
+                      {selectedCampaign.subject || selectedCampaign.name}
+                    </small>
+                  ) : null}
+                  <div style={{ whiteSpace: "pre-wrap", color: "#0f172a", fontSize: "0.9rem", lineHeight: 1.45 }}>
+                    {selectedCampaign.body || ""}
+                  </div>
+                  {selectedCampaign.image_url ? (
+                    <img
+                      src={selectedCampaign.image_url}
+                      alt="campaign preview"
+                      style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB" }}
+                    />
+                  ) : null}
+                  {selectedCampaign.cta_url ? (
+                    <a
+                      href={selectedCampaign.cta_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ display: "inline-block", marginTop: "0.55rem", padding: "0.45rem 0.7rem", borderRadius: 8, background: "#1d4ed8", color: "#fff", textDecoration: "none", fontSize: "0.82rem" }}
+                    >
+                      {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
+                    </a>
+                  ) : null}
                 </div>
               </div>
             </div>
