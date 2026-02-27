@@ -314,6 +314,7 @@ def ask_question(
     channel: str = "chat",
     provider: str = "internal",
     return_metadata: bool = False,
+    persist_history: bool = True,
 ) -> Union[str, Dict[str, Any]]:
     try:
         session_id = session_id or str(uuid.uuid4())
@@ -407,8 +408,9 @@ def ask_question(
                 if turn_lang == "es"
                 else "Hi! How can I help you today?"
             )
-            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
-            save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
+            if persist_history:
+                save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
             return _result(answer, confidence_score=0.98, handoff_recommended=False, confidence_reason="greeting")
 
@@ -436,8 +438,9 @@ Rules:
             answer = (resp.content or "").strip() or fallback
 
            
-            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
-            save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
+            if persist_history:
+                save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
             return _result(answer, confidence_score=0.8, handoff_recommended=False, confidence_reason="direct_mode")
 
@@ -457,8 +460,9 @@ Rules:
         if not _has_active_documents(client_id):
             fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
 
-            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
-            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
+            if persist_history:
+                save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
             return _result(
                 fallback_limit,
                 confidence_score=0.05,
@@ -486,8 +490,9 @@ Rules:
         if not os.path.exists(client_data_path):
             fallback_limit = LIMIT_OR_NO_DOCS_FALLBACK.get(turn_lang, LIMIT_OR_NO_DOCS_FALLBACK["en"])
 
-            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
-            save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
+            if persist_history:
+                save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", fallback_limit, channel=channel, provider=provider)
             return _result(
                 fallback_limit,
                 confidence_score=0.05,
@@ -551,8 +556,9 @@ Rules:
         retrieved_docs = retriever.invoke(rewritten_question)
 
         if not retrieved_docs:
-            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
-            save_history(client_id, session_id, "assistant", fallback, channel=channel, provider=provider)
+            if persist_history:
+                save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+                save_history(client_id, session_id, "assistant", fallback, channel=channel, provider=provider)
             return _result(
                 fallback,
                 confidence_score=0.2,
@@ -658,8 +664,9 @@ Rules:
         # =====================================================
         # 💾 Guardar historial
         # =====================================================
-        save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
-        save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
+        if persist_history:
+            save_history(client_id, session_id, "user", original_question, channel=channel, provider=provider)
+            save_history(client_id, session_id, "assistant", answer, channel=channel, provider=provider)
 
         logging.info(f"✅ Respuesta generada para {client_id}: {answer}")
         if answer == fallback:

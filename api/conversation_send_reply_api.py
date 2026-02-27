@@ -72,6 +72,26 @@ def _default_whatsapp_template_language(handoff: dict) -> str:
     return "en_US" if lang.startswith("en") else "es_MX"
 
 
+def _default_whatsapp_handoff_template_name(language_code: str) -> str:
+    normalized = str(language_code or "").strip().lower()
+    if normalized.startswith("en"):
+        return (
+            os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME_EN", "").strip()
+            or os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME", "").strip()
+            or "human_handoff_followup_text_en"
+        )
+    if normalized.startswith("es"):
+        return (
+            os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME_ES", "").strip()
+            or os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME", "").strip()
+            or "human_handoff_followup_text_es"
+        )
+    return (
+        os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME", "").strip()
+        or "human_handoff_followup_text_es"
+    )
+
+
 def _derive_email_thread_id(client_id: str, session_id: str | None, explicit_thread_id: str | None) -> Optional[str]:
     thread_id = str(explicit_thread_id or "").strip()
     if thread_id:
@@ -278,14 +298,13 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
             )
 
             if use_whatsapp_template:
-                template_name = (
-                    str(payload.whatsapp_template_name or "").strip()
-                    or os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME", "").strip()
-                    or "human_handoff_followup_text"
-                )
                 language_code = (
                     str(payload.whatsapp_template_language_code or "").strip()
                     or _default_whatsapp_template_language(handoff)
+                )
+                template_name = (
+                    str(payload.whatsapp_template_name or "").strip()
+                    or _default_whatsapp_handoff_template_name(language_code)
                 )
                 template_result = await send_whatsapp_template_for_client(
                     client_id=payload.client_id,

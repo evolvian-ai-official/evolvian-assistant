@@ -9,14 +9,19 @@
 # ============================================================
 
 from __future__ import annotations
+from datetime import datetime, timezone
 import json
+import logging
 import re
+import unicodedata
 from typing import Any, Dict, Optional
 import traceback
 
 # === Dependencias del proyecto ===
 from api.modules.assistant_rag.supabase_client import supabase, save_history
 from api.modules.assistant_rag.rag_pipeline import ask_question
+
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # 🧩 Importar handler de calendario
@@ -175,6 +180,316 @@ def set_intent(client_id: str, session_id: str, intent: str) -> None:
     state.setdefault("collected", {})
     state.setdefault("status", "collecting")
     upsert_state(client_id, session_id, state)
+
+
+def _normalize_channel_name(raw: str | None) -> str:
+    c = (raw or "chat").strip().lower()
+    if c in {"widget", "web", "chat_widget"}:
+        return "chat"
+    if "whatsapp" in c:
+        return "whatsapp"
+    return c
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
+
+
+def _is_whatsapp_handoff_request(message: str) -> bool:
+    text = _normalize_text(message).strip()
+    if not text:
+        return False
+    phrases = (
+        "quiero humano",
+        "agente humano",
+        "asesor humano",
+        "hablar con humano",
+        "hablar con agente",
+        "pasame con humano",
+        "pasame con un agente",
+        "persona real",
+        "quiero hablar con alguien",
+        "human agent",
+        "real person",
+        "talk to an agent",
+        "speak to an agent",
+        "connect me with support",
+    )
+    return any(p in text for p in phrases)
+
+
+def _scope_redirect_message(lang: str) -> str:
+    if lang == "en":
+        return (
+            "I can help with questions related to this business. "
+            "If you tell me what you need about services, pricing, appointments, or support, "
+            "I can help right now."
+        )
+    return (
+        "Puedo ayudarte con consultas relacionadas con este negocio. "
+        "Si me dices qué necesitas sobre servicios, precios, citas o soporte, te ayudo ahora mismo."
+    )
+
+
+def _scope_outside_message(lang: str) -> str:
+    if lang == "en":
+        return (
+            "That question is outside what I can resolve here. "
+            "If you want, I can connect you with a human agent to review it."
+        )
+    return "Esa consulta está fuera de lo que puedo resolver aquí. Si quieres, te conecto con un agente humano para revisarlo."
+
+
+def _whatsapp_handoff_confirmation_message(lang: str) -> str:
+    if lang == "en":
+        return (
+            "Thanks. A human agent is now reviewing this and we will reply as soon as possible "
+            "through this same chat."
+        )
+    return (
+        "Gracias. Ya lo estamos revisando con un agente humano y te responderemos "
+        "lo más pronto posible por este mismo chat."
+    )
+
+
+def _extract_phone_from_session(session_id: str) -> str | None:
+    raw = str(session_id or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("whatsapp-"):
+        raw = raw[len("whatsapp-") :]
+    cleaned = re.sub(r"[^\d+]", "", raw)
+    return cleaned or None
+
+
+def _last_assistant_was_scope_redirect(client_id: str, session_id: str) -> bool:
+    try:
+        res = (
+            supabase.table("history")
+            .select("metadata")
+            .eq("client_id", client_id)
+            .eq("session_id", session_id)
+            .eq("channel", "whatsapp")
+            .eq("role", "assistant")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        row = (res.data or [None])[0]
+        if not row:
+            return False
+        metadata = row.get("metadata")
+        if isinstance(metadata, str):
+            metadata = _coerce_dict(metadata)
+        if not isinstance(metadata, dict):
+            return False
+        policy = metadata.get("whatsapp_policy")
+        if not isinstance(policy, dict):
+            return False
+        return str(policy.get("event") or "") == "out_of_scope_redirect"
+    except Exception as e:
+        logger.warning("Could not resolve previous WhatsApp scope marker: %s", e)
+        return False
+
+
+def _client_has_handoff_feature(client_id: str) -> bool:
+    try:
+        from api.utils.feature_access import client_has_active_feature
+
+        return bool(client_has_active_feature(client_id, "handoff"))
+    except Exception as e:
+        logger.warning("Could not validate handoff feature for client %s: %s", client_id, e)
+        return False
+
+
+def _upsert_whatsapp_handoff(
+    *,
+    client_id: str,
+    session_id: str,
+    user_message: str,
+    ai_message: str,
+    trigger: str,
+    reason: str,
+    language: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "feature_enabled": False,
+        "handoff_id": None,
+        "conversation_id": None,
+        "alert_created": False,
+        "reused": False,
+    }
+    if not _client_has_handoff_feature(client_id):
+        return result
+
+    result["feature_enabled"] = True
+    now_iso = datetime.now(timezone.utc).isoformat()
+    phone = _extract_phone_from_session(session_id)
+    contact_name = "WhatsApp user"
+    if phone and len(phone) >= 4:
+        contact_name = f"WhatsApp user {phone[-4:]}"
+
+    conversation_id = None
+    try:
+        convo_res = (
+            supabase.table("conversations")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+        if convo_res and convo_res.data:
+            conversation_id = convo_res.data.get("id")
+            (
+                supabase.table("conversations")
+                .update(
+                    {
+                        "status": "needs_human",
+                        "primary_channel": "whatsapp",
+                        "contact_name": contact_name,
+                        "contact_phone": phone,
+                        "latest_message_at": now_iso,
+                        "last_message_preview": (user_message or ai_message or "")[:240] or None,
+                        "updated_at": now_iso,
+                    }
+                )
+                .eq("id", conversation_id)
+                .eq("client_id", client_id)
+                .execute()
+            )
+        else:
+            convo_insert = (
+                supabase.table("conversations")
+                .insert(
+                    {
+                        "client_id": client_id,
+                        "session_id": session_id,
+                        "status": "needs_human",
+                        "primary_channel": "whatsapp",
+                        "contact_name": contact_name,
+                        "contact_phone": phone,
+                        "latest_message_at": now_iso,
+                        "last_message_preview": (user_message or ai_message or "")[:240] or None,
+                        "updated_at": now_iso,
+                    }
+                )
+                .execute()
+            )
+            if convo_insert and convo_insert.data:
+                conversation_id = convo_insert.data[0].get("id")
+    except Exception as e:
+        logger.warning("Could not upsert conversation for WhatsApp handoff: %s", e)
+
+    result["conversation_id"] = conversation_id
+
+    handoff_id = None
+    try:
+        open_res = (
+            supabase.table("conversation_handoff_requests")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("session_id", session_id)
+            .eq("channel", "whatsapp")
+            .in_("status", ["open", "assigned", "in_progress"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        open_row = (open_res.data or [None])[0]
+        if open_row:
+            handoff_id = open_row.get("id")
+            result["reused"] = True
+            (
+                supabase.table("conversation_handoff_requests")
+                .update(
+                    {
+                        "conversation_id": conversation_id,
+                        "contact_name": contact_name,
+                        "contact_phone": phone,
+                        "trigger": trigger,
+                        "reason": reason,
+                        "last_user_message": (user_message or "").strip() or None,
+                        "last_ai_message": (ai_message or "").strip() or None,
+                        "updated_at": now_iso,
+                    }
+                )
+                .eq("id", handoff_id)
+                .eq("client_id", client_id)
+                .execute()
+            )
+        else:
+            insert_res = (
+                supabase.table("conversation_handoff_requests")
+                .insert(
+                    {
+                        "client_id": client_id,
+                        "conversation_id": conversation_id,
+                        "session_id": session_id,
+                        "channel": "whatsapp",
+                        "trigger": trigger,
+                        "reason": reason,
+                        "status": "open",
+                        "contact_name": contact_name,
+                        "contact_phone": phone,
+                        "accepted_terms": True,
+                        "accepted_email_marketing": False,
+                        "last_user_message": (user_message or "").strip() or None,
+                        "last_ai_message": (ai_message or "").strip() or None,
+                        "metadata": {
+                            "language": "en" if language == "en" else "es",
+                            "auto_handoff": True,
+                            "origin": "whatsapp_policy",
+                        },
+                        "updated_at": now_iso,
+                    }
+                )
+                .execute()
+            )
+            if insert_res and insert_res.data:
+                handoff_id = insert_res.data[0].get("id")
+    except Exception as e:
+        logger.warning("Could not create/update WhatsApp handoff request: %s", e)
+
+    result["handoff_id"] = handoff_id
+    if not handoff_id:
+        return result
+
+    try:
+        existing_alert_res = (
+            supabase.table("conversation_alerts")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("source_handoff_request_id", handoff_id)
+            .in_("status", ["open", "acknowledged"])
+            .limit(1)
+            .execute()
+        )
+        if existing_alert_res and existing_alert_res.data:
+            return result
+
+        alert_res = (
+            supabase.table("conversation_alerts")
+            .insert(
+                {
+                    "client_id": client_id,
+                    "conversation_id": conversation_id,
+                    "source_handoff_request_id": handoff_id,
+                    "alert_type": "human_intervention",
+                    "status": "open",
+                    "priority": "normal",
+                    "title": "Human intervention requested",
+                    "body": (user_message or ai_message or "WhatsApp escalation request")[:500],
+                }
+            )
+            .execute()
+        )
+        result["alert_created"] = bool(alert_res and getattr(alert_res, "data", None))
+    except Exception as e:
+        logger.warning("Could not upsert WhatsApp alert for handoff=%s: %s", handoff_id, e)
+
+    return result
 
 # ============================================================
 # 🚦 Router lógico
@@ -375,6 +690,57 @@ async def process_user_message(
     print(f"🤖 [Router] Processing message from {channel}: {message}")
     lang = detect_language(message)
     print(f"🌍 Detected language: {lang}")
+    normalized_channel = _normalize_channel_name(channel)
+    is_whatsapp = normalized_channel == "whatsapp"
+
+    if is_whatsapp and _is_whatsapp_handoff_request(message):
+        handoff_info = _upsert_whatsapp_handoff(
+            client_id=client_id,
+            session_id=session_id,
+            user_message=message,
+            ai_message="",
+            trigger="user_requested_human",
+            reason="user_requested_human",
+            language=lang,
+        )
+        answer = (
+            _whatsapp_handoff_confirmation_message(lang)
+            if handoff_info.get("handoff_id")
+            else _scope_outside_message(lang)
+        )
+        save_history(
+            client_id,
+            session_id,
+            "user",
+            message,
+            channel=channel,
+            provider=provider,
+        )
+        save_history(
+            client_id,
+            session_id,
+            "assistant",
+            answer,
+            channel=channel,
+            provider=provider,
+            metadata={
+                "whatsapp_policy": {
+                    "event": "explicit_handoff_request",
+                    "handoff_id": handoff_info.get("handoff_id"),
+                    "feature_enabled": bool(handoff_info.get("feature_enabled")),
+                }
+            },
+        )
+        payload = {
+            "answer": answer,
+            "confidence_score": 0.95,
+            "handoff_recommended": bool(handoff_info.get("handoff_id")),
+            "human_intervention_recommended": bool(handoff_info.get("handoff_id")),
+            "needs_human": bool(handoff_info.get("handoff_id")),
+            "handoff_reason": "user_requested_human" if handoff_info.get("handoff_id") else None,
+            "confidence_reason": "whatsapp_explicit_handoff_request",
+        }
+        return payload if return_metadata else answer
 
     route = route_message(client_id, session_id, message, channel=channel)
 
@@ -460,6 +826,121 @@ async def process_user_message(
     # 💬 Flujo RAG
     print("💬 Routing → RAG")
     base_message = [{"role": "user", "content": message}]
+
+    if is_whatsapp:
+        rag_payload = ask_question(
+            base_message,
+            client_id,
+            session_id=session_id,
+            channel=channel,
+            provider=provider,
+            return_metadata=True,
+            persist_history=False,
+        )
+        if not isinstance(rag_payload, dict):
+            rag_payload = {
+                "answer": str(rag_payload or ""),
+                "confidence_score": 0.5,
+                "handoff_recommended": False,
+                "human_intervention_recommended": False,
+                "needs_human": False,
+                "handoff_reason": None,
+                "confidence_reason": "whatsapp_rag_non_metadata_payload",
+            }
+
+        answer = str(rag_payload.get("answer") or "")
+        confidence_score = float(rag_payload.get("confidence_score") or 0.5)
+        handoff_recommended = bool(rag_payload.get("handoff_recommended"))
+        handoff_reason = rag_payload.get("handoff_reason")
+        confidence_reason = str(rag_payload.get("confidence_reason") or "")
+
+        assistant_metadata: dict[str, Any] = {
+            "rag": {
+                "confidence_score": confidence_score,
+                "handoff_recommended": handoff_recommended,
+                "handoff_reason": handoff_reason,
+                "confidence_reason": confidence_reason,
+            }
+        }
+
+        out_of_scope_reasons = {
+            "rag_fallback_response",
+            "retriever_returned_no_docs",
+            "anti_hallucination_fallback",
+        }
+        is_out_of_scope = handoff_recommended and confidence_reason in out_of_scope_reasons
+
+        if is_out_of_scope:
+            if _last_assistant_was_scope_redirect(client_id, session_id):
+                handoff_info = _upsert_whatsapp_handoff(
+                    client_id=client_id,
+                    session_id=session_id,
+                    user_message=message,
+                    ai_message=answer,
+                    trigger="ai_out_of_scope_consecutive",
+                    reason="out_of_scope_consecutive",
+                    language=lang,
+                )
+                if handoff_info.get("handoff_id"):
+                    answer = _whatsapp_handoff_confirmation_message(lang)
+                    handoff_recommended = True
+                    handoff_reason = "out_of_scope_consecutive"
+                    confidence_reason = "whatsapp_auto_handoff_second_out_of_scope"
+                    assistant_metadata["whatsapp_policy"] = {
+                        "event": "auto_handoff_after_out_of_scope",
+                        "handoff_id": handoff_info.get("handoff_id"),
+                        "feature_enabled": bool(handoff_info.get("feature_enabled")),
+                    }
+                else:
+                    answer = _scope_outside_message(lang)
+                    handoff_recommended = False
+                    handoff_reason = None
+                    confidence_reason = "whatsapp_out_of_scope_handoff_unavailable"
+                    assistant_metadata["whatsapp_policy"] = {
+                        "event": "out_of_scope_handoff_unavailable",
+                        "feature_enabled": bool(handoff_info.get("feature_enabled")),
+                    }
+            else:
+                answer = _scope_redirect_message(lang)
+                handoff_recommended = False
+                handoff_reason = None
+                confidence_reason = "whatsapp_out_of_scope_redirect"
+                assistant_metadata["whatsapp_policy"] = {
+                    "event": "out_of_scope_redirect",
+                }
+
+        if lang == "es" and answer and not str(answer).strip().endswith("."):
+            answer = str(answer) + "."
+
+        save_history(
+            client_id,
+            session_id,
+            "user",
+            message,
+            channel=channel,
+            provider=provider,
+        )
+        save_history(
+            client_id,
+            session_id,
+            "assistant",
+            answer,
+            channel=channel,
+            provider=provider,
+            metadata=assistant_metadata,
+        )
+
+        payload = {
+            "answer": answer,
+            "confidence_score": confidence_score,
+            "handoff_recommended": bool(handoff_recommended),
+            "human_intervention_recommended": bool(handoff_recommended),
+            "needs_human": bool(handoff_recommended),
+            "handoff_reason": handoff_reason,
+            "confidence_reason": confidence_reason,
+        }
+        return payload if return_metadata else answer
+
     answer = ask_question(
         base_message,
         client_id,
