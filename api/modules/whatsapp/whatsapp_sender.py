@@ -1,6 +1,7 @@
 import httpx
 import os
 import logging
+import re
 from typing import List, Optional
 
 from api.compliance.outbound_policy import (
@@ -13,6 +14,17 @@ from api.security.whatsapp_token_crypto import decrypt_whatsapp_token
 logger = logging.getLogger(__name__)
 
 MAX_WHATSAPP_LENGTH = 4096
+
+
+def _sanitize_meta_template_param(value: str) -> str:
+    """
+    Meta template text params cannot include new lines/tabs
+    or runs of >4 consecutive spaces.
+    """
+    text = str(value or "")
+    text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    text = re.sub(r" {2,}", " ", text)
+    return text.strip()
 
 
 # =====================================================
@@ -224,7 +236,9 @@ async def send_meta_template(
             "raw": None,
         }
 
-    if any(p is None or str(p).strip() == "" for p in parameters):
+    normalized_parameters = [_sanitize_meta_template_param(str(p or "")) for p in parameters]
+
+    if any(p == "" for p in normalized_parameters):
         return {
             "success": False,
             "meta_message_id": None,
@@ -245,8 +259,8 @@ async def send_meta_template(
             {
                 "type": "body",
                 "parameters": [
-                    {"type": "text", "text": str(p)}
-                    for p in parameters
+                    {"type": "text", "text": p}
+                    for p in normalized_parameters
                 ],
             }
         ]
