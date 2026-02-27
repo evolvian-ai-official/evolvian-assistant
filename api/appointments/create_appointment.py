@@ -4,6 +4,7 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict
+import asyncio
 import uuid
 import logging
 import json
@@ -20,6 +21,10 @@ from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.authz import authorize_client_request
 from api.internal_auth import has_valid_internal_token
 from api.appointments.cancel_link_tokens import build_cancel_link, generate_cancel_token
+from api.appointments.cancellation_notifications import (
+    send_appointment_cancellation_email_notification,
+    send_appointment_cancellation_notification,
+)
 from api.appointments.template_language_resolution import (
     get_client_default_language_preferences,
     normalize_language_preferences,
@@ -1022,7 +1027,10 @@ async def create_appointment(payload: CreateAppointmentPayload):
         by_email = (
             supabase
             .table("appointments")
-            .select("id, scheduled_time, status, user_email, user_phone")
+            .select(
+                "id, client_id, scheduled_time, status, user_name, user_email, "
+                "user_phone, appointment_type, recipient_language, recipient_locale"
+            )
             .eq("client_id", str(payload.client_id))
             .eq("status", "confirmed")
             .eq("user_email", email_value)
@@ -1038,7 +1046,10 @@ async def create_appointment(payload: CreateAppointmentPayload):
         by_phone = (
             supabase
             .table("appointments")
-            .select("id, scheduled_time, status, user_email, user_phone")
+            .select(
+                "id, client_id, scheduled_time, status, user_name, user_email, "
+                "user_phone, appointment_type, recipient_language, recipient_locale"
+            )
             .eq("client_id", str(payload.client_id))
             .eq("status", "confirmed")
             .eq("user_phone", phone_value)
@@ -1068,8 +1079,10 @@ async def create_appointment(payload: CreateAppointmentPayload):
         }
 
     existing_id_to_replace = None
+    existing_to_replace_snapshot = None
     if existing_active and payload.replace_existing:
         existing_id_to_replace = existing_active.get("id")
+        existing_to_replace_snapshot = existing_active
 
     # =====================================================
     # 🚫 Overlap de horario (no permite dos confirmadas al mismo tiempo)
@@ -1151,15 +1164,51 @@ async def create_appointment(payload: CreateAppointmentPayload):
         }
 
     if existing_id_to_replace:
+        replacement_cancellation_whatsapp_sent = False
+        now_iso_update = datetime.utcnow().isoformat()
+
         supabase.table("appointments").update({
             "status": "cancelled",
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": now_iso_update,
         }).eq("id", existing_id_to_replace).execute()
 
         supabase.table("appointment_reminders").update({
             "status": "cancelled",
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": now_iso_update,
         }).eq("appointment_id", existing_id_to_replace).in_("status", ["pending", "processing"]).execute()
+
+        if existing_to_replace_snapshot:
+            cancellation_payload = {
+                "id": existing_id_to_replace,
+                "client_id": existing_to_replace_snapshot.get("client_id") or str(payload.client_id),
+                "user_name": existing_to_replace_snapshot.get("user_name"),
+                "user_email": existing_to_replace_snapshot.get("user_email"),
+                "user_phone": existing_to_replace_snapshot.get("user_phone"),
+                "scheduled_time": existing_to_replace_snapshot.get("scheduled_time"),
+                "appointment_type": existing_to_replace_snapshot.get("appointment_type"),
+                "recipient_language": existing_to_replace_snapshot.get("recipient_language"),
+                "recipient_locale": existing_to_replace_snapshot.get("recipient_locale"),
+            }
+
+            try:
+                replacement_cancellation_whatsapp_sent = await send_appointment_cancellation_notification(cancellation_payload)
+            except Exception:
+                logger.exception(
+                    "❌ Replaced appointment cancellation WhatsApp notification crashed | client_id=%s | appointment_id=%s",
+                    str(payload.client_id),
+                    existing_id_to_replace,
+                )
+
+            try:
+                send_appointment_cancellation_email_notification(cancellation_payload)
+            except Exception:
+                logger.exception(
+                    "❌ Replaced appointment cancellation email notification crashed | client_id=%s | appointment_id=%s",
+                    str(payload.client_id),
+                    existing_id_to_replace,
+                )
+    else:
+        replacement_cancellation_whatsapp_sent = False
 
     recipient_language, recipient_locale = _resolve_payload_recipient_language(payload)
     appointment_data = {
@@ -1216,6 +1265,10 @@ async def create_appointment(payload: CreateAppointmentPayload):
             "recipient_language": appointment.get("recipient_language") or recipient_language,
             "recipient_locale": appointment.get("recipient_locale") or recipient_locale,
         }
+
+        if existing_id_to_replace and replacement_cancellation_whatsapp_sent:
+            # In reschedules, give Meta a brief head start so cancellation is delivered first.
+            await asyncio.sleep(1.5)
 
         await send_appointment_confirmation(appointment_for_confirmation)
         send_appointment_email_confirmation(appointment_for_confirmation)
