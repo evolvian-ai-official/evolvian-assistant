@@ -108,6 +108,7 @@ def get_history(
                 "provider": r.get("provider", "internal"),
                 "status": r.get("status", "sent"),
                 "source_id": r.get("source_id"),
+                "metadata": r.get("metadata"),
             })
             if len(results) >= limit:
                 break

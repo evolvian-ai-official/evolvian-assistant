@@ -61,6 +61,53 @@ const getDefaultReplyChannel = (handoff) => {
   return origin || "";
 };
 
+const resolveWhatsappTemplateLanguage = (handoff) => {
+  const raw = String(handoff?.metadata?.language || "").trim().toLowerCase();
+  return raw.startsWith("en") ? "en_US" : "es_MX";
+};
+
+const resolveWhatsappTemplateName = (languageCode) => {
+  const normalized = String(languageCode || "").trim().toLowerCase();
+  const shared = String(import.meta.env.VITE_WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME || "").trim();
+  if (normalized.startsWith("en")) {
+    return (
+      String(import.meta.env.VITE_WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME_EN || "").trim() ||
+      shared ||
+      "human_handoff_followup_text_en"
+    );
+  }
+  return (
+    String(import.meta.env.VITE_WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME_ES || "").trim() ||
+    shared ||
+    "human_handoff_followup_text_es"
+  );
+};
+
+const getHumanDeliveryMode = (message) => {
+  const metadataRaw = message?.metadata;
+  let metadata = metadataRaw;
+  if (typeof metadataRaw === "string") {
+    try {
+      metadata = JSON.parse(metadataRaw);
+    } catch {
+      metadata = null;
+    }
+  }
+  if (!metadata || typeof metadata !== "object") return "";
+  const delivery = metadata.delivery;
+  if (!delivery || typeof delivery !== "object") return "";
+  return String(delivery.delivery_mode || "").trim().toLowerCase();
+};
+
+const humanDeliveryModeLabel = (mode, isEs) => {
+  if (mode === "template") return isEs ? "enviado con template" : "sent via template";
+  if (mode === "free_text") return isEs ? "enviado como texto directo" : "sent as direct text";
+  if (mode === "free_text_fallback_to_template") {
+    return isEs ? "texto directo falló, enviado con template" : "direct text failed, sent via template";
+  }
+  return "";
+};
+
 export default function InboxHandoff() {
   const clientId = useClientId();
   const { lang } = useLanguage();
@@ -373,9 +420,6 @@ export default function InboxHandoff() {
       };
       if (replyChannel === "email") {
         payload.subject = String(emailReplySubject || "").trim() || "Re: Follow-up from support";
-      }
-      if (replyChannel === "whatsapp" && originChannel !== "whatsapp") {
-        payload.whatsapp_use_template = true;
       }
 
       const res = await authFetch(
@@ -868,6 +912,8 @@ function TimelineCard({ messages, isEs }) {
             const sourceType = String(msg.source_type || "").toLowerCase();
             const isUser = role === "user";
             const isHumanAgent = sourceType === "human_agent";
+            const deliveryMode = isHumanAgent ? getHumanDeliveryMode(msg) : "";
+            const deliveryModeLabel = humanDeliveryModeLabel(deliveryMode, isEs);
             return (
               <div
                 key={`${msg.created_at || idx}-${idx}`}
@@ -897,6 +943,22 @@ function TimelineCard({ messages, isEs }) {
                   </span>
                   {msg.channel ? <span>· {channelLabel(msg.channel)}</span> : null}
                   {isHumanAgent ? <span>· {isEs ? "humano" : "human"}</span> : null}
+                  {deliveryModeLabel ? (
+                    <span
+                      style={{
+                        background: "#ECFAF5",
+                        color: "#1F7C67",
+                        border: "1px solid #A3D9B1",
+                        borderRadius: "999px",
+                        padding: "0.1rem 0.4rem",
+                        fontSize: "0.72rem",
+                        fontWeight: 700,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {deliveryModeLabel}
+                    </span>
+                  ) : null}
                   {msg.created_at ? <span>· {fmtDate(msg.created_at)}</span> : null}
                 </div>
                 <div className="ia-break-anywhere" style={{ color: "#274472", whiteSpace: "pre-wrap" }}>
@@ -938,6 +1000,8 @@ function SuggestedReplyCard({
   const normalizedChannel = normalizeChannel(replyChannelOverride) || getDefaultReplyChannel(handoff);
   const sendSupported = normalizedChannel === "email" || normalizedChannel === "whatsapp";
   const sendDisabled = disabled || sending || !sendSupported || !String(suggestedReply || "").trim();
+  const whatsappTemplateLanguage = resolveWhatsappTemplateLanguage(handoff);
+  const whatsappTemplateName = resolveWhatsappTemplateName(whatsappTemplateLanguage);
   const contactMissing =
     normalizedChannel === "email"
       ? !String(handoff?.contact_email || "").trim()
@@ -1112,8 +1176,8 @@ function SuggestedReplyCard({
         {normalizedChannel === "whatsapp" ? (
           <div style={{ color: "#8A6400", fontSize: "0.82rem" }}>
             {isEs
-              ? "Para follow-up por WhatsApp desde handoff usamos un template con variable libre (ej. {{1}}) para insertar este texto."
-              : "For WhatsApp handoff follow-up we use a template with a free-text variable (e.g. {{1}}) to insert this message."}
+              ? `Comportamiento automático en WhatsApp: dentro de la ventana de 24 horas se envía texto directo (sin template); fuera de ventana se envía template con variable libre (ej. {{1}}). Template configurado: ${whatsappTemplateName} · Idioma: ${whatsappTemplateLanguage}`
+              : `Automatic WhatsApp behavior: within the 24-hour window we send direct text (no template); outside the window we send a template with a free-text variable (e.g. {{1}}). Configured template: ${whatsappTemplateName} · Language: ${whatsappTemplateLanguage}`}
           </div>
         ) : null}
 

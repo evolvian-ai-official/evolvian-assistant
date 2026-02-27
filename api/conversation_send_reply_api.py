@@ -92,6 +92,103 @@ def _default_whatsapp_handoff_template_name(language_code: str) -> str:
     )
 
 
+def _normalize_iso_datetime(value: str | None) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _phone_candidates(value: str | None) -> list[str]:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if not digits:
+        return []
+
+    candidates = {digits}
+    if digits.startswith("521") and len(digits) > 3:
+        candidates.add(f"52{digits[3:]}")
+    if digits.startswith("52") and len(digits) > 2:
+        candidates.add(f"521{digits[2:]}")
+
+    ordered = sorted(candidates, key=lambda x: (len(x), x))
+    return ordered
+
+
+def _build_whatsapp_session_candidates(session_id: str | None, phone: str | None) -> list[str]:
+    values: set[str] = set()
+    base = str(session_id or "").strip()
+    if base:
+        values.add(base)
+
+    for candidate in _phone_candidates(phone):
+        values.add(f"whatsapp-{candidate}")
+        values.add(f"whatsapp-+{candidate}")
+
+    return sorted(values)
+
+
+def _resolve_whatsapp_free_text_window(
+    *,
+    client_id: str,
+    session_id: str | None,
+    contact_phone: str | None,
+) -> dict:
+    window_hours_raw = os.getenv("WHATSAPP_FREE_TEXT_WINDOW_HOURS", "24").strip()
+    try:
+        window_hours = max(1, int(window_hours_raw))
+    except Exception:
+        window_hours = 24
+
+    result = {
+        "window_hours": window_hours,
+        "is_open": False,
+        "last_user_message_at": None,
+        "matched_session_id": None,
+    }
+
+    candidates = _build_whatsapp_session_candidates(session_id, contact_phone)
+    if not candidates:
+        return result
+
+    try:
+        res = (
+            supabase.table("history")
+            .select("created_at,session_id")
+            .eq("client_id", client_id)
+            .eq("channel", "whatsapp")
+            .eq("role", "user")
+            .in_("session_id", candidates)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        row = (res.data or [None])[0]
+    except Exception as e:
+        logger.warning("Could not resolve WhatsApp free-text window | client_id=%s err=%s", client_id, e)
+        return result
+
+    if not row:
+        return result
+
+    last_at_raw = row.get("created_at")
+    last_at = _normalize_iso_datetime(last_at_raw)
+    if not last_at:
+        return result
+    if last_at.tzinfo is None:
+        last_at = last_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    age_seconds = (now - last_at).total_seconds()
+    is_open = age_seconds <= (window_hours * 3600)
+
+    result["is_open"] = bool(is_open)
+    result["last_user_message_at"] = str(last_at_raw or "")
+    result["matched_session_id"] = row.get("session_id")
+    return result
+
+
 def _derive_email_thread_id(client_id: str, session_id: str | None, explicit_thread_id: str | None) -> Optional[str]:
     thread_id = str(explicit_thread_id or "").strip()
     if thread_id:
@@ -290,22 +387,27 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
             if not to_number:
                 raise HTTPException(status_code=422, detail="Handoff has no contact_phone")
 
-            # Widget-origin follow-up usually requires a template (outside active 24h chat window).
+            whatsapp_window = _resolve_whatsapp_free_text_window(
+                client_id=payload.client_id,
+                session_id=handoff.get("session_id"),
+                contact_phone=to_number,
+            )
+            auto_use_template = not bool(whatsapp_window.get("is_open"))
             use_whatsapp_template = (
                 bool(payload.whatsapp_use_template)
                 if payload.whatsapp_use_template is not None
-                else origin_channel in {"widget", "chat", "email", ""}
+                else auto_use_template
+            )
+            language_code = (
+                str(payload.whatsapp_template_language_code or "").strip()
+                or _default_whatsapp_template_language(handoff)
+            )
+            template_name = (
+                str(payload.whatsapp_template_name or "").strip()
+                or _default_whatsapp_handoff_template_name(language_code)
             )
 
             if use_whatsapp_template:
-                language_code = (
-                    str(payload.whatsapp_template_language_code or "").strip()
-                    or _default_whatsapp_template_language(handoff)
-                )
-                template_name = (
-                    str(payload.whatsapp_template_name or "").strip()
-                    or _default_whatsapp_handoff_template_name(language_code)
-                )
                 template_result = await send_whatsapp_template_for_client(
                     client_id=payload.client_id,
                     to_number=to_number,
@@ -334,6 +436,11 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
                     "meta_message_id": template_result.get("meta_message_id"),
                     "template_parameters_count": 1,
                     "origin_channel": origin_channel,
+                    "window_open": bool(whatsapp_window.get("is_open")),
+                    "window_hours": whatsapp_window.get("window_hours"),
+                    "last_user_whatsapp_message_at": whatsapp_window.get("last_user_message_at"),
+                    "window_session_id": whatsapp_window.get("matched_session_id"),
+                    "delivery_mode": "template",
                 }
                 provider = "meta"
             else:
@@ -346,15 +453,55 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
                     policy_source_id=handoff_id,
                 )
                 if not sent:
-                    raise HTTPException(status_code=502, detail="WhatsApp send failed")
-
-                delivery_meta = {
-                    "provider": "meta",
-                    "to_phone": to_number,
-                    "origin_channel": origin_channel,
-                    "delivery_mode": "free_text",
-                }
-                provider = "meta"
+                    # Best-effort fallback: if free-text failed in auto mode, retry with template.
+                    if payload.whatsapp_use_template is None:
+                        template_result = await send_whatsapp_template_for_client(
+                            client_id=payload.client_id,
+                            to_number=to_number,
+                            template_name=template_name,
+                            parameters=[message],
+                            language_code=language_code,
+                            purpose="transactional",
+                            policy_source="conversation_handoff_send_reply_template_fallback",
+                            policy_source_id=handoff_id,
+                        )
+                        if not template_result.get("success"):
+                            raise HTTPException(
+                                status_code=502,
+                                detail=(
+                                    "WhatsApp send failed in both free-text and template modes. "
+                                    f"Template error: {template_result.get('error')}"
+                                ),
+                            )
+                        delivery_meta = {
+                            "provider": "meta_template",
+                            "to_phone": to_number,
+                            "template_name": template_name,
+                            "language_code": language_code,
+                            "meta_message_id": template_result.get("meta_message_id"),
+                            "template_parameters_count": 1,
+                            "origin_channel": origin_channel,
+                            "window_open": bool(whatsapp_window.get("is_open")),
+                            "window_hours": whatsapp_window.get("window_hours"),
+                            "last_user_whatsapp_message_at": whatsapp_window.get("last_user_message_at"),
+                            "window_session_id": whatsapp_window.get("matched_session_id"),
+                            "delivery_mode": "free_text_fallback_to_template",
+                        }
+                        provider = "meta"
+                    else:
+                        raise HTTPException(status_code=502, detail="WhatsApp send failed")
+                else:
+                    delivery_meta = {
+                        "provider": "meta",
+                        "to_phone": to_number,
+                        "origin_channel": origin_channel,
+                        "delivery_mode": "free_text",
+                        "window_open": bool(whatsapp_window.get("is_open")),
+                        "window_hours": whatsapp_window.get("window_hours"),
+                        "last_user_whatsapp_message_at": whatsapp_window.get("last_user_message_at"),
+                        "window_session_id": whatsapp_window.get("matched_session_id"),
+                    }
+                    provider = "meta"
 
         elif channel in {"widget", "chat", ""}:
             raise HTTPException(

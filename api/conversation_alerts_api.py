@@ -61,7 +61,7 @@ def list_conversation_alerts(
                     .select(
                         "id,session_id,channel,trigger,reason,confidence_score,contact_name,contact_email,"
                         "contact_phone,accepted_terms,accepted_email_marketing,last_user_message,last_ai_message,"
-                        "created_at,status,assigned_user_id,internal_resolution_note,resolved_at,updated_at"
+                        "created_at,status,assigned_user_id,internal_resolution_note,resolved_at,updated_at,metadata"
                     )
                     .in_("id", handoff_ids)
                     .execute()
