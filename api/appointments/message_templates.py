@@ -534,6 +534,11 @@ def get_template_types(request: Request):
                 continue
             if row.get("is_active") is False or row.get("active") is False:
                 continue
+            type_id = str(row.get("id") or "").strip().lower()
+            # Hide internal marketing snapshot template types from generic
+            # template-type pickers in Templates UI.
+            if re.match(r"^campaign_(email|whatsapp)(_|$)", type_id):
+                continue
             cleaned_rows.append({
                 "id": row.get("id"),
                 "description": row.get("description"),

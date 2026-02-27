@@ -273,10 +273,30 @@ def intent_router_rag_env(monkeypatch):
     def _save_history(*args, **kwargs):
         events.append({"args": args, "kwargs": kwargs})
 
-    def _fake_ask_question(messages, client_id, session_id=None, channel=None, provider=None):
+    def _fake_ask_question(
+        messages,
+        client_id,
+        session_id=None,
+        channel=None,
+        provider=None,
+        return_metadata=False,
+        persist_history=True,
+    ):
         last_message = (messages or [{}])[-1].get("content", "")
         lang = intent_router.detect_language(last_message)
-        return f"RAG_OK|client={client_id}|channel={channel}|provider={provider}|lang={lang}"
+        answer = f"RAG_OK|client={client_id}|channel={channel}|provider={provider}|lang={lang}"
+        if return_metadata:
+            return {
+                "answer": answer,
+                "confidence_score": 0.9,
+                "handoff_recommended": False,
+                "human_intervention_recommended": False,
+                "needs_human": False,
+                "handoff_reason": None,
+                "confidence_reason": "test_fake_rag",
+                "persist_history": persist_history,
+            }
+        return answer
 
     monkeypatch.setattr(intent_router, "get_state", _get_state)
     monkeypatch.setattr(intent_router, "upsert_state", _upsert_state)
@@ -357,7 +377,12 @@ def _assert_calendar_history_events(events, expected_channel, expected_provider,
 
 def _assert_not_scheduled(events, calendar_calls):
     assert not calendar_calls
-    assert not events
+    for event in events:
+        kwargs = event.get("kwargs", {})
+        assert kwargs.get("source_type") != "appointment"
+        args = event.get("args", ())
+        if len(args) > 3 and isinstance(args[3], str):
+            assert not args[3].startswith("AGENDAR_OK|")
 
 
 async def _run_twilio(prompt):

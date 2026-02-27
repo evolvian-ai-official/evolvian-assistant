@@ -75,6 +75,7 @@ from api.register_consent import router as register_consent_router
 from api.check_consent import router as check_consent_router
 from api.widget_handoff_api import router as widget_handoff_router
 from api.blog.blog_router import router as blog_router
+from api.marketing_campaigns import router as marketing_campaigns_router
 
 
 
@@ -314,6 +315,7 @@ routers = [
     stripe_cancel_router, stripe_change_plan_router,
     reactivate_subscription_router, channels_router, register_consent_router, check_consent_router,
     widget_handoff_router,
+    marketing_campaigns_router,
     blog_router,
 
 ]

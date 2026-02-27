@@ -55,6 +55,20 @@ const appointmentSetupPalette = ({ state, needsFrequency = false }) => {
   return { bg: "#FDEBEC", color: "#B42318" };
 };
 
+const isMarketingCampaignType = (typeValue, variantKey) => {
+  const typeProbe = String(typeValue || "").trim().toLowerCase();
+  const variantProbe = String(variantKey || "").trim().toLowerCase();
+  if (variantProbe === "campaign") return true;
+  return /^campaign_(email|whatsapp)(_|$)/.test(typeProbe);
+};
+
+const templateTypeLabel = ({ typeValue, variantKey, isEs }) => {
+  if (isMarketingCampaignType(typeValue, variantKey)) {
+    return isEs ? "Campañas de Marketing" : "Marketing Campaigns";
+  }
+  return typeValue || "unknown";
+};
+
 export default function TemplatesList({ clientId, refreshKey, selectedLanguage = "es" }) {
   const { t, lang } = useLanguage();
   const isEs = lang === "es";
@@ -136,12 +150,13 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
       })
       .map((tpl) => {
         const isWhatsApp = tpl.channel === "whatsapp";
+        const isMarketingCampaign = isMarketingCampaignType(tpl.type, tpl.variant_key);
         return {
         key: `msg-${tpl.id}`,
         source: "configured",
-        canEdit: true,
+        canEdit: !isMarketingCampaign,
         channel: tpl.channel || "unknown",
-        type: tpl.type || "unknown",
+        type: templateTypeLabel({ typeValue: tpl.type, variantKey: tpl.variant_key, isEs }),
         active: Boolean(tpl.is_active),
         title:
           (isWhatsApp ? tpl.meta_template_name : null) ||
@@ -177,7 +192,7 @@ export default function TemplatesList({ clientId, refreshKey, selectedLanguage =
         source: "meta_catalog",
         canEdit: false,
         channel: "whatsapp",
-        type: tpl.type || "unknown",
+        type: templateTypeLabel({ typeValue: tpl.type, variantKey: "default", isEs }),
         active: Boolean(tpl.client_template_active),
         title: tpl.template_name || t("templates_meta_default_title"),
         bodyPreview: tpl.preview_body,

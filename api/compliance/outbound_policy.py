@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from api.config.config import supabase
+from api.privacy_dsr import split_details_and_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -142,29 +144,56 @@ def _load_latest_contact_consent(
     )
 
 
-def _load_marketing_opt_out(email: str | None) -> dict[str, Any] | None:
+def _extract_opt_out_client_id(details: Any) -> str | None:
+    text_details, metadata = split_details_and_metadata(str(details or ""))
+    scoped = str((metadata or {}).get("client_id") or "").strip()
+    if scoped:
+        return scoped
+    match = re.search(r"\bclient_id=([a-f0-9-]{8,})\b", text_details, flags=re.IGNORECASE)
+    if match:
+        return str(match.group(1)).strip()
+    return None
+
+
+def _load_marketing_opt_out(email: str | None, *, client_id: str | None = None) -> dict[str, Any] | None:
     if not email:
         return None
     try:
         res = (
             supabase.table("public_privacy_requests")
-            .select("id,request_type,status,created_at")
+            .select("id,request_type,status,created_at,details")
             .eq("email", email)
             .eq("request_type", "marketing_opt_out")
             .order("created_at", desc=True)
-            .limit(1)
+            .limit(50)
             .execute()
         )
-        row = (res.data or [None])[0]
-        if not row:
+        rows = res.data or []
+        latest_applicable: dict[str, Any] | None = None
+        latest_scope_client_id: str | None = None
+
+        for row in rows:
+            if not row:
+                continue
+            scoped_client_id = _extract_opt_out_client_id(row.get("details"))
+            if client_id and scoped_client_id and str(scoped_client_id) != str(client_id):
+                continue
+            latest_applicable = row
+            latest_scope_client_id = scoped_client_id
+            break
+
+        if not latest_applicable:
             return None
-        status = str(row.get("status") or "pending").strip().lower()
+
+        status = str(latest_applicable.get("status") or "pending").strip().lower()
         if status in TERMINAL_DSAR_STATUSES:
             return None
+
         return {
-            "id": row.get("id"),
+            "id": latest_applicable.get("id"),
             "status": status,
-            "created_at": row.get("created_at"),
+            "created_at": latest_applicable.get("created_at"),
+            "client_id": latest_scope_client_id,
         }
     except Exception:
         return None
@@ -264,7 +293,7 @@ def evaluate_outbound_policy(
 
     settings = _load_policy_settings(client_id)
     consent = _load_latest_contact_consent(client_id=client_id, email=email, phone=phone)
-    opt_out = _load_marketing_opt_out(email)
+    opt_out = _load_marketing_opt_out(email, client_id=client_id)
 
     allowed, reason, expires_at = evaluate_policy_decision(
         channel=channel,

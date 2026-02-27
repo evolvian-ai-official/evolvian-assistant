@@ -433,10 +433,14 @@ export default function InboxHandoff() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail || "Could not send reply");
 
+      const sentToEmail =
+        replyChannel === "email"
+          ? String(data?.delivery?.to_email || handoff?.contact_email || "").trim()
+          : "";
       setSendReplySuccess(
         isEs
-          ? `Respuesta enviada por ${channelLabel(replyChannel)}.`
-          : `Reply sent via ${channelLabel(replyChannel)}.`
+          ? `Respuesta enviada por ${channelLabel(replyChannel)}${sentToEmail ? ` a ${sentToEmail}` : ""}.`
+          : `Reply sent via ${channelLabel(replyChannel)}${sentToEmail ? ` to ${sentToEmail}` : ""}.`
       );
       await loadAlerts(filter);
       await loadDetail(selectedAlert);
@@ -1175,9 +1179,17 @@ function SuggestedReplyCard({
 
         {normalizedChannel === "whatsapp" ? (
           <div style={{ color: "#8A6400", fontSize: "0.82rem" }}>
-            {isEs
-              ? `Comportamiento automático en WhatsApp: dentro de la ventana de 24 horas se envía texto directo (sin template); fuera de ventana se envía template con variable libre (ej. {{1}}). Template configurado: ${whatsappTemplateName} · Idioma: ${whatsappTemplateLanguage}`
-              : `Automatic WhatsApp behavior: within the 24-hour window we send direct text (no template); outside the window we send a template with a free-text variable (e.g. {{1}}). Configured template: ${whatsappTemplateName} · Language: ${whatsappTemplateLanguage}`}
+            {originChannel === "whatsapp"
+              ? (
+                isEs
+                  ? `Origen WhatsApp: primero intentamos enviar texto directo (sin template). Si WhatsApp no lo permite (ventana cerrada), enviamos template con variable libre (ej. {{1}}). Template configurado: ${whatsappTemplateName} · Idioma: ${whatsappTemplateLanguage}`
+                  : `WhatsApp origin: we first try direct text (no template). If WhatsApp does not allow it (closed window), we send a template with a free-text variable (e.g. {{1}}). Configured template: ${whatsappTemplateName} · Language: ${whatsappTemplateLanguage}`
+              )
+              : (
+                isEs
+                  ? `Origen ${channelLabel(originChannel)}: enviamos template de WhatsApp directamente (no intentamos texto libre). Template configurado: ${whatsappTemplateName} · Idioma: ${whatsappTemplateLanguage}`
+                  : `Origin ${channelLabel(originChannel)}: we send a WhatsApp template directly (we do not attempt free text). Configured template: ${whatsappTemplateName} · Language: ${whatsappTemplateLanguage}`
+              )}
           </div>
         ) : null}
 

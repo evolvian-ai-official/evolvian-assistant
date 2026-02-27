@@ -1,0 +1,1236 @@
+import { useEffect, useMemo, useState } from "react";
+import { useClientId } from "../../hooks/useClientId";
+import { useLanguage } from "../../contexts/LanguageContext";
+import { authFetch } from "../../lib/authFetch";
+import "../../components/ui/internal-admin-responsive.css";
+
+export default function MarketingCampaigns() {
+  const clientId = useClientId();
+  const { lang } = useLanguage();
+  const isEs = lang === "es";
+  const API = import.meta.env.VITE_API_URL;
+
+  const text = {
+    title: isEs ? "Marketing Campaigns" : "Marketing Campaigns",
+    subtitle: isEs
+      ? "Crea campañas de Email y WhatsApp, segmenta audiencia y consulta historial de envíos."
+      : "Create Email and WhatsApp campaigns, segment audience, and review send history.",
+    create: isEs ? "Crear campaña" : "Create campaign",
+    campaigns: isEs ? "Campañas" : "Campaigns",
+    audience: isEs ? "Audiencia" : "Audience",
+    filters: isEs ? "Filtros" : "Filters",
+    all: isEs ? "Todos" : "All",
+    searchAudience: isEs ? "Buscar audiencia" : "Search audience",
+    searchCampaigns: isEs ? "Buscar campañas" : "Search campaigns",
+    noAudience: isEs ? "Sin audiencia para mostrar." : "No audience to display.",
+    noCampaigns: isEs ? "No hay campañas todavía." : "No campaigns yet.",
+    history: isEs ? "Historial" : "History",
+    recipients: isEs ? "Destinatarios" : "Recipients",
+    send: isEs ? "Enviar campaña" : "Send campaign",
+    sending: isEs ? "Enviando..." : "Sending...",
+    refresh: isEs ? "Actualizar" : "Refresh",
+    loading: isEs ? "Cargando..." : "Loading...",
+    draft: isEs ? "Borrador" : "Draft",
+    selected: isEs ? "Seleccionados" : "Selected",
+    selectedNone: isEs ? "No hay destinatarios seleccionados." : "No recipients selected.",
+    selectedCount: isEs ? "Seleccionados" : "Selected",
+    selectVisible: isEs ? "Seleccionar visibles" : "Select visible",
+    selectAllClients: isEs ? "Todos clientes" : "All clients",
+    selectAllLeads: isEs ? "Todos leads" : "All leads",
+    selectAllAudience: isEs ? "Toda audiencia" : "All audience",
+    clearSelection: isEs ? "Limpiar selección" : "Clear selection",
+    remove: isEs ? "Quitar" : "Remove",
+    requiredRecipientSelection: isEs
+      ? "Debes seleccionar al menos un destinatario antes de enviar."
+      : "Select at least one recipient before sending.",
+    noSendableRecipients: isEs
+      ? "Los destinatarios seleccionados no tienen canal válido para esta campaña."
+      : "Selected recipients do not have a valid channel for this campaign.",
+    previewTitle: isEs ? "Confirmar envío de campaña" : "Confirm campaign send",
+    previewSubtitle: isEs
+      ? "Revisa contenido y destinatarios antes de enviar."
+      : "Review content and recipients before sending.",
+    previewContent: isEs ? "Preview de contenido" : "Content preview",
+    previewAudience: isEs ? "Destinatarios a enviar" : "Recipients to send",
+    cancel: isEs ? "Cancelar" : "Cancel",
+    confirmSend: isEs ? "Confirmar envío" : "Confirm send",
+    selectCampaignFirst: isEs ? "Selecciona una campaña para enviar." : "Select a campaign to send.",
+    channelRuleEmail: isEs ? "Campaña Email: solo contactos con email." : "Email campaign: only contacts with email.",
+    channelRuleWhatsapp: isEs ? "Campaña WhatsApp: solo contactos con teléfono." : "WhatsApp campaign: only contacts with phone.",
+    incompatibleNoEmail: isEs ? "Sin email" : "No email",
+    incompatibleNoPhone: isEs ? "Sin teléfono" : "No phone",
+    optedOut: isEs ? "Desvinculado" : "Opt-out",
+    optedOutCannotSelect: isEs
+      ? "Este cliente hizo opt-out y no se puede seleccionar."
+      : "This client opted out and cannot be selected.",
+    selectedForSend: isEs ? "Listos para envío" : "Ready to send",
+    excludedByChannel: isEs ? "Excluidos por canal" : "Excluded by channel",
+    uploadImage: isEs ? "Subir imagen" : "Upload image",
+    uploadingImage: isEs ? "Subiendo imagen..." : "Uploading image...",
+    imageReady: isEs ? "Imagen lista" : "Image ready",
+    removeImage: isEs ? "Quitar imagen" : "Remove image",
+    imageRequiredType: isEs ? "Selecciona un archivo de imagen válido." : "Select a valid image file.",
+    imageTooLarge: isEs ? "Imagen demasiado grande (máximo 2MB)." : "Image too large (max 2MB).",
+    aiRestructure: isEs ? "Sugerencia AI" : "AI suggestion",
+    aiRestructuring: isEs ? "Reestructurando..." : "Restructuring...",
+    aiApplied: isEs ? "Texto reestructurado con AI." : "Text restructured with AI.",
+    aiNeedsContent: isEs ? "Escribe contenido antes de usar Sugerencia AI." : "Write content before using AI suggestion.",
+    openCampaignPicker: isEs ? "Seleccionar campaña" : "Select campaign",
+    changeCampaign: isEs ? "Cambiar campaña" : "Change campaign",
+    noCampaignSelected: isEs ? "No hay campaña seleccionada." : "No campaign selected.",
+    campaignPickerTitle: isEs ? "Seleccionar campaña" : "Select campaign",
+    campaignPickerSubtitle: isEs ? "Elige una campaña para envío y seguimiento." : "Choose a campaign for send and tracking.",
+    close: isEs ? "Cerrar" : "Close",
+    whatsappNotConnected: isEs
+      ? "WhatsApp no está conectado. Conéctalo antes de enviar campañas por WhatsApp."
+      : "WhatsApp is not connected. Connect it before sending WhatsApp campaigns.",
+    sendSummarySuccess: isEs ? "Campaña enviada correctamente." : "Campaign sent successfully.",
+    sendSummaryPartial: isEs ? "Campaña enviada parcialmente." : "Campaign sent partially.",
+    sendSummaryFailed: isEs ? "No se pudo enviar la campaña." : "Campaign could not be sent.",
+    sent: isEs ? "Enviados" : "Sent",
+    failed: isEs ? "Fallidos" : "Failed",
+    blocked: isEs ? "Bloqueados política" : "Policy blocked",
+    skipped: isEs ? "Omitidos" : "Skipped",
+  };
+
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState(null);
+
+  const [audience, setAudience] = useState([]);
+  const [audienceCounts, setAudienceCounts] = useState({ clients: 0, leads: 0 });
+  const [campaigns, setCampaigns] = useState([]);
+
+  const [audienceSearch, setAudienceSearch] = useState("");
+  const [audienceSegment, setAudienceSegment] = useState("all");
+
+  const [campaignSearch, setCampaignSearch] = useState("");
+  const [campaignChannel, setCampaignChannel] = useState("all");
+  const [campaignStatus, setCampaignStatus] = useState("all");
+
+  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const [selectedCampaignDetail, setSelectedCampaignDetail] = useState(null);
+
+  const [selectedRecipientKey, setSelectedRecipientKey] = useState("");
+  const [recipientHistory, setRecipientHistory] = useState([]);
+  const [selectedRecipients, setSelectedRecipients] = useState({});
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [campaignPickerOpen, setCampaignPickerOpen] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [imageFileName, setImageFileName] = useState("");
+  const [whatsAppMetaConnected, setWhatsAppMetaConnected] = useState(false);
+
+  const [form, setForm] = useState({
+    name: "",
+    channel: "email",
+    subject: "",
+    body: "",
+    image_url: "",
+    cta_label: "",
+    cta_url: "",
+    language_family: isEs ? "es" : "en",
+  });
+
+  const fetchAudience = async ({ segment = "all", q = "" } = {}) => {
+    if (!clientId) return { items: [], counts: { clients: 0, leads: 0 } };
+    const params = new URLSearchParams({ client_id: clientId });
+    if (segment !== "all") params.set("segment", segment);
+    if (String(q || "").trim()) params.set("q", String(q).trim());
+
+    const res = await authFetch(`${API}/marketing/audience?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.detail || "Failed loading audience");
+    return {
+      items: Array.isArray(data?.items) ? data.items : [],
+      counts: data?.counts || { clients: 0, leads: 0 },
+    };
+  };
+
+  const isChannelEnabled = (channel) => Boolean(channel?.is_active ?? channel?.active);
+
+  const checkWhatsAppConnection = async () => {
+    if (!clientId) return false;
+    try {
+      const res = await authFetch(`${API}/channels?client_id=${clientId}&type=whatsapp&provider=meta`);
+      if (res.status === 404) {
+        setWhatsAppMetaConnected(false);
+        return false;
+      }
+      if (!res.ok) {
+        setWhatsAppMetaConnected(false);
+        return false;
+      }
+      const rows = await res.json().catch(() => []);
+      const connected = Array.isArray(rows)
+        ? rows.some((row) => isChannelEnabled(row) && String(row?.wa_phone_id || "").trim() !== "")
+        : false;
+      setWhatsAppMetaConnected(connected);
+      return connected;
+    } catch {
+      setWhatsAppMetaConnected(false);
+      return false;
+    }
+  };
+
+  const loadAudience = async () => {
+    if (!clientId) return;
+    const result = await fetchAudience({ segment: audienceSegment, q: audienceSearch.trim() });
+    setAudience(result.items);
+    setAudienceCounts(result.counts);
+  };
+
+  const loadCampaigns = async () => {
+    if (!clientId) return;
+    const params = new URLSearchParams({ client_id: clientId });
+    if (campaignChannel !== "all") params.set("channel", campaignChannel);
+    if (campaignStatus !== "all") params.set("status", campaignStatus);
+    if (campaignSearch.trim()) params.set("q", campaignSearch.trim());
+
+    const res = await authFetch(`${API}/marketing/campaigns?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.detail || "Failed loading campaigns");
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    setCampaigns(items);
+    if (!selectedCampaignId && items[0]?.id) {
+      setSelectedCampaignId(items[0].id);
+    }
+  };
+
+  const loadCampaignDetail = async (campaignId) => {
+    if (!clientId || !campaignId) {
+      setSelectedCampaignDetail(null);
+      return;
+    }
+    const params = new URLSearchParams({ client_id: clientId });
+    const res = await authFetch(`${API}/marketing/campaigns/${campaignId}?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.detail || "Failed loading campaign detail");
+    setSelectedCampaignDetail(data || null);
+  };
+
+  const loadRecipientHistory = async (recipientKey) => {
+    if (!clientId || !recipientKey) {
+      setRecipientHistory([]);
+      return;
+    }
+    const params = new URLSearchParams({ client_id: clientId, recipient_key: recipientKey });
+    const res = await authFetch(`${API}/marketing/audience/history?${params.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.detail || "Failed loading recipient history");
+    setRecipientHistory(Array.isArray(data?.items) ? data.items : []);
+  };
+
+  const refreshAll = async () => {
+    if (!clientId) return;
+    setLoading(true);
+    setError("");
+    try {
+      await Promise.all([loadAudience(), loadCampaigns()]);
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, audienceSegment, campaignChannel, campaignStatus]);
+
+  useEffect(() => {
+    checkWhatsAppConnection().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      if (!clientId) return;
+      refreshAll();
+    }, 350);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audienceSearch, campaignSearch]);
+
+  useEffect(() => {
+    loadCampaignDetail(selectedCampaignId).catch((err) => setError(err?.message || "Unexpected error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCampaignId]);
+
+  useEffect(() => {
+    loadRecipientHistory(selectedRecipientKey).catch((err) => setError(err?.message || "Unexpected error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRecipientKey]);
+
+  const selectedCampaign = useMemo(() => {
+    return campaigns.find((c) => c.id === selectedCampaignId) || null;
+  }, [campaigns, selectedCampaignId]);
+
+  const selectedCampaignChannel = String(selectedCampaign?.channel || "").toLowerCase();
+  const audienceByKey = useMemo(() => {
+    const map = {};
+    for (const row of audience || []) {
+      const key = String(row?.recipient_key || "").trim();
+      if (!key) continue;
+      map[key] = row;
+    }
+    return map;
+  }, [audience]);
+
+  const isRecipientBlocked = (row) => {
+    if (!row) return false;
+    if (Boolean(row?.selection_blocked)) return true;
+    return String(row?.selection_blocked_reason || "").toLowerCase() === "opt_out";
+  };
+
+  const isRecipientCompatible = (row, channel = selectedCampaignChannel) => {
+    if (!channel) return true;
+    if (channel === "email") return Boolean(row?.email);
+    if (channel === "whatsapp") return Boolean(row?.phone);
+    return true;
+  };
+  const getIncompatibleReason = (row, channel = selectedCampaignChannel) => {
+    if (!channel) return "";
+    if (channel === "email" && !row?.email) return text.incompatibleNoEmail;
+    if (channel === "whatsapp" && !row?.phone) return text.incompatibleNoPhone;
+    return "";
+  };
+
+  const selectedRecipientKeys = useMemo(() => Object.keys(selectedRecipients), [selectedRecipients]);
+  const selectedRecipientsList = useMemo(
+    () => selectedRecipientKeys.map((key) => selectedRecipients[key]).filter(Boolean),
+    [selectedRecipientKeys, selectedRecipients],
+  );
+  const sendableSelectedRecipients = useMemo(
+    () => selectedRecipientsList.filter((row) => !isRecipientBlocked(row) && isRecipientCompatible(row)),
+    [selectedRecipientsList, selectedCampaignChannel],
+  );
+  const excludedByChannelCount = Math.max(0, selectedRecipientsList.length - sendableSelectedRecipients.length);
+
+  useEffect(() => {
+    setSelectedRecipients((prev) => {
+      const entries = Object.entries(prev).filter(([key, row]) => {
+        const latest = audienceByKey[key] || row;
+        if (isRecipientBlocked(latest)) return false;
+        if (!selectedCampaignChannel) return true;
+        return isRecipientCompatible(latest, selectedCampaignChannel);
+      });
+      if (entries.length === Object.keys(prev).length) return prev;
+      return Object.fromEntries(entries);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCampaignChannel, audienceByKey]);
+
+  const addRecipientsToSelection = (rows) => {
+    setSelectedRecipients((prev) => {
+      const next = { ...prev };
+      for (const row of rows || []) {
+        const key = String(row?.recipient_key || "").trim();
+        if (!key) continue;
+        next[key] = row;
+      }
+      return next;
+    });
+  };
+
+  const removeRecipientFromSelection = (recipientKey) => {
+    setSelectedRecipients((prev) => {
+      const next = { ...prev };
+      delete next[recipientKey];
+      return next;
+    });
+  };
+
+  const toggleRecipientSelection = (row) => {
+    if (isRecipientBlocked(row) || !isRecipientCompatible(row)) return;
+    const key = String(row?.recipient_key || "").trim();
+    if (!key) return;
+    setSelectedRecipients((prev) => {
+      if (prev[key]) {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: row };
+    });
+  };
+
+  const selectVisibleAudience = () =>
+    addRecipientsToSelection(audience.filter((row) => !isRecipientBlocked(row) && isRecipientCompatible(row)));
+
+  const selectAudienceBySegment = async (segment) => {
+    if (!clientId) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await fetchAudience({ segment, q: "" });
+      addRecipientsToSelection(result.items.filter((row) => !isRecipientBlocked(row) && isRecipientCompatible(row)));
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearRecipientSelection = () => setSelectedRecipients({});
+
+  const handleCampaignImageUpload = async (file) => {
+    if (!file) return;
+    if (!String(file.type || "").startsWith("image/")) {
+      setError(text.imageRequiredType);
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setError(text.imageTooLarge);
+      return;
+    }
+    if (!clientId) return;
+
+    setUploadingImage(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("client_id", String(clientId));
+      formData.append("file", file);
+
+      const res = await authFetch(`${API}/message_templates/footer_image`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || "Failed uploading image");
+
+      const uploadedUrl = String(data?.url || "").trim();
+      if (!uploadedUrl) throw new Error(isEs ? "No se recibió URL de la imagen." : "Image URL was not returned.");
+
+      setForm((prev) => ({ ...prev, image_url: uploadedUrl }));
+      setImageFileName(file.name || "");
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const suggestCampaignBody = async () => {
+    if (!clientId) return;
+    if (!form.body.trim()) {
+      setError(text.aiNeedsContent);
+      return;
+    }
+
+    setAiBusy(true);
+    setError("");
+    setNotice(null);
+    try {
+      const payload = {
+        client_id: clientId,
+        body: form.body.trim(),
+        channel: form.channel,
+        language_family: form.language_family,
+        cta_mode: form.cta_url.trim() ? "url" : null,
+        cta_label: form.cta_label.trim() || null,
+      };
+
+      const res = await authFetch(`${API}/marketing/campaigns/rewrite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || "Failed generating AI suggestion");
+
+      const rewrittenBody = String(data?.rewritten_body || "").trim();
+      if (rewrittenBody) {
+        setForm((prev) => ({ ...prev, body: rewrittenBody }));
+        setNotice({ type: "success", message: text.aiApplied });
+      }
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const createCampaign = async () => {
+    if (!clientId) return;
+    if (!form.name.trim() || !form.body.trim()) {
+      setError(isEs ? "Nombre y contenido son obligatorios." : "Name and content are required.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      const normalizedCtaUrl = form.cta_url.trim() || null;
+      const payload = {
+        client_id: clientId,
+        name: form.name.trim(),
+        channel: form.channel,
+        subject: form.channel === "email" ? (form.subject.trim() || form.name.trim()) : null,
+        body: form.body.trim(),
+        image_url: form.image_url.trim() || null,
+        cta_mode: normalizedCtaUrl ? "url" : null,
+        cta_label: normalizedCtaUrl ? (form.cta_label.trim() || null) : null,
+        cta_url: normalizedCtaUrl,
+        language_family: form.language_family,
+      };
+
+      const res = await authFetch(`${API}/marketing/campaigns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || "Failed creating campaign");
+
+      setForm((prev) => ({ ...prev, name: "", subject: "", body: "", image_url: "", cta_label: "", cta_url: "" }));
+      setImageFileName("");
+      await refreshAll();
+      const createdId = data?.campaign?.id;
+      if (createdId) setSelectedCampaignId(createdId);
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openSendPreview = async () => {
+    if (!clientId) return;
+    if (!selectedCampaign?.id) {
+      setError(text.selectCampaignFirst);
+      return;
+    }
+    if (selectedCampaignChannel === "whatsapp") {
+      const isConnected = await checkWhatsAppConnection();
+      if (!isConnected) {
+        setError(text.whatsappNotConnected);
+        setNotice(null);
+        return;
+      }
+    }
+    if (selectedRecipientsList.length === 0) {
+      setError(text.requiredRecipientSelection);
+      return;
+    }
+    if (sendableSelectedRecipients.length === 0) {
+      setError(text.noSendableRecipients);
+      return;
+    }
+    setError("");
+    setNotice(null);
+    setPreviewOpen(true);
+  };
+
+  const openCampaignPicker = async () => {
+    setCampaignPickerOpen(true);
+    try {
+      await loadCampaigns();
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    }
+  };
+
+  const pickCampaign = (campaignId) => {
+    setSelectedCampaignId(campaignId);
+    setCampaignPickerOpen(false);
+  };
+
+  const confirmSendCampaign = async () => {
+    if (!clientId || !selectedCampaign?.id) return;
+    setBusy(true);
+    setError("");
+    setNotice(null);
+    try {
+      const payload = {
+        client_id: clientId,
+        recipient_keys: sendableSelectedRecipients.map((row) => row.recipient_key).filter(Boolean),
+      };
+      const res = await authFetch(`${API}/marketing/campaigns/${selectedCampaign.id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || "Failed sending campaign");
+
+      const summary = data?.summary || {};
+      const sent = Number(summary.sent || 0);
+      const failed = Number(summary.failed || 0);
+      const blocked = Number(summary.blocked_policy || 0);
+      const skipped = Number(summary.skipped || 0);
+
+      const messageCounts = `${text.sent}: ${sent} · ${text.failed}: ${failed} · ${text.blocked}: ${blocked} · ${text.skipped}: ${skipped}`;
+      if (sent > 0 && failed === 0 && blocked === 0) {
+        setNotice({ type: "success", message: `${text.sendSummarySuccess} ${messageCounts}` });
+      } else if (sent > 0) {
+        setNotice({ type: "warning", message: `${text.sendSummaryPartial} ${messageCounts}` });
+      } else {
+        setError(`${text.sendSummaryFailed} ${messageCounts}`);
+      }
+
+      await refreshAll();
+      await loadCampaignDetail(selectedCampaign.id);
+      setPreviewOpen(false);
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ia-page">
+      <div className="ia-shell ia-services-shell">
+        <section className="ia-card" style={{ marginBottom: 0 }}>
+          <h2 className="ia-header-title">📣 {text.title}</h2>
+          <p className="ia-header-subtitle">{text.subtitle}</p>
+
+          {error ? (
+            <div style={{ marginTop: "0.75rem", border: "1px solid #fecaca", background: "#fff1f2", color: "#b91c1c", borderRadius: 10, padding: "0.65rem" }}>
+              {error}
+            </div>
+          ) : null}
+
+          {notice ? (
+            <div
+              style={{
+                marginTop: "0.75rem",
+                border: notice.type === "success" ? "1px solid #bbf7d0" : "1px solid #fde68a",
+                background: notice.type === "success" ? "#ecfdf3" : "#fffbeb",
+                color: notice.type === "success" ? "#065f46" : "#92400e",
+                borderRadius: 10,
+                padding: "0.65rem",
+              }}
+            >
+              {notice.message}
+            </div>
+          ) : null}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.9rem", marginTop: "1rem" }}>
+            <div style={panelStyle}>
+              <strong style={panelTitleStyle}>{text.create}</strong>
+
+              <input
+                className="ia-form-input"
+                placeholder={isEs ? "Nombre de campaña" : "Campaign name"}
+                value={form.name}
+                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              />
+
+              <select className="ia-form-input" value={form.channel} onChange={(e) => setForm((prev) => ({ ...prev, channel: e.target.value }))}>
+                <option value="email">Email</option>
+                <option value="whatsapp">WhatsApp</option>
+              </select>
+
+              {form.channel === "email" ? (
+                <input
+                  className="ia-form-input"
+                  placeholder={isEs ? "Asunto" : "Subject"}
+                  value={form.subject}
+                  onChange={(e) => setForm((prev) => ({ ...prev, subject: e.target.value }))}
+                />
+              ) : null}
+
+              <textarea
+                className="ia-form-input"
+                rows={4}
+                placeholder={isEs ? "Contenido de campaña" : "Campaign content"}
+                value={form.body}
+                onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "-0.2rem", marginBottom: "0.25rem" }}>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                  onClick={suggestCampaignBody}
+                  disabled={busy || aiBusy || !form.body.trim()}
+                >
+                  {aiBusy ? text.aiRestructuring : text.aiRestructure}
+                </button>
+              </div>
+
+              <div style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                <label style={{ ...smallStyle, display: "block", marginBottom: "0.35rem" }}>
+                  {isEs ? "Imagen de campaña (opcional)" : "Campaign image (optional)"}
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="ia-form-input"
+                  onChange={(e) => handleCampaignImageUpload(e.target.files?.[0])}
+                  disabled={uploadingImage}
+                />
+                <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.35rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={badgeStyle}>
+                    {uploadingImage ? text.uploadingImage : form.image_url ? text.imageReady : text.uploadImage}
+                  </span>
+                  {imageFileName ? <small style={smallStyle}>{imageFileName}</small> : null}
+                  {form.image_url ? (
+                    <button
+                      type="button"
+                      className="ia-button ia-button-ghost"
+                      style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }}
+                      onClick={() => {
+                        setForm((prev) => ({ ...prev, image_url: "" }));
+                        setImageFileName("");
+                      }}
+                      disabled={uploadingImage}
+                    >
+                      {text.removeImage}
+                    </button>
+                  ) : null}
+                </div>
+                {form.image_url ? (
+                  <img
+                    src={form.image_url}
+                    alt="campaign upload"
+                    style={{ marginTop: "0.45rem", width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: "1px solid #E5E7EB" }}
+                  />
+                ) : null}
+              </div>
+
+              <input
+                className="ia-form-input"
+                placeholder={isEs ? "Texto botón de redirección (opcional)" : "Redirect button text (optional)"}
+                value={form.cta_label}
+                onChange={(e) => setForm((prev) => ({ ...prev, cta_label: e.target.value }))}
+              />
+
+              <input
+                className="ia-form-input"
+                placeholder={isEs ? "URL de redirección (opcional) https://..." : "Redirect URL (optional) https://..."}
+                value={form.cta_url}
+                onChange={(e) => setForm((prev) => ({ ...prev, cta_url: e.target.value }))}
+              />
+
+              <select
+                className="ia-form-input"
+                value={form.language_family}
+                onChange={(e) => setForm((prev) => ({ ...prev, language_family: e.target.value }))}
+              >
+                <option value="es">Español</option>
+                <option value="en">English</option>
+              </select>
+
+              <button type="button" className="ia-button ia-button-primary" disabled={busy || uploadingImage} onClick={createCampaign}>
+                {busy ? text.loading : text.create}
+              </button>
+            </div>
+
+            <div style={panelStyle}>
+              <div style={rowBetweenStyle}>
+                <strong style={panelTitleStyle}>{text.audience}</strong>
+                <button type="button" className="ia-button ia-button-ghost" onClick={refreshAll} disabled={busy || loading}>
+                  {text.refresh}
+                </button>
+              </div>
+
+              <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>
+                <span style={badgeStyle}>Clients: {audienceCounts.clients || 0}</span>
+                <span style={badgeStyle}>Leads: {audienceCounts.leads || 0}</span>
+              </div>
+
+              <input
+                className="ia-form-input"
+                placeholder={text.searchAudience}
+                value={audienceSearch}
+                onChange={(e) => setAudienceSearch(e.target.value)}
+              />
+
+              <select className="ia-form-input" value={audienceSegment} onChange={(e) => setAudienceSegment(e.target.value)}>
+                <option value="all">{text.all}</option>
+                <option value="clients">Clients / Clientes</option>
+                <option value="leads">Leads</option>
+              </select>
+
+              <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.45rem" }}>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                  onClick={selectVisibleAudience}
+                  disabled={busy || audience.length === 0}
+                >
+                  {text.selectVisible}
+                </button>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                  onClick={() => selectAudienceBySegment("clients")}
+                  disabled={busy}
+                >
+                  {text.selectAllClients}
+                </button>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                  onClick={() => selectAudienceBySegment("leads")}
+                  disabled={busy}
+                >
+                  {text.selectAllLeads}
+                </button>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                  onClick={() => selectAudienceBySegment("all")}
+                  disabled={busy}
+                >
+                  {text.selectAllAudience}
+                </button>
+                <button
+                  type="button"
+                  className="ia-button ia-button-ghost"
+                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                  onClick={clearRecipientSelection}
+                  disabled={busy || selectedRecipientKeys.length === 0}
+                >
+                  {text.clearSelection}
+                </button>
+              </div>
+
+              {selectedCampaignChannel ? (
+                <div style={{ ...itemCardStyle, marginBottom: "0.45rem", background: "#f8fafc" }}>
+                  <small style={smallStyle}>
+                    {selectedCampaignChannel === "email" ? text.channelRuleEmail : text.channelRuleWhatsapp}
+                  </small>
+                  <div style={{ marginTop: "0.3rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                    <span style={badgeStyle}>
+                      {text.selectedForSend}: {sendableSelectedRecipients.length}
+                    </span>
+                    <span style={badgeStyle}>
+                      {text.excludedByChannel}: {excludedByChannelCount}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              {loading ? <p style={hintStyle}>{text.loading}</p> : null}
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.6rem" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 330, overflowY: "auto" }}>
+                  {!loading && audience.length === 0 ? <p style={hintStyle}>{text.noAudience}</p> : null}
+                  {audience.map((row) => {
+                    const isSelected = Boolean(selectedRecipients[row.recipient_key]);
+                    const blocked = isRecipientBlocked(row);
+                    const canSelect = !blocked && isRecipientCompatible(row);
+                    const incompatibleReason = blocked ? text.optedOutCannotSelect : getIncompatibleReason(row);
+                    return (
+                      <div key={row.recipient_key} style={{ ...itemCardStyle, opacity: canSelect ? 1 : 0.6 }}>
+                        <div style={rowBetweenStyle}>
+                          <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: 1 }}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={!canSelect}
+                              onChange={() => toggleRecipientSelection(row)}
+                            />
+                            <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                          </label>
+                          <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <span style={segmentChip(row.segment)}>{row.label_en} / {row.label_es}</span>
+                            {blocked ? (
+                              <span style={{ ...badgeStyle, background: "#fef2f2", color: "#b91c1c", borderColor: "#fecaca" }}>
+                                {row.opt_out_label_en || text.optedOut} / {row.opt_out_label_es || text.optedOut}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                        {!canSelect && incompatibleReason ? (
+                          <div style={{ marginTop: "0.28rem" }}>
+                            <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>{incompatibleReason}</span>
+                          </div>
+                        ) : null}
+                        <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className="ia-button ia-button-ghost"
+                            style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                            onClick={() => setSelectedRecipientKey(row.recipient_key)}
+                          >
+                            {text.history}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, background: "#f8fafc", padding: "0.55rem", maxHeight: 330, overflowY: "auto" }}>
+                  <div style={rowBetweenStyle}>
+                    <strong>{text.selected}</strong>
+                    <span style={badgeStyle}>{text.selectedCount}: {selectedRecipientKeys.length}</span>
+                  </div>
+                  <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                    {sendableSelectedRecipients.map((row) => (
+                      <div key={row.recipient_key} style={{ ...itemCardStyle, background: "#ffffff" }}>
+                        <div style={rowBetweenStyle}>
+                          <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                          <button
+                            type="button"
+                            className="ia-button ia-button-ghost"
+                            style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }}
+                            onClick={() => removeRecipientFromSelection(row.recipient_key)}
+                          >
+                            {text.remove}
+                          </button>
+                        </div>
+                        <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                      </div>
+                    ))}
+                    {sendableSelectedRecipients.length === 0 ? <p style={hintStyle}>{text.selectedNone}</p> : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.9rem", marginTop: "0.9rem" }}>
+            <div style={panelStyle}>
+              <div style={rowBetweenStyle}>
+                <strong style={panelTitleStyle}>{text.campaigns}</strong>
+                <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <button type="button" className="ia-button ia-button-ghost" onClick={openCampaignPicker} disabled={busy || loading}>
+                    {selectedCampaign ? text.changeCampaign : text.openCampaignPicker}
+                  </button>
+                  <button
+                    type="button"
+                    className="ia-button ia-button-warning"
+                    disabled={busy || !selectedCampaign || (selectedCampaignChannel === "whatsapp" && !whatsAppMetaConnected)}
+                    onClick={openSendPreview}
+                  >
+                    {busy ? text.sending : text.send}
+                  </button>
+                </div>
+              </div>
+
+              {!selectedCampaign ? <p style={{ ...hintStyle, marginTop: "0.7rem" }}>{text.noCampaignSelected}</p> : null}
+              {selectedCampaignChannel === "whatsapp" && !whatsAppMetaConnected ? (
+                <p style={{ ...hintStyle, marginTop: "0.7rem", color: "#b45309" }}>{text.whatsappNotConnected}</p>
+              ) : null}
+
+              {selectedCampaign ? (
+                <div style={{ ...itemCardStyle, marginTop: "0.7rem", background: "#f8fafc" }}>
+                  <div style={rowBetweenStyle}>
+                    <strong>{selectedCampaign.name}</strong>
+                    <span style={badgeStyle}>{selectedCampaign.channel}</span>
+                  </div>
+                  <small style={smallStyle}>
+                    {selectedCampaign.status}
+                    {selectedCampaign.subject ? ` · ${selectedCampaign.subject}` : ""}
+                  </small>
+                  <p style={{ ...smallStyle, marginTop: "0.35rem", color: "#334155", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                    {selectedCampaign.body || ""}
+                  </p>
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <button type="button" className="ia-button ia-button-ghost" onClick={openCampaignPicker} style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}>
+                      {text.openCampaignPicker}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ marginTop: "0.65rem", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                <span style={badgeStyle}>{text.campaigns}: {campaigns.length}</span>
+                <span style={badgeStyle}>{isEs ? "Seleccionada" : "Selected"}: {selectedCampaign ? 1 : 0}</span>
+              </div>
+            </div>
+
+            <div style={panelStyle}>
+              <strong style={panelTitleStyle}>{text.recipients}</strong>
+              {!selectedCampaignDetail ? <p style={hintStyle}>{isEs ? "Selecciona una campaña." : "Select a campaign."}</p> : null}
+
+              {selectedCampaignDetail ? (
+                <>
+                  <div style={{ marginBottom: "0.6rem" }}>
+                    <strong>{selectedCampaignDetail?.campaign?.name}</strong>
+                    <small style={smallStyle}> {selectedCampaignDetail?.campaign?.channel} · {selectedCampaignDetail?.campaign?.status}</small>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 310, overflowY: "auto" }}>
+                    {(selectedCampaignDetail?.recipients || []).map((row) => (
+                      <div key={`${row.campaign_id}-${row.recipient_key}`} style={itemCardStyle}>
+                        <div style={rowBetweenStyle}>
+                          <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                          <span style={sendStatusChip(row.send_status)}>{row.send_status}</span>
+                        </div>
+                        <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                      </div>
+                    ))}
+                    {(selectedCampaignDetail?.recipients || []).length === 0 ? (
+                      <p style={hintStyle}>{isEs ? "Aún no hay destinatarios enviados." : "No recipients sent yet."}</p>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+
+          {selectedRecipientKey ? (
+            <div style={{ ...panelStyle, marginTop: "0.9rem" }}>
+              <div style={rowBetweenStyle}>
+                <strong style={panelTitleStyle}>{text.history}</strong>
+                <button className="ia-button ia-button-ghost" onClick={() => setSelectedRecipientKey("")}>Close</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 220, overflowY: "auto" }}>
+                {recipientHistory.map((row, idx) => (
+                  <div key={`${row.campaign_id}-${idx}`} style={itemCardStyle}>
+                    <div style={rowBetweenStyle}>
+                      <strong>{row.campaign_name}</strong>
+                      <span style={sendStatusChip(row.send_status)}>{row.send_status}</span>
+                    </div>
+                    <small style={smallStyle}>{row.campaign_channel} · {row.updated_at || row.sent_at || ""}</small>
+                  </div>
+                ))}
+                {recipientHistory.length === 0 ? <p style={hintStyle}>{isEs ? "Sin historial." : "No history."}</p> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {campaignPickerOpen ? (
+            <div style={modalOverlayStyle} role="dialog" aria-modal="true">
+              <div style={{ ...modalCardStyle, width: "min(900px, 100%)" }}>
+                <div style={{ ...rowBetweenStyle, marginBottom: "0.55rem" }}>
+                  <div>
+                    <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{text.campaignPickerTitle}</strong>
+                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.campaignPickerSubtitle}</p>
+                  </div>
+                  <button type="button" className="ia-button ia-button-ghost" onClick={() => setCampaignPickerOpen(false)} disabled={busy}>
+                    {text.close}
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.55rem", marginBottom: "0.6rem" }}>
+                  <input
+                    className="ia-form-input"
+                    placeholder={text.searchCampaigns}
+                    value={campaignSearch}
+                    onChange={(e) => setCampaignSearch(e.target.value)}
+                  />
+
+                  <select className="ia-form-input" value={campaignChannel} onChange={(e) => setCampaignChannel(e.target.value)}>
+                    <option value="all">{text.all}</option>
+                    <option value="email">Email</option>
+                    <option value="whatsapp">WhatsApp</option>
+                  </select>
+
+                  <select className="ia-form-input" value={campaignStatus} onChange={(e) => setCampaignStatus(e.target.value)}>
+                    <option value="all">{text.all}</option>
+                    <option value="draft">{text.draft}</option>
+                    <option value="active">Active</option>
+                    <option value="sent">Sent</option>
+                    <option value="paused">Paused</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 420, overflowY: "auto" }}>
+                  {campaigns.length === 0 ? <p style={hintStyle}>{text.noCampaigns}</p> : null}
+                  {campaigns.map((campaign) => (
+                    <button
+                      type="button"
+                      key={`picker-${campaign.id}`}
+                      onClick={() => pickCampaign(campaign.id)}
+                      style={{ ...campaignBtnStyle, ...(selectedCampaignId === campaign.id ? campaignBtnActiveStyle : {}) }}
+                    >
+                      <div style={rowBetweenStyle}>
+                        <strong style={{ textAlign: "left" }}>{campaign.name}</strong>
+                        <span style={badgeStyle}>{campaign.channel}</span>
+                      </div>
+                      <small style={smallStyle}>{campaign.status}{campaign.subject ? ` · ${campaign.subject}` : ""}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {previewOpen && selectedCampaign ? (
+            <div style={modalOverlayStyle} role="dialog" aria-modal="true">
+              <div style={modalCardStyle}>
+                <div style={{ ...rowBetweenStyle, marginBottom: "0.55rem" }}>
+                  <div>
+                    <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{text.previewTitle}</strong>
+                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.previewSubtitle}</p>
+                  </div>
+                  <button type="button" className="ia-button ia-button-ghost" onClick={() => setPreviewOpen(false)} disabled={busy}>
+                    {text.cancel}
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.7rem" }}>
+                  <div style={{ ...itemCardStyle, background: "#fff" }}>
+                    <strong style={panelTitleStyle}>{text.previewContent}</strong>
+                    <div style={{ marginTop: "0.55rem", border: "1px solid #E5E7EB", borderRadius: 10, padding: "0.65rem", background: "#ffffff" }}>
+                      <div style={{ ...rowBetweenStyle, marginBottom: "0.4rem" }}>
+                        <strong>{selectedCampaign.name}</strong>
+                        <span style={badgeStyle}>{selectedCampaign.channel}</span>
+                      </div>
+                      {selectedCampaign.channel === "email" ? (
+                        <small style={{ ...smallStyle, display: "block", marginBottom: "0.4rem" }}>
+                          {selectedCampaign.subject || selectedCampaign.name}
+                        </small>
+                      ) : null}
+                      <div style={{ whiteSpace: "pre-wrap", color: "#0f172a", fontSize: "0.9rem", lineHeight: 1.45 }}>
+                        {selectedCampaign.body || ""}
+                      </div>
+                      {selectedCampaign.image_url ? (
+                        <img
+                          src={selectedCampaign.image_url}
+                          alt="campaign"
+                          style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB" }}
+                        />
+                      ) : null}
+                      {selectedCampaign.cta_url ? (
+                        <a
+                          href={selectedCampaign.cta_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ display: "inline-block", marginTop: "0.55rem", padding: "0.45rem 0.7rem", borderRadius: 8, background: "#1d4ed8", color: "#fff", textDecoration: "none", fontSize: "0.82rem" }}
+                        >
+                          {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div style={{ ...itemCardStyle, background: "#fff" }}>
+                    <strong style={panelTitleStyle}>{text.previewAudience}</strong>
+                    <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                      <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
+                    </div>
+                    <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 280, overflowY: "auto" }}>
+                      {sendableSelectedRecipients.map((row) => (
+                        <div key={`preview-${row.recipient_key}`} style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                          <div style={rowBetweenStyle}>
+                            <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                            <span style={segmentChip(row.segment)}>{row.label_en}</span>
+                          </div>
+                          <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ ...rowBetweenStyle, marginTop: "0.8rem" }}>
+                  <span style={smallStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
+                  <button type="button" className="ia-button ia-button-warning" disabled={busy || sendableSelectedRecipients.length === 0} onClick={confirmSendCampaign}>
+                    {busy ? text.sending : text.confirmSend}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+const panelStyle = {
+  border: "1px solid #E5E7EB",
+  borderRadius: 12,
+  background: "#ffffff",
+  padding: "0.8rem",
+};
+
+const panelTitleStyle = {
+  color: "#274472",
+  fontSize: "0.95rem",
+};
+
+const rowBetweenStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.55rem",
+};
+
+const hintStyle = {
+  color: "#667085",
+  fontSize: "0.88rem",
+};
+
+const itemCardStyle = {
+  border: "1px solid #E5E7EB",
+  borderRadius: 10,
+  background: "#FAFAFA",
+  padding: "0.55rem",
+};
+
+const badgeStyle = {
+  border: "1px solid #E5E7EB",
+  borderRadius: 999,
+  padding: "0.18rem 0.5rem",
+  fontSize: "0.77rem",
+  color: "#334155",
+  background: "#f8fafc",
+};
+
+const smallStyle = {
+  color: "#6b7280",
+  fontSize: "0.77rem",
+};
+
+const campaignBtnStyle = {
+  border: "1px solid #E5E7EB",
+  borderRadius: 10,
+  background: "#fff",
+  padding: "0.55rem",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: "0.2rem",
+  cursor: "pointer",
+};
+
+const campaignBtnActiveStyle = {
+  border: "1px solid #274472",
+  boxShadow: "0 0 0 1px rgba(39,68,114,0.15)",
+};
+
+const modalOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 1200,
+  background: "rgba(15,23,42,0.45)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "1rem",
+};
+
+const modalCardStyle = {
+  width: "min(1100px, 100%)",
+  maxHeight: "92vh",
+  overflowY: "auto",
+  borderRadius: 14,
+  border: "1px solid #E5E7EB",
+  background: "#ffffff",
+  padding: "0.9rem",
+  boxShadow: "0 30px 80px rgba(15,23,42,0.24)",
+};
+
+const segmentChip = (segment) => {
+  const key = String(segment || "").toLowerCase();
+  if (key === "clients") return { ...badgeStyle, background: "#ecfdf3", color: "#047857", borderColor: "#bbf7d0" };
+  if (key === "leads") return { ...badgeStyle, background: "#eff6ff", color: "#1d4ed8", borderColor: "#bfdbfe" };
+  return { ...badgeStyle, background: "#fff7ed", color: "#c2410c", borderColor: "#fed7aa" };
+};
+
+const sendStatusChip = (status) => {
+  const key = String(status || "pending").toLowerCase();
+  if (key === "sent") return { ...badgeStyle, background: "#ecfdf3", color: "#047857", borderColor: "#bbf7d0" };
+  if (key === "blocked_policy") return { ...badgeStyle, background: "#fff7ed", color: "#c2410c", borderColor: "#fed7aa" };
+  if (key === "failed") return { ...badgeStyle, background: "#fef2f2", color: "#b91c1c", borderColor: "#fecaca" };
+  return { ...badgeStyle, background: "#f8fafc", color: "#334155", borderColor: "#e2e8f0" };
+};

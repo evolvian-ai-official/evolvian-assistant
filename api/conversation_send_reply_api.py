@@ -189,6 +189,86 @@ def _resolve_whatsapp_free_text_window(
     return result
 
 
+def _candidate_whatsapp_template_names(language_code: str, explicit_name: str | None = None) -> list[str]:
+    names: list[str] = []
+
+    def _push(value: str | None) -> None:
+        v = str(value or "").strip()
+        if v and v not in names:
+            names.append(v)
+
+    normalized = str(language_code or "").strip().lower()
+    is_en = normalized.startswith("en")
+
+    _push(explicit_name)
+    if is_en:
+        _push(os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME_EN"))
+        _push(os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME"))
+        _push("human_handoff_reply_en")
+        _push("human_handoff_followup_text_en")
+    else:
+        _push(os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME_ES"))
+        _push(os.getenv("WHATSAPP_HANDOFF_REPLY_TEMPLATE_NAME"))
+        _push("respuesta_equipo_humano_es")
+        _push("human_handoff_reply_es")
+        _push("human_handoff_followup_text_es")
+
+    return names
+
+
+def _is_missing_template_translation_error(template_result: dict) -> bool:
+    raw_error = str((template_result or {}).get("error") or "").lower()
+    if not raw_error:
+        return False
+    return (
+        '"code":132001' in raw_error
+        or "template name does not exist in the translation" in raw_error
+        or "does not exist in en_" in raw_error
+        or "does not exist in es_" in raw_error
+    )
+
+
+async def _send_whatsapp_template_with_fallback(
+    *,
+    client_id: str,
+    to_number: str,
+    initial_template_name: str,
+    language_code: str,
+    message: str,
+    purpose: str,
+    policy_source: str,
+    policy_source_id: str,
+) -> dict:
+    candidates = _candidate_whatsapp_template_names(language_code, initial_template_name)
+    attempted: list[str] = []
+    last_result: dict | None = None
+
+    for candidate in candidates:
+        attempted.append(candidate)
+        result = await send_whatsapp_template_for_client(
+            client_id=client_id,
+            to_number=to_number,
+            template_name=candidate,
+            parameters=[message],  # expected Meta template body contains {{1}} for free text
+            language_code=language_code,
+            purpose=purpose,
+            policy_source=policy_source,
+            policy_source_id=policy_source_id,
+        )
+        last_result = result
+        if result.get("success"):
+            result["_resolved_template_name"] = candidate
+            result["_attempted_template_names"] = attempted
+            return result
+        if not _is_missing_template_translation_error(result):
+            break
+
+    if not last_result:
+        last_result = {"success": False, "error": "No WhatsApp template candidates configured"}
+    last_result["_attempted_template_names"] = attempted
+    return last_result
+
+
 def _derive_email_thread_id(client_id: str, session_id: str | None, explicit_thread_id: str | None) -> Optional[str]:
     thread_id = str(explicit_thread_id or "").strip()
     if thread_id:
@@ -212,13 +292,30 @@ def _derive_email_thread_id(client_id: str, session_id: str | None, explicit_thr
                 meta_thread = str(delivery.get("thread_id") or "").strip()
                 if meta_thread and not _looks_like_uuid(meta_thread):
                     return meta_thread
-                candidate = str(row.get("source_id") or "").strip()
-                # In this env `history.source_id` may be an internal UUID (handoff id), not Gmail threadId.
-                if candidate and not _looks_like_uuid(candidate):
-                    return candidate
     except Exception as e:
         logger.warning("Could not derive email thread id from history | client_id=%s session_id=%s err=%s", client_id, session_id, e)
     return None
+
+
+def _resolve_handoff_email_thread_id(
+    *,
+    client_id: str,
+    session_id: str | None,
+    explicit_thread_id: str | None,
+    origin_channel: str | None,
+) -> tuple[Optional[str], str]:
+    explicit = str(explicit_thread_id or "").strip()
+    if explicit:
+        return explicit, "explicit"
+
+    origin = _norm_channel(origin_channel)
+    if origin != "email":
+        return None, "new_message_non_email_origin"
+
+    derived = _derive_email_thread_id(client_id, session_id, None)
+    if derived:
+        return derived, "derived_from_email_history"
+    return None, "new_message_no_thread"
 
 
 def _best_effort_sync_after_send(
@@ -352,7 +449,12 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
                 raise HTTPException(status_code=422, detail="Handoff has no contact_email")
 
             subject = str(payload.subject or "").strip() or "Re: Follow-up from support"
-            thread_id = _derive_email_thread_id(payload.client_id, handoff.get("session_id"), payload.thread_id)
+            thread_id, thread_mode = _resolve_handoff_email_thread_id(
+                client_id=payload.client_id,
+                session_id=handoff.get("session_id"),
+                explicit_thread_id=payload.thread_id,
+                origin_channel=origin_channel,
+            )
 
             gmail_payload = {
                 "client_id": payload.client_id,
@@ -377,6 +479,7 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
                 "provider": "gmail",
                 "message_id": resp_body.get("message_id"),
                 "thread_id": returned_thread_id or thread_id,
+                "thread_mode": thread_mode,
                 "to_email": to_email,
                 "subject": subject,
             }
@@ -387,16 +490,23 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
             if not to_number:
                 raise HTTPException(status_code=422, detail="Handoff has no contact_phone")
 
-            whatsapp_window = _resolve_whatsapp_free_text_window(
-                client_id=payload.client_id,
-                session_id=handoff.get("session_id"),
-                contact_phone=to_number,
-            )
-            auto_use_template = not bool(whatsapp_window.get("is_open"))
-            use_whatsapp_template = (
-                bool(payload.whatsapp_use_template)
-                if payload.whatsapp_use_template is not None
-                else auto_use_template
+            auto_from_whatsapp = origin_channel == "whatsapp"
+            force_template = bool(payload.whatsapp_use_template) or not auto_from_whatsapp
+            allow_free_text_first = not force_template
+            force_free_text_only = allow_free_text_first and payload.whatsapp_use_template is False
+            whatsapp_window = (
+                _resolve_whatsapp_free_text_window(
+                    client_id=payload.client_id,
+                    session_id=handoff.get("session_id"),
+                    contact_phone=to_number,
+                )
+                if allow_free_text_first
+                else {
+                    "window_hours": int(os.getenv("WHATSAPP_FREE_TEXT_WINDOW_HOURS", "24") or 24),
+                    "is_open": None,
+                    "last_user_message_at": None,
+                    "matched_session_id": None,
+                }
             )
             language_code = (
                 str(payload.whatsapp_template_language_code or "").strip()
@@ -407,43 +517,7 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
                 or _default_whatsapp_handoff_template_name(language_code)
             )
 
-            if use_whatsapp_template:
-                template_result = await send_whatsapp_template_for_client(
-                    client_id=payload.client_id,
-                    to_number=to_number,
-                    template_name=template_name,
-                    parameters=[message],  # expected Meta template body contains {{1}} for free text
-                    language_code=language_code,
-                    purpose="transactional",
-                    policy_source="conversation_handoff_send_reply_template",
-                    policy_source_id=handoff_id,
-                )
-                if not template_result.get("success"):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "WhatsApp template send failed. Configure/approve the handoff reply template "
-                            f"(e.g. {template_name} with {{1}} free-text variable). "
-                            f"Provider error: {template_result.get('error')}"
-                        ),
-                    )
-
-                delivery_meta = {
-                    "provider": "meta_template",
-                    "to_phone": to_number,
-                    "template_name": template_name,
-                    "language_code": language_code,
-                    "meta_message_id": template_result.get("meta_message_id"),
-                    "template_parameters_count": 1,
-                    "origin_channel": origin_channel,
-                    "window_open": bool(whatsapp_window.get("is_open")),
-                    "window_hours": whatsapp_window.get("window_hours"),
-                    "last_user_whatsapp_message_at": whatsapp_window.get("last_user_message_at"),
-                    "window_session_id": whatsapp_window.get("matched_session_id"),
-                    "delivery_mode": "template",
-                }
-                provider = "meta"
-            else:
+            if allow_free_text_first:
                 sent = await send_whatsapp_message_for_client(
                     client_id=payload.client_id,
                     to_number=to_number,
@@ -452,45 +526,7 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
                     policy_source="conversation_handoff_send_reply",
                     policy_source_id=handoff_id,
                 )
-                if not sent:
-                    # Best-effort fallback: if free-text failed in auto mode, retry with template.
-                    if payload.whatsapp_use_template is None:
-                        template_result = await send_whatsapp_template_for_client(
-                            client_id=payload.client_id,
-                            to_number=to_number,
-                            template_name=template_name,
-                            parameters=[message],
-                            language_code=language_code,
-                            purpose="transactional",
-                            policy_source="conversation_handoff_send_reply_template_fallback",
-                            policy_source_id=handoff_id,
-                        )
-                        if not template_result.get("success"):
-                            raise HTTPException(
-                                status_code=502,
-                                detail=(
-                                    "WhatsApp send failed in both free-text and template modes. "
-                                    f"Template error: {template_result.get('error')}"
-                                ),
-                            )
-                        delivery_meta = {
-                            "provider": "meta_template",
-                            "to_phone": to_number,
-                            "template_name": template_name,
-                            "language_code": language_code,
-                            "meta_message_id": template_result.get("meta_message_id"),
-                            "template_parameters_count": 1,
-                            "origin_channel": origin_channel,
-                            "window_open": bool(whatsapp_window.get("is_open")),
-                            "window_hours": whatsapp_window.get("window_hours"),
-                            "last_user_whatsapp_message_at": whatsapp_window.get("last_user_message_at"),
-                            "window_session_id": whatsapp_window.get("matched_session_id"),
-                            "delivery_mode": "free_text_fallback_to_template",
-                        }
-                        provider = "meta"
-                    else:
-                        raise HTTPException(status_code=502, detail="WhatsApp send failed")
-                else:
+                if sent:
                     delivery_meta = {
                         "provider": "meta",
                         "to_phone": to_number,
@@ -502,6 +538,90 @@ async def send_handoff_reply(handoff_id: str, payload: ConversationSendReplyInpu
                         "window_session_id": whatsapp_window.get("matched_session_id"),
                     }
                     provider = "meta"
+                else:
+                    if force_free_text_only:
+                        raise HTTPException(status_code=502, detail="WhatsApp send failed")
+                    template_result = await _send_whatsapp_template_with_fallback(
+                        client_id=payload.client_id,
+                        to_number=to_number,
+                        initial_template_name=template_name,
+                        language_code=language_code,
+                        message=message,
+                        purpose="transactional",
+                        policy_source="conversation_handoff_send_reply_template",
+                        policy_source_id=handoff_id,
+                    )
+                    if not template_result.get("success"):
+                        attempted = template_result.get("_attempted_template_names") or []
+                        attempted_hint = f" Attempted: {', '.join(attempted)}." if attempted else ""
+                        raise HTTPException(
+                            status_code=502,
+                            detail=(
+                                "WhatsApp template send failed. Configure/approve the handoff reply template "
+                                f"(e.g. {template_name} with {{1}} free-text variable)."
+                                f"{attempted_hint} Provider error: {template_result.get('error')}"
+                            ),
+                        )
+                    resolved_template_name = str(
+                        template_result.get("_resolved_template_name") or template_name
+                    ).strip() or template_name
+
+                    delivery_meta = {
+                        "provider": "meta_template",
+                        "to_phone": to_number,
+                        "template_name": resolved_template_name,
+                        "language_code": language_code,
+                        "meta_message_id": template_result.get("meta_message_id"),
+                        "template_parameters_count": 1,
+                        "origin_channel": origin_channel,
+                        "window_open": bool(whatsapp_window.get("is_open")),
+                        "window_hours": whatsapp_window.get("window_hours"),
+                        "last_user_whatsapp_message_at": whatsapp_window.get("last_user_message_at"),
+                        "window_session_id": whatsapp_window.get("matched_session_id"),
+                        "delivery_mode": "free_text_fallback_to_template",
+                    }
+                    provider = "meta"
+            else:
+                template_result = await _send_whatsapp_template_with_fallback(
+                    client_id=payload.client_id,
+                    to_number=to_number,
+                    initial_template_name=template_name,
+                    language_code=language_code,
+                    message=message,
+                    purpose="transactional",
+                    policy_source="conversation_handoff_send_reply_template",
+                    policy_source_id=handoff_id,
+                )
+                if not template_result.get("success"):
+                    attempted = template_result.get("_attempted_template_names") or []
+                    attempted_hint = f" Attempted: {', '.join(attempted)}." if attempted else ""
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            "WhatsApp template send failed. Configure/approve the handoff reply template "
+                            f"(e.g. {template_name} with {{1}} free-text variable)."
+                            f"{attempted_hint} Provider error: {template_result.get('error')}"
+                        ),
+                    )
+                resolved_template_name = str(
+                    template_result.get("_resolved_template_name") or template_name
+                ).strip() or template_name
+
+                delivery_meta = {
+                    "provider": "meta_template",
+                    "to_phone": to_number,
+                    "template_name": resolved_template_name,
+                    "language_code": language_code,
+                    "meta_message_id": template_result.get("meta_message_id"),
+                    "template_parameters_count": 1,
+                    "origin_channel": origin_channel,
+                    "window_open": whatsapp_window.get("is_open"),
+                    "window_hours": whatsapp_window.get("window_hours"),
+                    "last_user_whatsapp_message_at": whatsapp_window.get("last_user_message_at"),
+                    "window_session_id": whatsapp_window.get("matched_session_id"),
+                    "delivery_mode": "template",
+                }
+                provider = "meta"
 
         elif channel in {"widget", "chat", ""}:
             raise HTTPException(

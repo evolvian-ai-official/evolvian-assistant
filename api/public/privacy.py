@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from typing import Literal
 import uuid
+import re
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr, Field
 
 from api.config.config import supabase
@@ -14,6 +16,7 @@ from api.privacy_dsr import (
     get_due_at_from_metadata,
     isoformat_utc,
     now_utc,
+    split_details_and_metadata,
 )
 from api.security.request_limiter import enforce_rate_limit, get_request_ip
 
@@ -21,6 +24,17 @@ router = APIRouter(prefix="/api/public/privacy", tags=["Public Privacy"])
 
 CONSENT_LOG_TABLE = "public_privacy_consents"
 PRIVACY_REQUEST_TABLE = "public_privacy_requests"
+
+
+def _extract_opt_out_client_id(details: str | None) -> str | None:
+    text_details, metadata = split_details_and_metadata(str(details or ""))
+    scoped = str((metadata or {}).get("client_id") or "").strip()
+    if scoped:
+        return scoped
+    match = re.search(r"\bclient_id=([a-f0-9-]{8,})\b", text_details, flags=re.IGNORECASE)
+    if match:
+        return str(match.group(1)).strip()
+    return None
 
 
 class PrivacyConsentPayload(BaseModel):
@@ -164,6 +178,124 @@ def submit_privacy_request(payload: PrivacyRequestPayload, request: Request):
                 status_code=500,
                 detail=f"Could not submit privacy request: {fallback_error}",
             ) from fallback_error
+
+
+@router.get("/unsubscribe", response_class=HTMLResponse)
+def unsubscribe_marketing_email(
+    request: Request,
+    email: EmailStr = Query(...),
+    client_id: str | None = Query(None),
+    language: Literal["en", "es"] = Query("en"),
+):
+    request_ip = get_request_ip(request)
+    enforce_rate_limit(
+        scope="privacy_unsubscribe_ip",
+        key=request_ip,
+        limit=60,
+        window_seconds=300,
+    )
+
+    normalized_email = str(email).strip().lower()
+    if not normalized_email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+
+    try:
+        existing = (
+            supabase.table(PRIVACY_REQUEST_TABLE)
+            .select("id,status,created_at,details")
+            .eq("email", normalized_email)
+            .eq("request_type", "marketing_opt_out")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        existing_rows = existing.data or []
+    except Exception:
+        existing_rows = []
+
+    latest_applicable = None
+    for row in existing_rows:
+        scoped_client_id = _extract_opt_out_client_id((row or {}).get("details"))
+        if client_id and scoped_client_id and str(scoped_client_id) != str(client_id):
+            continue
+        latest_applicable = row or {}
+        break
+
+    existing_status = str((latest_applicable or {}).get("status") or "").strip().lower()
+    has_active_opt_out = bool(latest_applicable) and existing_status not in {"withdrawn", "denied"}
+
+    if not has_active_opt_out:
+        submitted_at = now_utc()
+        due_at = calculate_due_at(submitted_at)
+        request_id = f"dsar_{uuid.uuid4().hex[:12]}"
+        dsar_metadata = build_initial_metadata(
+            request_id=request_id,
+            request_type="marketing_opt_out",
+            submitted_at=submitted_at,
+            due_at=due_at,
+            source="email_unsubscribe_link",
+        )
+        if client_id:
+            dsar_metadata["client_id"] = str(client_id).strip()
+        details = "One-click marketing unsubscribe from campaign email."
+        details_with_metadata = combine_details_and_metadata(details, dsar_metadata)
+
+        record = {
+            "name": None,
+            "email": normalized_email,
+            "request_type": "marketing_opt_out",
+            "details": details_with_metadata,
+            "language": language,
+            "consent_version": "2026-02",
+            "source": "email_unsubscribe_link",
+            "status": "pending",
+            "ip_address": request_ip,
+            "user_agent": request.headers.get("user-agent"),
+            "created_at": isoformat_utc(submitted_at),
+        }
+        try:
+            supabase.table(PRIVACY_REQUEST_TABLE).insert(record).execute()
+        except Exception as insert_error:
+            print(
+                f"⚠️ Failed recording marketing unsubscribe | email={normalized_email} | client_id={client_id or 'none'} | error={insert_error}"
+            )
+            if language == "es":
+                fail_title = "No se pudo completar la baja"
+                fail_body = "No pudimos registrar tu solicitud de baja. Intenta de nuevo en unos minutos."
+            else:
+                fail_title = "Unsubscribe could not be completed"
+                fail_body = "We could not record your unsubscribe request. Please try again in a few minutes."
+
+            fail_html = (
+                "<!doctype html><html><head><meta charset='utf-8'/>"
+                "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
+                f"<title>{fail_title}</title></head>"
+                "<body style='font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;'>"
+                "<div style='max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;'>"
+                f"<h2 style='margin:0 0 10px;color:#0f172a;'>{fail_title}</h2>"
+                f"<p style='margin:0;color:#334155;line-height:1.6;'>{fail_body}</p>"
+                "</div></body></html>"
+            )
+            return HTMLResponse(content=fail_html, status_code=503)
+
+    if language == "es":
+        title = "Has sido dado de baja"
+        body = "Tu solicitud para dejar de recibir correos de marketing fue registrada."
+    else:
+        title = "You are unsubscribed"
+        body = "Your request to opt out from marketing emails has been recorded."
+
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'/>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
+        f"<title>{title}</title></head>"
+        "<body style='font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;'>"
+        "<div style='max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;'>"
+        f"<h2 style='margin:0 0 10px;color:#0f172a;'>{title}</h2>"
+        f"<p style='margin:0;color:#334155;line-height:1.6;'>{body}</p>"
+        "</div></body></html>"
+    )
+    return HTMLResponse(content=html, status_code=200)
 
 
 @router.get("/request/status")
