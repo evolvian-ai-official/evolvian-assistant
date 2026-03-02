@@ -1784,6 +1784,27 @@ def sync_canonical_templates_for_client(
                         category=category,
                         components=fallback_components,
                     )
+            if (
+                not created["success"]
+                and _is_meta_invalid_parameter_error(created.get("error"))
+            ):
+                # Last-resort compatibility fallback:
+                # some accounts reject certain button/header combinations.
+                # Retry with BODY-only components to keep sync healthy.
+                body_only_components = [
+                    component
+                    for component in components
+                    if str((component or {}).get("type") or "").upper() == "BODY"
+                ]
+                if body_only_components:
+                    created = _create_meta_template(
+                        waba_id=waba_id,
+                        wa_token=wa_token,
+                        template_name=client_template_name,
+                        language=language,
+                        category=category,
+                        components=body_only_components,
+                    )
 
             if not created["success"]:
                 status = "inactive"
