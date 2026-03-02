@@ -334,7 +334,7 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
     locale_code = _format_locale(payload.language_family)
     preview_body = str(payload.body or "").strip() or "Hola {{1}}, tenemos novedades para ti."
     if "{{1}}" not in preview_body:
-        preview_body = f"{preview_body} {{1}}"
+        preview_body = f"{preview_body} {{{{1}}}}"
 
     meta_template_name = _generate_meta_template_name(payload.name)
     normalized_cta_url = _normalize_redirect_url(payload.cta_url) or ""

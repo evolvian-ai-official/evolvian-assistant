@@ -71,6 +71,8 @@ def is_status_active(status: Optional[str]) -> bool:
 
 
 def infer_template_category(template_type: Optional[str]) -> str:
+    if _is_campaign_meta_type(template_type):
+        return "MARKETING"
     if not template_type:
         return "UTILITY"
     return _TYPE_TO_CATEGORY.get(template_type.strip().lower(), "UTILITY")
@@ -547,6 +549,9 @@ def _ensure_body_placeholders(text: str, parameter_count: int) -> str:
     body = (text or "").strip()
     if not body:
         body = "Hola {{1}}, este es un recordatorio de tu cita."
+
+    # Normalize legacy placeholders like "{1}" into Meta-compatible "{{1}}".
+    body = re.sub(r"(?<!\{)\{(\d+)\}(?!\})", r"{{\1}}", body)
 
     found = [int(m.group(1)) for m in re.finditer(r"\{\{(\d+)\}\}", body)]
     max_found = max(found) if found else 0
