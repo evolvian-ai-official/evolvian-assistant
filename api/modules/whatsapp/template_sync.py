@@ -874,7 +874,14 @@ def _build_template_components(
     header_image_url: Optional[str] = None,
 ) -> list[dict]:
     safe_params = max(0, int(parameter_count or 0))
-    body_text = _ensure_body_placeholders(preview_body or "", safe_params)
+    if _is_campaign_meta_type(template_type):
+        # Normalize all marketing campaign templates to single variable payload.
+        safe_params = max(1, safe_params)
+        family, _ = normalize_language_preferences(locale_code=language)
+        body_seed = "Hello,\n\n{{1}}" if family == "en" else "Hola,\n\n{{1}}"
+        body_text = _ensure_body_placeholders(body_seed, safe_params)
+    else:
+        body_text = _ensure_body_placeholders(preview_body or "", safe_params)
 
     body_component: dict[str, Any] = {
         "type": "BODY",

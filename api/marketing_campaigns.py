@@ -332,9 +332,9 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
     _ensure_template_type_exists(template_type, "Marketing campaign WhatsApp snapshot")
 
     locale_code = _format_locale(payload.language_family)
-    preview_body = str(payload.body or "").strip() or "Hola {{1}}, tenemos novedades para ti."
-    if "{{1}}" not in preview_body:
-        preview_body = f"{preview_body} {{{{1}}}}"
+    # Keep campaign templates stable for Meta approval:
+    # all campaign content is sent as single variable {{1}}.
+    preview_body = "Hello,\n\n{{1}}" if str(payload.language_family or "").lower().startswith("en") else "Hola,\n\n{{1}}"
 
     meta_template_name = _generate_meta_template_name(payload.name)
     normalized_cta_url = _normalize_redirect_url(payload.cta_url) or ""
@@ -1373,6 +1373,9 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
             "dry_run": bool(payload.dry_run),
         }
         campaign_image_url = str(campaign.get("image_url") or "").strip() or None
+        campaign_whatsapp_param = str(campaign.get("body") or "").strip() or (
+            "We have updates for you." if str(campaign.get("language_family") or "").lower().startswith("en") else "Tenemos novedades para ti."
+        )
 
         company_postal_address = _load_company_postal_address(payload.client_id)
         owner_email = _load_owner_email(auth_user_id)
@@ -1500,7 +1503,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     client_id=payload.client_id,
                     to_number=recipient_phone,
                     template_name=template_name,
-                    parameters=[target.get("recipient_name") or "there"],
+                    parameters=[campaign_whatsapp_param],
                     header_image_url=campaign_image_url,
                     language_code=language_code,
                     purpose="marketing",
@@ -1519,7 +1522,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                             client_id=payload.client_id,
                             to_number=recipient_phone,
                             template_name=template_name,
-                            parameters=[target.get("recipient_name") or "there"],
+                            parameters=[campaign_whatsapp_param],
                             header_image_url=None,
                             language_code=language_code,
                             purpose="marketing",
