@@ -22,6 +22,7 @@ from api.modules.whatsapp.whatsapp_sender import send_whatsapp_template_for_clie
 from api.modules.assistant_rag.llm import openai_chat
 from api.privacy_dsr import split_details_and_metadata
 from api.utils.feature_access import get_client_plan_id
+from api.compliance.marketing_consent_adapter import backfill_default_marketing_consents_for_contacts
 
 router = APIRouter(prefix="/marketing", tags=["Marketing Campaigns"])
 
@@ -503,8 +504,71 @@ def _load_opted_out_emails_for_client(client_id: str, candidate_emails: list[str
     return opted_out
 
 
+def _load_marketing_consent_renewal_days(client_id: str) -> int:
+    try:
+        row = (
+            supabase.table("client_settings")
+            .select("consent_renewal_days")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        ).data or [{}]
+        value = int((row[0] or {}).get("consent_renewal_days") or 90)
+    except Exception:
+        value = 90
+    return max(1, min(value, 3650))
+
+
+def _resolve_marketing_policy_reason(
+    *,
+    channel: str,
+    email: Optional[str],
+    phone: Optional[str],
+    is_opted_out: bool,
+    consent_at: Optional[str],
+    consent_terms_accepted: bool,
+    consent_email_marketing_accepted: bool,
+    consent_email_present: bool,
+    consent_phone_present: bool,
+    consent_renewal_days: int,
+    now_epoch: float,
+) -> Optional[str]:
+    normalized_channel = str(channel or "").strip().lower()
+    if normalized_channel == "email" and not email:
+        return "missing_recipient_email"
+    if normalized_channel == "whatsapp" and not phone:
+        return "missing_recipient_phone"
+
+    if is_opted_out and email:
+        return "marketing_opt_out_request_exists"
+
+    consent_epoch = _as_epoch(consent_at)
+    consent_fresh = consent_epoch > 0 and now_epoch <= (consent_epoch + (consent_renewal_days * 86400))
+    if not consent_fresh:
+        return "missing_or_expired_marketing_consent"
+    if not consent_terms_accepted:
+        return "missing_terms_acceptance_for_marketing"
+
+    if normalized_channel == "email":
+        if not consent_email_marketing_accepted:
+            return "email_marketing_not_opted_in"
+        if not consent_email_present:
+            return "missing_email_in_consent_record"
+        return None
+
+    if normalized_channel == "whatsapp":
+        if not consent_phone_present:
+            return "missing_phone_in_consent_record"
+        return None
+
+    return None
+
+
 def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], email: Optional[str], phone: Optional[str], source: str,
-                   last_activity_at: Optional[str], marketing_opt_in: bool, client_source: bool) -> None:
+                   last_activity_at: Optional[str], marketing_opt_in: bool, client_source: bool,
+                   consent_at: Optional[str] = None, consent_terms_accepted: Optional[bool] = None,
+                   consent_email_marketing_accepted: Optional[bool] = None,
+                   consent_email_present: Optional[bool] = None, consent_phone_present: Optional[bool] = None) -> None:
     row = pool.get(key)
     if not row:
         row = {
@@ -520,6 +584,11 @@ def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], emai
             "marketing_opt_in": False,
             "has_client_source": False,
             "last_activity_at": None,
+            "latest_consent_at": None,
+            "consent_terms_accepted": False,
+            "consent_email_marketing_accepted": False,
+            "consent_email_present": False,
+            "consent_phone_present": False,
             "entity_type": "contact",
         }
         pool[key] = row
@@ -545,9 +614,21 @@ def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], emai
     if incoming_ts >= current_ts:
         row["last_activity_at"] = last_activity_at
 
+    incoming_consent_ts = _as_epoch(consent_at)
+    current_consent_ts = _as_epoch(row.get("latest_consent_at"))
+    if incoming_consent_ts > 0 and incoming_consent_ts >= current_consent_ts:
+        row["latest_consent_at"] = consent_at
+        row["consent_terms_accepted"] = bool(consent_terms_accepted)
+        row["consent_email_marketing_accepted"] = bool(consent_email_marketing_accepted)
+        row["consent_email_present"] = bool(consent_email_present)
+        row["consent_phone_present"] = bool(consent_phone_present)
+
 
 def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
     pool: dict[str, dict[str, Any]] = {}
+    consent_renewal_days = _load_marketing_consent_renewal_days(client_id)
+    now_epoch = datetime.now(timezone.utc).timestamp()
+    client_contacts_for_backfill: list[dict[str, Any]] = []
 
     appointment_clients = (
         supabase.table("appointment_clients")
@@ -575,6 +656,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
             marketing_opt_in=False,
             client_source=True,
         )
+        client_contacts_for_backfill.append({"email": email, "phone": phone})
 
     appointments = (
         supabase.table("appointments")
@@ -601,10 +683,21 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
             marketing_opt_in=False,
             client_source=True,
         )
+        client_contacts_for_backfill.append({"email": email, "phone": phone})
+
+    try:
+        backfill_default_marketing_consents_for_contacts(
+            client_id=client_id,
+            contacts=client_contacts_for_backfill,
+            source="marketing_clients_auto",
+        )
+    except Exception:
+        # Non-blocking: audience should still load even if backfill fails.
+        pass
 
     widget_consents = (
         supabase.table("widget_consents")
-        .select("email,phone,accepted_email_marketing,consent_at")
+        .select("email,phone,accepted_terms,accepted_email_marketing,consent_at")
         .eq("client_id", client_id)
         .order("consent_at", desc=True)
         .execute()
@@ -625,11 +718,16 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
             last_activity_at=raw.get("consent_at"),
             marketing_opt_in=bool(raw.get("accepted_email_marketing")),
             client_source=False,
+            consent_at=raw.get("consent_at"),
+            consent_terms_accepted=bool(raw.get("accepted_terms")),
+            consent_email_marketing_accepted=bool(raw.get("accepted_email_marketing")),
+            consent_email_present=bool(email),
+            consent_phone_present=bool(phone),
         )
 
     handoff_consents = (
         supabase.table("conversation_handoff_requests")
-        .select("contact_name,contact_email,contact_phone,accepted_email_marketing,created_at")
+        .select("contact_name,contact_email,contact_phone,accepted_terms,accepted_email_marketing,created_at")
         .eq("client_id", client_id)
         .order("created_at", desc=True)
         .execute()
@@ -651,6 +749,11 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
             last_activity_at=raw.get("created_at"),
             marketing_opt_in=bool(raw.get("accepted_email_marketing")),
             client_source=False,
+            consent_at=raw.get("created_at"),
+            consent_terms_accepted=bool(raw.get("accepted_terms")),
+            consent_email_marketing_accepted=bool(raw.get("accepted_email_marketing")),
+            consent_email_present=bool(email),
+            consent_phone_present=bool(phone),
         )
 
     candidate_emails = [_normalize_email((row or {}).get("email")) for row in pool.values()]
@@ -682,11 +785,47 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
             row["opt_out_label_en"] = "Opt-out"
             row["opt_out_label_es"] = "Desvinculado"
 
+        row["policy_reason_email"] = _resolve_marketing_policy_reason(
+            channel="email",
+            email=email,
+            phone=_normalize_phone(row.get("phone")),
+            is_opted_out=is_opted_out,
+            consent_at=row.get("latest_consent_at"),
+            consent_terms_accepted=bool(row.get("consent_terms_accepted")),
+            consent_email_marketing_accepted=bool(row.get("consent_email_marketing_accepted")),
+            consent_email_present=bool(row.get("consent_email_present")),
+            consent_phone_present=bool(row.get("consent_phone_present")),
+            consent_renewal_days=consent_renewal_days,
+            now_epoch=now_epoch,
+        )
+        row["policy_reason_whatsapp"] = _resolve_marketing_policy_reason(
+            channel="whatsapp",
+            email=email,
+            phone=_normalize_phone(row.get("phone")),
+            is_opted_out=is_opted_out,
+            consent_at=row.get("latest_consent_at"),
+            consent_terms_accepted=bool(row.get("consent_terms_accepted")),
+            consent_email_marketing_accepted=bool(row.get("consent_email_marketing_accepted")),
+            consent_email_present=bool(row.get("consent_email_present")),
+            consent_phone_present=bool(row.get("consent_phone_present")),
+            consent_renewal_days=consent_renewal_days,
+            now_epoch=now_epoch,
+        )
+        row["consent_missing_or_expired"] = bool(
+            row.get("policy_reason_email") == "missing_or_expired_marketing_consent"
+            or row.get("policy_reason_whatsapp") == "missing_or_expired_marketing_consent"
+        )
+
         label_en, label_es = _segment_label(row["segment"])
         row["label_en"] = label_en
         row["label_es"] = label_es
         row["sources"] = sorted(list(row.get("sources", set())))
         row["channels"] = sorted(list(row.get("channels", set())))
+        row.pop("latest_consent_at", None)
+        row.pop("consent_terms_accepted", None)
+        row.pop("consent_email_marketing_accepted", None)
+        row.pop("consent_email_present", None)
+        row.pop("consent_phone_present", None)
         row.setdefault("entity_type", "contact")
         items.append(row)
 

@@ -134,6 +134,24 @@ export default function MarketingCampaigns() {
     formErrorCta: isEs ? "La URL del botón no es válida." : "Button URL is invalid.",
     formCannotSave: isEs ? "No se puede guardar todavía." : "Cannot save yet.",
     ctaNormalizedAs: isEs ? "Se guardará como:" : "Will be saved as:",
+    consentBadgeTitle: isEs ? "Consentimiento" : "Consent",
+    consentMissingExpiredBadge: isEs ? "Consent missing/expired" : "Consent missing/expired",
+    consentIssueBadge: isEs ? "Problema de consentimiento" : "Consent issue",
+    consentReasonMissingExpired: isEs
+      ? "No existe consentimiento de marketing vigente o ya expiró para este contacto."
+      : "No valid marketing consent exists, or it already expired for this contact.",
+    consentReasonNotOptedIn: isEs
+      ? "El contacto no aceptó marketing por email."
+      : "The contact has not opted in to email marketing.",
+    consentReasonMissingTerms: isEs
+      ? "Falta aceptación de términos para marketing."
+      : "Terms acceptance for marketing is missing.",
+    consentReasonMissingEmailInConsent: isEs
+      ? "El consentimiento no contiene email válido."
+      : "The consent record does not include a valid email.",
+    consentReasonMissingPhoneInConsent: isEs
+      ? "El consentimiento no contiene teléfono válido."
+      : "The consent record does not include a valid phone number.",
   };
 
   const [loading, setLoading] = useState(true);
@@ -376,6 +394,36 @@ export default function MarketingCampaigns() {
     if (channel === "email" && !row?.email) return text.incompatibleNoEmail;
     if (channel === "whatsapp" && !row?.phone) return text.incompatibleNoPhone;
     return "";
+  };
+  const getPolicyReasonForChannel = (row, channel = selectedCampaignChannel) => {
+    if (!row) return "";
+    if (channel === "email") return String(row?.policy_reason_email || "");
+    if (channel === "whatsapp") return String(row?.policy_reason_whatsapp || "");
+    return String(row?.policy_reason_email || row?.policy_reason_whatsapp || "");
+  };
+  const getConsentPolicyHelp = (reason) => {
+    const normalized = String(reason || "").trim().toLowerCase();
+    if (normalized === "missing_or_expired_marketing_consent") return text.consentReasonMissingExpired;
+    if (normalized === "email_marketing_not_opted_in") return text.consentReasonNotOptedIn;
+    if (normalized === "missing_terms_acceptance_for_marketing") return text.consentReasonMissingTerms;
+    if (normalized === "missing_email_in_consent_record") return text.consentReasonMissingEmailInConsent;
+    if (normalized === "missing_phone_in_consent_record") return text.consentReasonMissingPhoneInConsent;
+    return "";
+  };
+  const getConsentPolicyBadgeLabel = (reason) => {
+    const normalized = String(reason || "").trim().toLowerCase();
+    if (normalized === "missing_or_expired_marketing_consent") return text.consentMissingExpiredBadge;
+    return text.consentIssueBadge;
+  };
+  const hasConsentPolicyWarning = (row, channel = selectedCampaignChannel) => {
+    const reason = getPolicyReasonForChannel(row, channel);
+    return [
+      "missing_or_expired_marketing_consent",
+      "email_marketing_not_opted_in",
+      "missing_terms_acceptance_for_marketing",
+      "missing_email_in_consent_record",
+      "missing_phone_in_consent_record",
+    ].includes(String(reason || "").toLowerCase());
   };
 
   const selectedRecipientKeys = useMemo(() => Object.keys(selectedRecipients), [selectedRecipients]);
@@ -891,6 +939,9 @@ export default function MarketingCampaigns() {
                   const blocked = isRecipientBlocked(row);
                   const canSelect = !blocked && isRecipientCompatible(row);
                   const incompatibleReason = blocked ? text.optedOutCannotSelect : getIncompatibleReason(row);
+                  const consentWarning = hasConsentPolicyWarning(row);
+                  const policyReason = getPolicyReasonForChannel(row);
+                  const consentWarningHelp = getConsentPolicyHelp(policyReason);
                   return (
                     <div key={row.recipient_key} style={{ ...itemCardStyle, opacity: canSelect ? 1 : 0.6 }}>
                       <div style={rowBetweenStyle}>
@@ -910,9 +961,24 @@ export default function MarketingCampaigns() {
                               {row.opt_out_label_en || text.optedOut} / {row.opt_out_label_es || text.optedOut}
                             </span>
                           ) : null}
+                          {consentWarning ? (
+                            <span
+                              title={`${text.consentBadgeTitle}: ${consentWarningHelp}`}
+                              style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}
+                            >
+                              {getConsentPolicyBadgeLabel(policyReason)}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                       <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                      {consentWarning && consentWarningHelp ? (
+                        <div style={{ marginTop: "0.28rem" }}>
+                          <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>
+                            {consentWarningHelp}
+                          </span>
+                        </div>
+                      ) : null}
                       {!canSelect && incompatibleReason ? (
                         <div style={{ marginTop: "0.28rem" }}>
                           <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>{incompatibleReason}</span>
@@ -1436,15 +1502,30 @@ export default function MarketingCampaigns() {
                       <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
                     </div>
                     <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 280, overflowY: "auto" }}>
-                      {sendableSelectedRecipients.map((row) => (
-                        <div key={`preview-${row.recipient_key}`} style={{ ...itemCardStyle, background: "#f8fafc" }}>
-                          <div style={rowBetweenStyle}>
-                            <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
-                            <span style={segmentChip(row.segment)}>{row.label_en}</span>
+                      {sendableSelectedRecipients.map((row) => {
+                        const previewPolicyReason = getPolicyReasonForChannel(row);
+                        const previewConsentWarning = hasConsentPolicyWarning(row);
+                        const previewConsentHelp = getConsentPolicyHelp(previewPolicyReason);
+                        return (
+                          <div key={`preview-${row.recipient_key}`} style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                            <div style={rowBetweenStyle}>
+                              <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                              <span style={segmentChip(row.segment)}>{row.label_en}</span>
+                            </div>
+                            <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                            {previewConsentWarning ? (
+                              <div style={{ marginTop: "0.28rem" }}>
+                                <span
+                                  title={`${text.consentBadgeTitle}: ${previewConsentHelp}`}
+                                  style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}
+                                >
+                                  {getConsentPolicyBadgeLabel(previewPolicyReason)}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
-                          <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

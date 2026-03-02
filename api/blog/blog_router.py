@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Request, Query, Body
 from .models import CommentPayload
 from .service import save_comment, list_comments
 from api.modules.assistant_rag.supabase_client import supabase
+from api.compliance.marketing_consent_adapter import record_marketing_consent
 
 router = APIRouter(prefix="/api/blog", tags=["Blog"])
 
@@ -76,8 +77,18 @@ def post_comment(payload: CommentPayload, request: Request):
             else:
                 print(f"ℹ️ Subscriber already exists: {payload.email}")
 
+            # Canonical outbound consent snapshot (best effort).
+            record_marketing_consent(
+                source="public_blog_comment",
+                email=payload.email.strip().lower(),
+                phone=(payload.phone or "").strip() or None,
+                accepted_terms=bool(payload.accepted_terms),
+                accepted_email_marketing=True,
+                ip_address=ip,
+                user_agent=ua,
+            )
+
         return {"message": "✅ Comentario enviado, pendiente de aprobación."}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-

@@ -9,6 +9,7 @@ import logging
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.compliance.marketing_consent_adapter import record_marketing_consent
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ async def complete_onboarding(
         client_id = payload.client_id
         if not client_id:
             raise HTTPException(status_code=400, detail="client_id required")
-        authorize_client_request(request, client_id)
+        auth_user_id = authorize_client_request(request, client_id)
 
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
@@ -115,6 +116,36 @@ async def complete_onboarding(
             },
             on_conflict="client_id"
         ).execute()
+
+        if payload.terms.accepted and payload.terms.accepted_marketing:
+            owner_email = None
+            try:
+                if auth_user_id:
+                    owner_res = (
+                        supabase
+                        .table("users")
+                        .select("email")
+                        .eq("id", auth_user_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    owner_row = (owner_res.data or [None])[0] or {}
+                    owner_email = str(owner_row.get("email") or "").strip().lower() or None
+            except Exception:
+                owner_email = None
+
+            # Canonical outbound consent snapshot (best effort).
+            record_marketing_consent(
+                source="onboarding",
+                client_id=client_id,
+                email=owner_email,
+                phone=(payload.profile.phone or "").strip() or None,
+                accepted_terms=True,
+                accepted_email_marketing=True,
+                consent_at=now,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
         logger.info(f"✅ Onboarding completed for client {client_id}")
 

@@ -58,6 +58,7 @@ from api.list_chunks_api import router as list_chunks_router
 from api.delete_chunks_api import router as delete_chunks_router
 from api.public.embed import router as embed_router
 from api.public.contact import router as public_contact_router
+from api.public.demo import router as public_demo_router
 from api.public.privacy import router as public_privacy_router
 from api.internal.privacy_requests import router as internal_privacy_router
 from api.internal.retention_jobs import router as internal_retention_router
@@ -125,6 +126,7 @@ app.include_router(list_chunks_router, prefix="/api")
 app.include_router(delete_chunks_router, prefix="/api")
 app.include_router(embed_router, prefix="/api")
 app.include_router(public_contact_router)
+app.include_router(public_demo_router)
 app.include_router(public_privacy_router)
 app.include_router(internal_privacy_router)
 app.include_router(internal_retention_router)

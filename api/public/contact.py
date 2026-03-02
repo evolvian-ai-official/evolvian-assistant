@@ -3,6 +3,7 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime, timezone
 
 from api.config.config import supabase
+from api.compliance.marketing_consent_adapter import record_marketing_consent
 
 router = APIRouter(prefix="/api/public", tags=["Public Contact"])
 
@@ -149,6 +150,17 @@ def create_public_contact(payload: PublicContactPayload, request: Request):
                     )
                     .execute()
                 )
+
+            # Canonical outbound consent snapshot (best effort).
+            record_marketing_consent(
+                source="public_contact_form",
+                email=email,
+                phone=None,
+                accepted_terms=True,
+                accepted_email_marketing=True,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
         return {"message": "Contact request saved successfully."}
     except HTTPException:
