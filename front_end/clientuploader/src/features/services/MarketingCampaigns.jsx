@@ -16,6 +16,7 @@ export default function MarketingCampaigns() {
       ? "Crea campañas de Email y WhatsApp, segmenta audiencia y consulta historial de envíos."
       : "Create Email and WhatsApp campaigns, segment audience, and review send history.",
     create: isEs ? "Crear campaña" : "Create campaign",
+    createNewCampaign: isEs ? "Nueva campaña" : "New campaign",
     campaigns: isEs ? "Campañas" : "Campaigns",
     audience: isEs ? "Audiencia" : "Audience",
     filters: isEs ? "Filtros" : "Filters",
@@ -80,6 +81,9 @@ export default function MarketingCampaigns() {
     noCampaignSelected: isEs ? "No hay campaña seleccionada." : "No campaign selected.",
     campaignPickerTitle: isEs ? "Seleccionar campaña" : "Select campaign",
     campaignPickerSubtitle: isEs ? "Elige una campaña para envío y seguimiento." : "Choose a campaign for send and tracking.",
+    campaignFormCreateTitle: isEs ? "Crear campaña" : "Create campaign",
+    campaignFormEditTitle: isEs ? "Editar campaña" : "Edit campaign",
+    campaignFormSubtitle: isEs ? "Completa el formulario y guarda tu campaña." : "Complete the form and save your campaign.",
     close: isEs ? "Cerrar" : "Close",
     whatsappNotConnected: isEs
       ? "WhatsApp no está conectado. Conéctalo antes de enviar campañas por WhatsApp."
@@ -101,6 +105,16 @@ export default function MarketingCampaigns() {
     whatsappEditVersions: isEs
       ? "Campaña WhatsApp actualizada. Se creó una nueva plantilla para Meta."
       : "WhatsApp campaign updated. A new Meta template version was created.",
+    whatsappFormatTitle: isEs ? "Formato WhatsApp aceptado" : "Accepted WhatsApp format",
+    whatsappFormatLine1: isEs
+      ? "Texto de plantilla con variable {{1}} (nombre del contacto)."
+      : "Template body text with {{1}} variable (contact name).",
+    whatsappFormatLine2: isEs
+      ? "Botón opcional de URL (https://...) usando el CTA."
+      : "Optional URL button (https://...) using the CTA fields.",
+    whatsappFormatLine3: isEs
+      ? "Imagen opcional como header (solo URL pública https://...)."
+      : "Optional image header (public https://... URL only).",
   };
 
   const [loading, setLoading] = useState(true);
@@ -128,6 +142,7 @@ export default function MarketingCampaigns() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [contentPreviewOpen, setContentPreviewOpen] = useState(false);
   const [campaignPickerOpen, setCampaignPickerOpen] = useState(false);
+  const [campaignFormOpen, setCampaignFormOpen] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [imageFileName, setImageFileName] = useState("");
@@ -389,6 +404,28 @@ export default function MarketingCampaigns() {
 
   const clearRecipientSelection = () => setSelectedRecipients({});
 
+  const resetCampaignForm = () => {
+    setEditingCampaignId("");
+    setForm({
+      name: "",
+      channel: "email",
+      subject: "",
+      body: "",
+      image_url: "",
+      cta_label: "",
+      cta_url: "",
+      language_family: isEs ? "es" : "en",
+    });
+    setImageFileName("");
+  };
+
+  const openCreateCampaignModal = () => {
+    setNotice(null);
+    setError("");
+    resetCampaignForm();
+    setCampaignFormOpen(true);
+  };
+
   const handleCampaignImageUpload = async (file) => {
     if (!file) return;
     if (!String(file.type || "").startsWith("image/")) {
@@ -484,20 +521,12 @@ export default function MarketingCampaigns() {
     setImageFileName("");
     setNotice(null);
     setError("");
+    setCampaignFormOpen(true);
   };
 
   const cancelCampaignEdit = () => {
-    setEditingCampaignId("");
-    setForm((prev) => ({
-      ...prev,
-      name: "",
-      subject: "",
-      body: "",
-      image_url: "",
-      cta_label: "",
-      cta_url: "",
-    }));
-    setImageFileName("");
+    resetCampaignForm();
+    setCampaignFormOpen(false);
   };
 
   const archiveSelectedCampaign = async () => {
@@ -575,9 +604,8 @@ export default function MarketingCampaigns() {
         setNotice({ type: "success", message: isEs ? "Campaña actualizada." : "Campaign updated." });
       }
 
-      setForm((prev) => ({ ...prev, name: "", subject: "", body: "", image_url: "", cta_label: "", cta_url: "" }));
-      setImageFileName("");
-      setEditingCampaignId("");
+      resetCampaignForm();
+      setCampaignFormOpen(false);
       await refreshAll();
       const createdId = data?.campaign?.id;
       if (createdId) setSelectedCampaignId(createdId);
@@ -700,295 +728,176 @@ export default function MarketingCampaigns() {
             </div>
           ) : null}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.9rem", marginTop: "1rem" }}>
-            <div style={panelStyle}>
-              <strong style={panelTitleStyle}>{text.create}</strong>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.9rem" }}>
+            <button type="button" className="ia-button ia-button-primary" onClick={openCreateCampaignModal} disabled={busy}>
+              {text.createNewCampaign}
+            </button>
+          </div>
 
-              <input
-                className="ia-form-input"
-                placeholder={isEs ? "Nombre de campaña" : "Campaign name"}
-                value={form.name}
-                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              />
-
-              <select
-                className="ia-form-input"
-                value={form.channel}
-                onChange={(e) => setForm((prev) => ({ ...prev, channel: e.target.value }))}
-                disabled={Boolean(editingCampaignId)}
-              >
-                <option value="email">Email</option>
-                <option value="whatsapp">WhatsApp</option>
-              </select>
-
-              {form.channel === "email" ? (
-                <input
-                  className="ia-form-input"
-                  placeholder={isEs ? "Asunto" : "Subject"}
-                  value={form.subject}
-                  onChange={(e) => setForm((prev) => ({ ...prev, subject: e.target.value }))}
-                />
-              ) : null}
-
-              <textarea
-                className="ia-form-input"
-                rows={4}
-                placeholder={isEs ? "Contenido de campaña" : "Campaign content"}
-                value={form.body}
-                onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
-              />
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "-0.2rem", marginBottom: "0.25rem" }}>
-                <button
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                  onClick={suggestCampaignBody}
-                  disabled={busy || aiBusy || !form.body.trim()}
-                >
-                  {aiBusy ? text.aiRestructuring : text.aiRestructure}
-                </button>
-              </div>
-
-              <div style={{ ...itemCardStyle, background: "#f8fafc" }}>
-                <label style={{ ...smallStyle, display: "block", marginBottom: "0.35rem" }}>
-                  {isEs ? "Imagen de campaña (opcional)" : "Campaign image (optional)"}
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="ia-form-input"
-                  onChange={(e) => handleCampaignImageUpload(e.target.files?.[0])}
-                  disabled={uploadingImage}
-                />
-                <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.35rem", alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={badgeStyle}>
-                    {uploadingImage ? text.uploadingImage : form.image_url ? text.imageReady : text.uploadImage}
-                  </span>
-                  {imageFileName ? <small style={smallStyle}>{imageFileName}</small> : null}
-                  {form.image_url ? (
-                    <button
-                      type="button"
-                      className="ia-button ia-button-ghost"
-                      style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }}
-                      onClick={() => {
-                        setForm((prev) => ({ ...prev, image_url: "" }));
-                        setImageFileName("");
-                      }}
-                      disabled={uploadingImage}
-                    >
-                      {text.removeImage}
-                    </button>
-                  ) : null}
-                </div>
-                {form.image_url ? (
-                  <img
-                    src={form.image_url}
-                    alt="campaign upload"
-                    style={{ marginTop: "0.45rem", width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: "1px solid #E5E7EB" }}
-                  />
-                ) : null}
-              </div>
-
-              <input
-                className="ia-form-input"
-                placeholder={isEs ? "Texto botón de redirección (opcional)" : "Redirect button text (optional)"}
-                value={form.cta_label}
-                onChange={(e) => setForm((prev) => ({ ...prev, cta_label: e.target.value }))}
-              />
-
-              <input
-                className="ia-form-input"
-                placeholder={isEs ? "URL de redirección (opcional) https://..." : "Redirect URL (optional) https://..."}
-                value={form.cta_url}
-                onChange={(e) => setForm((prev) => ({ ...prev, cta_url: e.target.value }))}
-              />
-
-              <select
-                className="ia-form-input"
-                value={form.language_family}
-                onChange={(e) => setForm((prev) => ({ ...prev, language_family: e.target.value }))}
-              >
-                <option value="es">Español</option>
-                <option value="en">English</option>
-              </select>
-
-              <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                <button type="button" className="ia-button ia-button-primary" disabled={busy || uploadingImage} onClick={createCampaign}>
-                  {busy ? text.loading : (editingCampaignId ? text.updateCampaign : text.create)}
-                </button>
-                {editingCampaignId ? (
-                  <button type="button" className="ia-button ia-button-ghost" disabled={busy} onClick={cancelCampaignEdit}>
-                    {text.cancelEdit}
-                  </button>
-                ) : null}
-              </div>
+          <div style={{ ...panelStyle, marginTop: "0.9rem" }}>
+            <div style={rowBetweenStyle}>
+              <strong style={panelTitleStyle}>{text.audience}</strong>
+              <button type="button" className="ia-button ia-button-ghost" onClick={refreshAll} disabled={busy || loading}>
+                {text.refresh}
+              </button>
             </div>
 
-            <div style={panelStyle}>
-              <div style={rowBetweenStyle}>
-                <strong style={panelTitleStyle}>{text.audience}</strong>
-                <button type="button" className="ia-button ia-button-ghost" onClick={refreshAll} disabled={busy || loading}>
-                  {text.refresh}
-                </button>
-              </div>
+            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>
+              <span style={badgeStyle}>Clients: {audienceCounts.clients || 0}</span>
+              <span style={badgeStyle}>Leads: {audienceCounts.leads || 0}</span>
+            </div>
 
-              <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>
-                <span style={badgeStyle}>Clients: {audienceCounts.clients || 0}</span>
-                <span style={badgeStyle}>Leads: {audienceCounts.leads || 0}</span>
-              </div>
+            <input
+              className="ia-form-input"
+              placeholder={text.searchAudience}
+              value={audienceSearch}
+              onChange={(e) => setAudienceSearch(e.target.value)}
+            />
 
-              <input
-                className="ia-form-input"
-                placeholder={text.searchAudience}
-                value={audienceSearch}
-                onChange={(e) => setAudienceSearch(e.target.value)}
-              />
+            <select className="ia-form-input" value={audienceSegment} onChange={(e) => setAudienceSegment(e.target.value)}>
+              <option value="all">{text.all}</option>
+              <option value="clients">Clients / Clientes</option>
+              <option value="leads">Leads</option>
+            </select>
 
-              <select className="ia-form-input" value={audienceSegment} onChange={(e) => setAudienceSegment(e.target.value)}>
-                <option value="all">{text.all}</option>
-                <option value="clients">Clients / Clientes</option>
-                <option value="leads">Leads</option>
-              </select>
+            <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.45rem" }}>
+              <button
+                type="button"
+                className="ia-button ia-button-ghost"
+                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                onClick={selectVisibleAudience}
+                disabled={busy || audience.length === 0}
+              >
+                {text.selectVisible}
+              </button>
+              <button
+                type="button"
+                className="ia-button ia-button-ghost"
+                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                onClick={() => selectAudienceBySegment("clients")}
+                disabled={busy}
+              >
+                {text.selectAllClients}
+              </button>
+              <button
+                type="button"
+                className="ia-button ia-button-ghost"
+                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                onClick={() => selectAudienceBySegment("leads")}
+                disabled={busy}
+              >
+                {text.selectAllLeads}
+              </button>
+              <button
+                type="button"
+                className="ia-button ia-button-ghost"
+                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                onClick={() => selectAudienceBySegment("all")}
+                disabled={busy}
+              >
+                {text.selectAllAudience}
+              </button>
+              <button
+                type="button"
+                className="ia-button ia-button-ghost"
+                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                onClick={clearRecipientSelection}
+                disabled={busy || selectedRecipientKeys.length === 0}
+              >
+                {text.clearSelection}
+              </button>
+            </div>
 
-              <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.45rem" }}>
-                <button
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                  onClick={selectVisibleAudience}
-                  disabled={busy || audience.length === 0}
-                >
-                  {text.selectVisible}
-                </button>
-                <button
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                  onClick={() => selectAudienceBySegment("clients")}
-                  disabled={busy}
-                >
-                  {text.selectAllClients}
-                </button>
-                <button
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                  onClick={() => selectAudienceBySegment("leads")}
-                  disabled={busy}
-                >
-                  {text.selectAllLeads}
-                </button>
-                <button
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                  onClick={() => selectAudienceBySegment("all")}
-                  disabled={busy}
-                >
-                  {text.selectAllAudience}
-                </button>
-                <button
-                  type="button"
-                  className="ia-button ia-button-ghost"
-                  style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                  onClick={clearRecipientSelection}
-                  disabled={busy || selectedRecipientKeys.length === 0}
-                >
-                  {text.clearSelection}
-                </button>
-              </div>
-
-              {selectedCampaignChannel ? (
-                <div style={{ ...itemCardStyle, marginBottom: "0.45rem", background: "#f8fafc" }}>
-                  <small style={smallStyle}>
-                    {selectedCampaignChannel === "email" ? text.channelRuleEmail : text.channelRuleWhatsapp}
-                  </small>
-                  <div style={{ marginTop: "0.3rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                    <span style={badgeStyle}>
-                      {text.selectedForSend}: {sendableSelectedRecipients.length}
-                    </span>
-                    <span style={badgeStyle}>
-                      {text.excludedByChannel}: {excludedByChannelCount}
-                    </span>
-                  </div>
+            {selectedCampaignChannel ? (
+              <div style={{ ...itemCardStyle, marginBottom: "0.45rem", background: "#f8fafc" }}>
+                <small style={smallStyle}>
+                  {selectedCampaignChannel === "email" ? text.channelRuleEmail : text.channelRuleWhatsapp}
+                </small>
+                <div style={{ marginTop: "0.3rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                  <span style={badgeStyle}>
+                    {text.selectedForSend}: {sendableSelectedRecipients.length}
+                  </span>
+                  <span style={badgeStyle}>
+                    {text.excludedByChannel}: {excludedByChannelCount}
+                  </span>
                 </div>
-              ) : null}
+              </div>
+            ) : null}
 
-              {loading ? <p style={hintStyle}>{text.loading}</p> : null}
+            {loading ? <p style={hintStyle}>{text.loading}</p> : null}
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.6rem" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 330, overflowY: "auto" }}>
-                  {!loading && audience.length === 0 ? <p style={hintStyle}>{text.noAudience}</p> : null}
-                  {audience.map((row) => {
-                    const isSelected = Boolean(selectedRecipients[row.recipient_key]);
-                    const blocked = isRecipientBlocked(row);
-                    const canSelect = !blocked && isRecipientCompatible(row);
-                    const incompatibleReason = blocked ? text.optedOutCannotSelect : getIncompatibleReason(row);
-                    return (
-                      <div key={row.recipient_key} style={{ ...itemCardStyle, opacity: canSelect ? 1 : 0.6 }}>
-                        <div style={rowBetweenStyle}>
-                          <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: 1 }}>
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              disabled={!canSelect}
-                              onChange={() => toggleRecipientSelection(row)}
-                            />
-                            <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
-                          </label>
-                          <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            <span style={segmentChip(row.segment)}>{row.label_en} / {row.label_es}</span>
-                            {blocked ? (
-                              <span style={{ ...badgeStyle, background: "#fef2f2", color: "#b91c1c", borderColor: "#fecaca" }}>
-                                {row.opt_out_label_en || text.optedOut} / {row.opt_out_label_es || text.optedOut}
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                        <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
-                        {!canSelect && incompatibleReason ? (
-                          <div style={{ marginTop: "0.28rem" }}>
-                            <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>{incompatibleReason}</span>
-                          </div>
-                        ) : null}
-                        <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                          <button
-                            type="button"
-                            className="ia-button ia-button-ghost"
-                            style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                            onClick={() => setSelectedRecipientKey(row.recipient_key)}
-                          >
-                            {text.history}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, background: "#f8fafc", padding: "0.55rem", maxHeight: 330, overflowY: "auto" }}>
-                  <div style={rowBetweenStyle}>
-                    <strong>{text.selected}</strong>
-                    <span style={badgeStyle}>{text.selectedCount}: {selectedRecipientKeys.length}</span>
-                  </div>
-                  <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.45rem" }}>
-                    {sendableSelectedRecipients.map((row) => (
-                      <div key={row.recipient_key} style={{ ...itemCardStyle, background: "#ffffff" }}>
-                        <div style={rowBetweenStyle}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.6rem" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 330, overflowY: "auto" }}>
+                {!loading && audience.length === 0 ? <p style={hintStyle}>{text.noAudience}</p> : null}
+                {audience.map((row) => {
+                  const isSelected = Boolean(selectedRecipients[row.recipient_key]);
+                  const blocked = isRecipientBlocked(row);
+                  const canSelect = !blocked && isRecipientCompatible(row);
+                  const incompatibleReason = blocked ? text.optedOutCannotSelect : getIncompatibleReason(row);
+                  return (
+                    <div key={row.recipient_key} style={{ ...itemCardStyle, opacity: canSelect ? 1 : 0.6 }}>
+                      <div style={rowBetweenStyle}>
+                        <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: 1 }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={!canSelect}
+                            onChange={() => toggleRecipientSelection(row)}
+                          />
                           <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
-                          <button
-                            type="button"
-                            className="ia-button ia-button-ghost"
-                            style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }}
-                            onClick={() => removeRecipientFromSelection(row.recipient_key)}
-                          >
-                            {text.remove}
-                          </button>
+                        </label>
+                        <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                          <span style={segmentChip(row.segment)}>{row.label_en} / {row.label_es}</span>
+                          {blocked ? (
+                            <span style={{ ...badgeStyle, background: "#fef2f2", color: "#b91c1c", borderColor: "#fecaca" }}>
+                              {row.opt_out_label_en || text.optedOut} / {row.opt_out_label_es || text.optedOut}
+                            </span>
+                          ) : null}
                         </div>
-                        <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
                       </div>
-                    ))}
-                    {sendableSelectedRecipients.length === 0 ? <p style={hintStyle}>{text.selectedNone}</p> : null}
-                  </div>
+                      <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                      {!canSelect && incompatibleReason ? (
+                        <div style={{ marginTop: "0.28rem" }}>
+                          <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>{incompatibleReason}</span>
+                        </div>
+                      ) : null}
+                      <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="ia-button ia-button-ghost"
+                          style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                          onClick={() => setSelectedRecipientKey(row.recipient_key)}
+                        >
+                          {text.history}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, background: "#f8fafc", padding: "0.55rem", maxHeight: 330, overflowY: "auto" }}>
+                <div style={rowBetweenStyle}>
+                  <strong>{text.selected}</strong>
+                  <span style={badgeStyle}>{text.selectedCount}: {selectedRecipientKeys.length}</span>
+                </div>
+                <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                  {sendableSelectedRecipients.map((row) => (
+                    <div key={row.recipient_key} style={{ ...itemCardStyle, background: "#ffffff" }}>
+                      <div style={rowBetweenStyle}>
+                        <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                        <button
+                          type="button"
+                          className="ia-button ia-button-ghost"
+                          style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }}
+                          onClick={() => removeRecipientFromSelection(row.recipient_key)}
+                        >
+                          {text.remove}
+                        </button>
+                      </div>
+                      <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                    </div>
+                  ))}
+                  {sendableSelectedRecipients.length === 0 ? <p style={hintStyle}>{text.selectedNone}</p> : null}
                 </div>
               </div>
             </div>
@@ -1119,6 +1028,164 @@ export default function MarketingCampaigns() {
                   </div>
                 ))}
                 {recipientHistory.length === 0 ? <p style={hintStyle}>{isEs ? "Sin historial." : "No history."}</p> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {campaignFormOpen ? (
+            <div style={modalOverlayStyle} role="dialog" aria-modal="true">
+              <div style={{ ...modalCardStyle, width: "min(980px, 100%)" }}>
+                <div style={{ ...rowBetweenStyle, marginBottom: "0.55rem" }}>
+                  <div>
+                    <strong style={{ fontSize: "1rem", color: "#0f172a" }}>
+                      {editingCampaignId ? text.campaignFormEditTitle : text.campaignFormCreateTitle}
+                    </strong>
+                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.campaignFormSubtitle}</p>
+                  </div>
+                  <button type="button" className="ia-button ia-button-ghost" onClick={cancelCampaignEdit} disabled={busy || uploadingImage}>
+                    {text.close}
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: "0.8rem" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+                    <input
+                      className="ia-form-input"
+                      placeholder={isEs ? "Nombre de campaña" : "Campaign name"}
+                      value={form.name}
+                      onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                    />
+
+                    <select
+                      className="ia-form-input"
+                      value={form.channel}
+                      onChange={(e) => {
+                        const nextChannel = e.target.value;
+                        setForm((prev) => ({
+                          ...prev,
+                          channel: nextChannel,
+                        }));
+                      }}
+                      disabled={Boolean(editingCampaignId)}
+                    >
+                      <option value="email">Email</option>
+                      <option value="whatsapp">WhatsApp</option>
+                    </select>
+
+                    {form.channel === "email" ? (
+                      <input
+                        className="ia-form-input"
+                        placeholder={isEs ? "Asunto" : "Subject"}
+                        value={form.subject}
+                        onChange={(e) => setForm((prev) => ({ ...prev, subject: e.target.value }))}
+                      />
+                    ) : null}
+
+                    <textarea
+                      className="ia-form-input"
+                      rows={7}
+                      placeholder={isEs ? "Contenido de campaña" : "Campaign content"}
+                      value={form.body}
+                      onChange={(e) => setForm((prev) => ({ ...prev, body: e.target.value }))}
+                    />
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "-0.2rem", marginBottom: "0.25rem" }}>
+                      <button
+                        type="button"
+                        className="ia-button ia-button-ghost"
+                        style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                        onClick={suggestCampaignBody}
+                        disabled={busy || aiBusy || !form.body.trim()}
+                      >
+                        {aiBusy ? text.aiRestructuring : text.aiRestructure}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+                    <div style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                      <label style={{ ...smallStyle, display: "block", marginBottom: "0.35rem" }}>
+                        {isEs ? "Imagen de campaña (opcional)" : "Campaign image (optional)"}
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="ia-form-input"
+                        onChange={(e) => handleCampaignImageUpload(e.target.files?.[0])}
+                        disabled={uploadingImage}
+                      />
+                      <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.35rem", alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={badgeStyle}>
+                          {uploadingImage ? text.uploadingImage : form.image_url ? text.imageReady : text.uploadImage}
+                        </span>
+                        {imageFileName ? <small style={smallStyle}>{imageFileName}</small> : null}
+                        {form.image_url ? (
+                          <button
+                            type="button"
+                            className="ia-button ia-button-ghost"
+                            style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }}
+                            onClick={() => {
+                              setForm((prev) => ({ ...prev, image_url: "" }));
+                              setImageFileName("");
+                            }}
+                            disabled={uploadingImage}
+                          >
+                            {text.removeImage}
+                          </button>
+                        ) : null}
+                      </div>
+                      {form.image_url ? (
+                        <img
+                          src={form.image_url}
+                          alt="campaign upload"
+                          style={{ marginTop: "0.45rem", width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: "1px solid #E5E7EB" }}
+                        />
+                      ) : null}
+                    </div>
+
+                    {form.channel === "whatsapp" ? (
+                      <div style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                        <strong style={{ ...smallStyle, color: "#0f172a" }}>{text.whatsappFormatTitle}</strong>
+                        <ul style={{ margin: "0.35rem 0 0 1rem", padding: 0, color: "#334155", fontSize: "0.8rem", lineHeight: 1.4 }}>
+                          <li>{text.whatsappFormatLine1}</li>
+                          <li>{text.whatsappFormatLine2}</li>
+                          <li>{text.whatsappFormatLine3}</li>
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    <input
+                      className="ia-form-input"
+                      placeholder={isEs ? "Texto botón de redirección (opcional)" : "Redirect button text (optional)"}
+                      value={form.cta_label}
+                      onChange={(e) => setForm((prev) => ({ ...prev, cta_label: e.target.value }))}
+                    />
+
+                    <input
+                      className="ia-form-input"
+                      placeholder={isEs ? "URL de redirección (opcional) https://..." : "Redirect URL (optional) https://..."}
+                      value={form.cta_url}
+                      onChange={(e) => setForm((prev) => ({ ...prev, cta_url: e.target.value }))}
+                    />
+
+                    <select
+                      className="ia-form-input"
+                      value={form.language_family}
+                      onChange={(e) => setForm((prev) => ({ ...prev, language_family: e.target.value }))}
+                    >
+                      <option value="es">Español</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.45rem", flexWrap: "wrap", marginTop: "0.45rem" }}>
+                  <button type="button" className="ia-button ia-button-ghost" disabled={busy || uploadingImage} onClick={cancelCampaignEdit}>
+                    {text.cancel}
+                  </button>
+                  <button type="button" className="ia-button ia-button-primary" disabled={busy || uploadingImage} onClick={createCampaign}>
+                    {busy ? text.loading : (editingCampaignId ? text.updateCampaign : text.create)}
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}

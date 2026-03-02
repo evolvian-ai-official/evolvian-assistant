@@ -319,6 +319,28 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
         preview_body = f"{preview_body} {{1}}"
 
     meta_template_name = _generate_meta_template_name(payload.name)
+    normalized_cta_url = str(payload.cta_url or "").strip()
+    normalized_cta_label = str(payload.cta_label or "").strip()
+    normalized_image_url = str(payload.image_url or "").strip()
+    if normalized_cta_url and not normalized_cta_label:
+        normalized_cta_label = "Open site" if str(payload.language_family or "").lower().startswith("en") else "Abrir sitio"
+
+    buttons_payload: dict[str, Any] = {}
+    if normalized_cta_url:
+        buttons_payload["buttons"] = [
+            {
+                "type": "URL",
+                "text": normalized_cta_label[:25] or "Open",
+                "url": normalized_cta_url[:2000],
+            }
+        ]
+    if normalized_image_url and (normalized_image_url.startswith("https://") or normalized_image_url.startswith("http://")):
+        buttons_payload["header"] = {
+            "type": "IMAGE",
+            "image_url": normalized_image_url[:2000],
+        }
+
+    buttons_json = buttons_payload or None
 
     meta_insert = {
         "template_name": meta_template_name,
@@ -331,16 +353,22 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
         "provision_enabled": True,
         "owner_client_id": client_id,
         "visibility_scope": "client_private",
+        "buttons_json": buttons_json,
     }
 
     try:
         meta_res = supabase.table("meta_approved_templates").insert(meta_insert).execute()
     except Exception:
-        # Backward-compatible fallback before tenant isolation columns are migrated.
+        # Backward-compatible fallback before newer optional columns are migrated.
         legacy_insert = dict(meta_insert)
         legacy_insert.pop("owner_client_id", None)
         legacy_insert.pop("visibility_scope", None)
-        meta_res = supabase.table("meta_approved_templates").insert(legacy_insert).execute()
+        try:
+            meta_res = supabase.table("meta_approved_templates").insert(legacy_insert).execute()
+        except Exception:
+            legacy_insert.pop("buttons_json", None)
+            legacy_insert.pop("provision_enabled", None)
+            meta_res = supabase.table("meta_approved_templates").insert(legacy_insert).execute()
     meta_row = (meta_res.data or [None])[0]
     if not meta_row:
         raise HTTPException(status_code=500, detail="Could not create Meta template record")
@@ -1316,6 +1344,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
             "skipped": summary_skipped,
             "dry_run": bool(payload.dry_run),
         }
+        campaign_image_url = str(campaign.get("image_url") or "").strip() or None
 
         company_postal_address = _load_company_postal_address(payload.client_id)
         owner_email = _load_owner_email(auth_user_id)
@@ -1444,12 +1473,32 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     to_number=recipient_phone,
                     template_name=template_name,
                     parameters=[target.get("recipient_name") or "there"],
+                    header_image_url=campaign_image_url,
                     language_code=language_code,
                     purpose="marketing",
                     recipient_email=_normalize_email(target.get("email")),
                     policy_source="marketing_campaign_send",
                     policy_source_id=campaign_id,
                 )
+                if not send_result.get("success") and campaign_image_url:
+                    raw_error_probe = str(send_result.get("error") or "").lower()
+                    if (
+                        "header" in raw_error_probe
+                        or "component" in raw_error_probe
+                        or "parameter" in raw_error_probe
+                    ):
+                        send_result = await send_whatsapp_template_for_client(
+                            client_id=payload.client_id,
+                            to_number=recipient_phone,
+                            template_name=template_name,
+                            parameters=[target.get("recipient_name") or "there"],
+                            header_image_url=None,
+                            language_code=language_code,
+                            purpose="marketing",
+                            recipient_email=_normalize_email(target.get("email")),
+                            policy_source="marketing_campaign_send",
+                            policy_source_id=campaign_id,
+                        )
 
                 if send_result.get("success"):
                     base_row.update(

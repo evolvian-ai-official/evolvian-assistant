@@ -200,6 +200,7 @@ async def send_meta_template(
     template_name: str,
     language_code: str,
     parameters: Optional[List[str]] = None,
+    header_image_url: Optional[str] = None,
     phone_number_id: str,
     access_token: str,
 ) -> dict:
@@ -254,8 +255,26 @@ async def send_meta_template(
         "language": {"code": language_code},
     }
 
+    template_components: list[dict] = []
+    normalized_header_image_url = str(header_image_url or "").strip()
+    if normalized_header_image_url and (
+        normalized_header_image_url.startswith("https://")
+        or normalized_header_image_url.startswith("http://")
+    ):
+        template_components.append(
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "image",
+                        "image": {"link": normalized_header_image_url[:2000]},
+                    }
+                ],
+            }
+        )
+
     if parameters:
-        template_payload["components"] = [
+        template_components.append(
             {
                 "type": "body",
                 "parameters": [
@@ -263,7 +282,10 @@ async def send_meta_template(
                     for p in normalized_parameters
                 ],
             }
-        ]
+        )
+
+    if template_components:
+        template_payload["components"] = template_components
 
     payload = {
         "messaging_product": "whatsapp",
@@ -337,6 +359,7 @@ async def send_whatsapp_template_for_client(
     to_number: str,
     template_name: str,
     parameters: Optional[List[str]] = None,
+    header_image_url: str | None = None,
     language_code: str = "es_MX",
     purpose: str = "transactional",
     recipient_email: str | None = None,
@@ -431,6 +454,7 @@ async def send_whatsapp_template_for_client(
             template_name=template_name,
             language_code=language_code,
             parameters=parameters,
+            header_image_url=header_image_url,
             phone_number_id=channel["wa_phone_id"],
             access_token=channel["wa_token"],
         )

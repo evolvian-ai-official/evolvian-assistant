@@ -593,13 +593,61 @@ def _normalize_template_buttons(
             continue
         button_type = str(item.get("type") or "").strip().upper()
         text = str(item.get("text") or "").strip()
-        if button_type != "QUICK_REPLY" or not text:
+        if not text:
             continue
-        normalized.append({"type": "QUICK_REPLY", "text": text[:25]})
+        if button_type == "QUICK_REPLY":
+            normalized.append({"type": "QUICK_REPLY", "text": text[:25]})
+        elif button_type == "URL":
+            url = str(item.get("url") or "").strip()
+            if not (url.startswith("https://") or url.startswith("http://")):
+                continue
+            normalized.append({"type": "URL", "text": text[:25], "url": url[:2000]})
+        else:
+            continue
         if len(normalized) >= 10:
             break
 
     return normalized
+
+
+def _normalize_template_header_image_url(
+    *,
+    buttons_json: Any,
+    header_image_url: Optional[str] = None,
+) -> Optional[str]:
+    direct = str(header_image_url or "").strip()
+    if direct.startswith("https://") or direct.startswith("http://"):
+        return direct[:2000]
+
+    raw = buttons_json
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = None
+
+    if not isinstance(raw, dict):
+        return None
+
+    header = raw.get("header")
+    if not isinstance(header, dict):
+        return None
+
+    header_type = str(header.get("type") or "").strip().upper()
+    if header_type and header_type != "IMAGE":
+        return None
+
+    candidate = str(
+        header.get("image_url")
+        or header.get("url")
+        or header.get("link")
+        or ""
+    ).strip()
+    if not candidate:
+        return None
+    if not (candidate.startswith("https://") or candidate.startswith("http://")):
+        return None
+    return candidate[:2000]
 
 
 def _build_template_components(
@@ -609,6 +657,7 @@ def _build_template_components(
     template_type: Optional[str] = None,
     language: Optional[str] = None,
     buttons_json: Any = None,
+    header_image_url: Optional[str] = None,
 ) -> list[dict]:
     safe_params = max(0, int(parameter_count or 0))
     body_text = _ensure_body_placeholders(preview_body or "", safe_params)
@@ -623,7 +672,22 @@ def _build_template_components(
             "body_text": [[f"sample_{idx}" for idx in range(1, safe_params + 1)]]
         }
 
-    components: list[dict] = [body_component]
+    components: list[dict] = []
+
+    normalized_header_image_url = _normalize_template_header_image_url(
+        buttons_json=buttons_json,
+        header_image_url=header_image_url,
+    )
+    if normalized_header_image_url:
+        components.append(
+            {
+                "type": "HEADER",
+                "format": "IMAGE",
+                "example": {"header_handle": [normalized_header_image_url]},
+            }
+        )
+
+    components.append(body_component)
 
     buttons = _normalize_template_buttons(
         buttons_json=buttons_json,
@@ -833,6 +897,16 @@ def _load_canonical_templates(*, client_id: str | None = None) -> list[dict]:
     attempts: list[tuple[str, bool]] = [
         (
             "id, template_name, preview_body, language, parameter_count, type, "
+            "buttons_json, header_example_media_url, owner_client_id, visibility_scope",
+            True,
+        ),
+        (
+            "id, template_name, preview_body, language, parameter_count, type, "
+            "buttons_json, header_example_media_url, owner_client_id, visibility_scope",
+            False,
+        ),
+        (
+            "id, template_name, preview_body, language, parameter_count, type, "
             "buttons_json, owner_client_id, visibility_scope",
             True,
         ),
@@ -969,6 +1043,59 @@ def _create_meta_template(
 
 
 def _upsert_client_template_record(row: dict) -> None:
+    client_id = str(row.get("client_id") or "").strip()
+    meta_template_id = str(row.get("meta_template_id") or "").strip()
+    meta_template_name = str(row.get("meta_template_name") or "").strip()
+
+    def _update_by_id(record_id: str, payload: dict) -> bool:
+        if not record_id:
+            return False
+        try:
+            updated = (
+                supabase
+                .table("client_whatsapp_templates")
+                .update(payload)
+                .eq("id", record_id)
+                .execute()
+            )
+            return bool(updated.data or [])
+        except Exception:
+            return False
+
+    def _find_one_by_meta_id() -> dict | None:
+        if not client_id or not meta_template_id:
+            return None
+        try:
+            res = (
+                supabase
+                .table("client_whatsapp_templates")
+                .select("id,meta_template_id,meta_template_name")
+                .eq("client_id", client_id)
+                .eq("meta_template_id", meta_template_id)
+                .limit(1)
+                .execute()
+            )
+            return (res.data or [None])[0]
+        except Exception:
+            return None
+
+    def _find_one_by_meta_name() -> dict | None:
+        if not client_id or not meta_template_name:
+            return None
+        try:
+            res = (
+                supabase
+                .table("client_whatsapp_templates")
+                .select("id,meta_template_id,meta_template_name")
+                .eq("client_id", client_id)
+                .eq("meta_template_name", meta_template_name)
+                .limit(1)
+                .execute()
+            )
+            return (res.data or [None])[0]
+        except Exception:
+            return None
+
     try:
         (
             supabase
@@ -987,14 +1114,52 @@ def _upsert_client_template_record(row: dict) -> None:
             upsert_error,
         )
 
-    # Fallback path for environments where unique constraints were not applied.
+    # Reconcile existing rows in environments with legacy duplicate collisions.
+    by_meta = _find_one_by_meta_id()
+    by_name = _find_one_by_meta_name()
+
+    if by_meta and by_name and str(by_meta.get("id")) != str(by_name.get("id")):
+        duplicate_id = str(by_name.get("id") or "").strip()
+        # Prefer record keyed by meta_template_id as source of truth.
+        if duplicate_id:
+            try:
+                (
+                    supabase
+                    .table("client_whatsapp_templates")
+                    .delete()
+                    .eq("id", duplicate_id)
+                    .execute()
+                )
+            except Exception:
+                logger.warning(
+                    "⚠️ Could not delete duplicate client_whatsapp_templates row | client_id=%s | duplicate_id=%s",
+                    client_id,
+                    duplicate_id,
+                )
+        # Refresh pointers after possible cleanup.
+        by_meta = _find_one_by_meta_id() or by_meta
+        by_name = _find_one_by_meta_name()
+
+    if by_meta:
+        payload = dict(row)
+        if by_name and str(by_name.get("id") or "").strip() != str(by_meta.get("id") or "").strip():
+            # Keep stable name to avoid unique collision if another row still holds requested name.
+            payload.pop("meta_template_name", None)
+        if _update_by_id(str(by_meta.get("id") or "").strip(), payload):
+            return
+
+    if by_name:
+        if _update_by_id(str(by_name.get("id") or "").strip(), row):
+            return
+
+    # Fallback path for environments where constraints/indexes were not applied.
     try:
         updated = (
             supabase
             .table("client_whatsapp_templates")
             .update(row)
-            .eq("client_id", row.get("client_id"))
-            .eq("meta_template_id", row.get("meta_template_id"))
+            .eq("client_id", client_id)
+            .eq("meta_template_id", meta_template_id)
             .execute()
         )
         if (updated.data or []):
@@ -1358,6 +1523,7 @@ def sync_canonical_templates_for_client(
                     template_type=template_type,
                     language=language,
                     buttons_json=canonical.get("buttons_json"),
+                    header_image_url=canonical.get("header_example_media_url"),
                 ),
             )
 
