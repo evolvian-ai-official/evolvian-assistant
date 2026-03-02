@@ -72,6 +72,7 @@ export default function MarketingCampaigns() {
     removeImage: isEs ? "Quitar imagen" : "Remove image",
     imageRequiredType: isEs ? "Selecciona un archivo de imagen válido." : "Select a valid image file.",
     imageTooLarge: isEs ? "Imagen demasiado grande (máximo 2MB)." : "Image too large (max 2MB).",
+    invalidCtaUrl: isEs ? "URL inválida. Usa un enlace absoluto con http(s)." : "Invalid URL. Use an absolute http(s) link.",
     aiRestructure: isEs ? "Sugerencia AI" : "AI suggestion",
     aiRestructuring: isEs ? "Reestructurando..." : "Restructuring...",
     aiApplied: isEs ? "Texto reestructurado con AI." : "Text restructured with AI.",
@@ -295,6 +296,26 @@ export default function MarketingCampaigns() {
   const selectedCampaign = useMemo(() => {
     return campaigns.find((c) => c.id === selectedCampaignId) || null;
   }, [campaigns, selectedCampaignId]);
+
+  const normalizeCtaUrl = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)
+      ? raw
+      : `https://${raw.replace(/^\/+/, "")}`;
+    try {
+      const parsed = new URL(candidate);
+      if (!["http:", "https:"].includes(parsed.protocol)) return "";
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  };
+
+  const selectedCampaignCtaUrl = useMemo(
+    () => normalizeCtaUrl(selectedCampaign?.cta_url),
+    [selectedCampaign?.cta_url],
+  );
 
   const selectedCampaignChannel = String(selectedCampaign?.channel || "").toLowerCase();
   const audienceByKey = useMemo(() => {
@@ -568,7 +589,12 @@ export default function MarketingCampaigns() {
     setBusy(true);
     setError("");
     try {
-      const normalizedCtaUrl = form.cta_url.trim() || null;
+      const rawCtaUrl = form.cta_url.trim();
+      const normalizedCtaUrl = rawCtaUrl ? normalizeCtaUrl(rawCtaUrl) : null;
+      if (rawCtaUrl && !normalizedCtaUrl) {
+        setError(text.invalidCtaUrl);
+        return;
+      }
       const payload = {
         client_id: clientId,
         name: form.name.trim(),
@@ -1137,7 +1163,7 @@ export default function MarketingCampaigns() {
                         <img
                           src={form.image_url}
                           alt="campaign upload"
-                          style={{ marginTop: "0.45rem", width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: "1px solid #E5E7EB" }}
+                          style={{ marginTop: "0.45rem", width: "100%", maxHeight: 160, objectFit: "contain", borderRadius: 10, border: "1px solid #E5E7EB", background: "#f8fafc" }}
                         />
                       ) : null}
                     </div>
@@ -1277,12 +1303,12 @@ export default function MarketingCampaigns() {
                     <img
                       src={selectedCampaign.image_url}
                       alt="campaign preview"
-                      style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB" }}
+                      style={{ width: "100%", maxHeight: "52vh", objectFit: "contain", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB", background: "#f8fafc" }}
                     />
                   ) : null}
-                  {selectedCampaign.cta_url ? (
+                  {selectedCampaignCtaUrl ? (
                     <a
-                      href={selectedCampaign.cta_url}
+                      href={selectedCampaignCtaUrl}
                       target="_blank"
                       rel="noreferrer"
                       style={{ display: "inline-block", marginTop: "0.55rem", padding: "0.45rem 0.7rem", borderRadius: 8, background: "#1d4ed8", color: "#fff", textDecoration: "none", fontSize: "0.82rem" }}
@@ -1328,12 +1354,12 @@ export default function MarketingCampaigns() {
                         <img
                           src={selectedCampaign.image_url}
                           alt="campaign"
-                          style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB" }}
+                          style={{ width: "100%", maxHeight: "44vh", objectFit: "contain", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB", background: "#f8fafc" }}
                         />
                       ) : null}
-                      {selectedCampaign.cta_url ? (
+                      {selectedCampaignCtaUrl ? (
                         <a
-                          href={selectedCampaign.cta_url}
+                          href={selectedCampaignCtaUrl}
                           target="_blank"
                           rel="noreferrer"
                           style={{ display: "inline-block", marginTop: "0.55rem", padding: "0.45rem 0.7rem", borderRadius: 8, background: "#1d4ed8", color: "#fff", textDecoration: "none", fontSize: "0.82rem" }}

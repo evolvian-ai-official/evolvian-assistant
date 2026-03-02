@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -101,6 +101,23 @@ def _normalize_phone(value: Any) -> Optional[str]:
 def _normalize_name(value: Any) -> Optional[str]:
     cleaned = " ".join(str(value or "").strip().split())
     return cleaned or None
+
+
+def _normalize_redirect_url(value: Any) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    candidate = raw
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+        candidate = f"https://{raw.lstrip('/')}"
+
+    parsed = urlparse(candidate)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return None
+    if not parsed.netloc:
+        return None
+    return candidate[:900]
 
 
 def _recipient_key(email: Optional[str], phone: Optional[str], name: Optional[str], *, prefix: str = "contact") -> Optional[str]:
@@ -236,6 +253,7 @@ def _build_email_template_body(
 ) -> str:
     safe_body = str(body_text or "").strip().replace("\n", "<br />\n")
     parts = [f"<div>{safe_body}</div>"]
+    normalized_cta_url = _normalize_redirect_url(cta_url)
 
     if image_url:
         parts.append(
@@ -244,11 +262,11 @@ def _build_email_template_body(
             "</div>"
         )
 
-    if cta_url:
+    if normalized_cta_url:
         button_label = (cta_label or "Open").strip() or "Open"
         parts.append(
             "<div style='margin-top:18px;'>"
-            f"<a href='{cta_url}' "
+            f"<a href='{normalized_cta_url}' "
             "style='display:inline-block;padding:10px 16px;border-radius:8px;background:#1f6feb;color:#ffffff;text-decoration:none;'>"
             f"{button_label}</a></div>"
         )
@@ -319,7 +337,7 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
         preview_body = f"{preview_body} {{1}}"
 
     meta_template_name = _generate_meta_template_name(payload.name)
-    normalized_cta_url = str(payload.cta_url or "").strip()
+    normalized_cta_url = _normalize_redirect_url(payload.cta_url) or ""
     normalized_cta_label = str(payload.cta_label or "").strip()
     normalized_image_url = str(payload.image_url or "").strip()
     if normalized_cta_url and not normalized_cta_label:
@@ -785,7 +803,7 @@ def _render_campaign_html(campaign: dict[str, Any], recipient: dict[str, Any]) -
     image_url = str(campaign.get("image_url") or "").strip()
     cta_mode = str(campaign.get("cta_mode") or "").strip().lower()
     cta_label = str(campaign.get("cta_label") or "").strip() or "Open"
-    cta_url = str(campaign.get("cta_url") or "").strip()
+    cta_url = _normalize_redirect_url(campaign.get("cta_url")) or ""
     recipient_name = str(recipient.get("recipient_name") or "").strip()
 
     lines = [f"<p>{body}</p>"]
@@ -1015,7 +1033,10 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
     try:
         auth_user_id = authorize_client_request(request, payload.client_id)
         _ensure_premium_access(payload.client_id)
-        normalized_cta_url = str(payload.cta_url or "").strip() or None
+        raw_cta_url = str(payload.cta_url or "").strip()
+        normalized_cta_url = _normalize_redirect_url(raw_cta_url)
+        if raw_cta_url and not normalized_cta_url:
+            raise HTTPException(status_code=400, detail="Invalid CTA URL. Use an absolute http(s) URL.")
         normalized_cta_label = str(payload.cta_label or "").strip() or None
         normalized_cta_mode = "url" if normalized_cta_url else None
         if not normalized_cta_url:
@@ -1129,11 +1150,14 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
                 updates[field] = value
 
         if "cta_url" in updates:
-            updates["cta_url"] = str(updates.get("cta_url") or "").strip() or None
+            raw_update_url = str(updates.get("cta_url") or "").strip()
+            updates["cta_url"] = _normalize_redirect_url(raw_update_url)
+            if raw_update_url and not updates["cta_url"]:
+                raise HTTPException(status_code=400, detail="Invalid CTA URL. Use an absolute http(s) URL.")
         if "cta_label" in updates:
             updates["cta_label"] = str(updates.get("cta_label") or "").strip() or None
         if "cta_mode" in updates or "cta_url" in updates:
-            effective_url = updates.get("cta_url") if "cta_url" in updates else (str(campaign.get("cta_url") or "").strip() or None)
+            effective_url = updates.get("cta_url") if "cta_url" in updates else _normalize_redirect_url(campaign.get("cta_url"))
             updates["cta_mode"] = "url" if effective_url else None
             if not effective_url:
                 updates["cta_label"] = None
@@ -1144,7 +1168,7 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
             should_version_whatsapp_template = any(field in updates for field in touched_fields)
 
         if should_version_whatsapp_template:
-            merged_cta_url = updates.get("cta_url") if "cta_url" in updates else (str(campaign.get("cta_url") or "").strip() or None)
+            merged_cta_url = updates.get("cta_url") if "cta_url" in updates else _normalize_redirect_url(campaign.get("cta_url"))
             merged_cta_label = updates.get("cta_label") if "cta_label" in updates else (str(campaign.get("cta_label") or "").strip() or None)
             merged_cta_mode = "url" if merged_cta_url else None
             if not merged_cta_url:
@@ -1171,7 +1195,11 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
             if should_refresh_email_snapshot:
                 merged_body = str(updates.get("body") if "body" in updates else campaign.get("body") or "")
                 merged_image_url = str(updates.get("image_url") if "image_url" in updates else campaign.get("image_url") or "").strip() or None
-                merged_cta_url = str(updates.get("cta_url") if "cta_url" in updates else campaign.get("cta_url") or "").strip() or None
+                merged_cta_url = (
+                    updates.get("cta_url")
+                    if "cta_url" in updates
+                    else _normalize_redirect_url(campaign.get("cta_url"))
+                )
                 merged_cta_label = str(updates.get("cta_label") if "cta_label" in updates else campaign.get("cta_label") or "").strip() or None
                 merged_language = str(
                     updates.get("language_family") if "language_family" in updates else campaign.get("language_family") or "es"

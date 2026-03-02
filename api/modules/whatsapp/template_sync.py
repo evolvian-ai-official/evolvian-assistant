@@ -1,9 +1,11 @@
 import json
 import logging
+import mimetypes
 import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v22.0")
 GRAPH_BASE_URL = f"https://graph.facebook.com/{GRAPH_VERSION}"
 HTTP_TIMEOUT_SECONDS = 18
+WHATSAPP_TEMPLATE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
 _TYPE_TO_CATEGORY = {
     "appointment_reminder": "UTILITY",
@@ -615,8 +618,18 @@ def _normalize_template_header_image_url(
     buttons_json: Any,
     header_image_url: Optional[str] = None,
 ) -> Optional[str]:
+    def _looks_like_media_handle(value: str) -> bool:
+        probe = str(value or "").strip()
+        if not probe:
+            return False
+        if probe.startswith("https://") or probe.startswith("http://"):
+            return False
+        if " " in probe:
+            return False
+        return ":" in probe
+
     direct = str(header_image_url or "").strip()
-    if direct.startswith("https://") or direct.startswith("http://"):
+    if _looks_like_media_handle(direct):
         return direct[:2000]
 
     raw = buttons_json
@@ -643,11 +656,207 @@ def _normalize_template_header_image_url(
         or header.get("link")
         or ""
     ).strip()
-    if not candidate:
+    if _looks_like_media_handle(candidate):
+        return candidate[:2000]
+    return None
+
+
+def _extract_template_header_image_url(
+    *,
+    buttons_json: Any,
+    header_image_url: Optional[str] = None,
+) -> Optional[str]:
+    direct = str(header_image_url or "").strip()
+    if direct.startswith("https://") or direct.startswith("http://"):
+        return direct[:2000]
+
+    raw = buttons_json
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = None
+
+    if not isinstance(raw, dict):
         return None
-    if not (candidate.startswith("https://") or candidate.startswith("http://")):
+
+    header = raw.get("header")
+    if not isinstance(header, dict):
         return None
-    return candidate[:2000]
+
+    candidate = str(
+        header.get("image_url")
+        or header.get("url")
+        or header.get("link")
+        or ""
+    ).strip()
+    if candidate.startswith("https://") or candidate.startswith("http://"):
+        return candidate[:2000]
+    return None
+
+
+def _download_template_header_image(image_url: str) -> tuple[bytes, str, str]:
+    response = requests.get(
+        image_url,
+        timeout=HTTP_TIMEOUT_SECONDS,
+        stream=True,
+        headers={"User-Agent": "Evolvian-TemplateSync/1.0"},
+    )
+    response.raise_for_status()
+
+    parsed = urlparse(image_url)
+    file_name = os.path.basename(parsed.path or "") or "template_image.jpg"
+    content_type = str(response.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if not content_type:
+        guessed, _ = mimetypes.guess_type(file_name)
+        content_type = str(guessed or "").strip().lower()
+    if content_type not in {"image/jpeg", "image/jpg", "image/png"}:
+        # Normalize jpg alias and reject unsupported mime upfront.
+        if content_type == "image/pjpeg":
+            content_type = "image/jpeg"
+        elif content_type in {"image/webp", "image/gif"}:
+            raise ValueError(f"unsupported_image_type:{content_type}")
+        elif not content_type:
+            content_type = "image/jpeg"
+
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > WHATSAPP_TEMPLATE_IMAGE_MAX_BYTES:
+            raise ValueError("image_too_large_for_template_header")
+        chunks.append(chunk)
+
+    binary = b"".join(chunks)
+    if not binary:
+        raise ValueError("empty_image_payload")
+
+    if content_type == "image/jpg":
+        content_type = "image/jpeg"
+
+    if "." not in file_name:
+        ext = ".png" if content_type == "image/png" else ".jpg"
+        file_name = f"{file_name}{ext}"
+
+    return binary, content_type, file_name
+
+
+def _create_resumable_upload_session_id(
+    *,
+    owner_id: str,
+    wa_token: str,
+    file_name: str,
+    file_length: int,
+    file_type: str,
+) -> Optional[str]:
+    response = _meta_request(
+        "POST",
+        f"{owner_id}/uploads",
+        token=wa_token,
+        params={
+            "file_name": file_name,
+            "file_length": str(file_length),
+            "file_type": file_type,
+        },
+    )
+    if response.status_code >= 400:
+        return None
+    try:
+        payload = response.json() if response.text else {}
+    except Exception:
+        payload = {}
+    session_id = str((payload or {}).get("id") or (payload or {}).get("upload_id") or "").strip()
+    return session_id or None
+
+
+def _upload_binary_to_resumable_session(
+    *,
+    session_id: str,
+    wa_token: str,
+    binary: bytes,
+) -> Optional[str]:
+    url = f"{GRAPH_BASE_URL}/{str(session_id or '').lstrip('/')}"
+    auth_headers = [
+        {"Authorization": f"OAuth {wa_token}"},
+        {"Authorization": f"Bearer {wa_token}"},
+    ]
+    for auth in auth_headers:
+        try:
+            response = requests.post(
+                url,
+                headers={
+                    **auth,
+                    "file_offset": "0",
+                    "Content-Type": "application/octet-stream",
+                },
+                data=binary,
+                timeout=HTTP_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            continue
+        if response.status_code >= 400:
+            continue
+        try:
+            payload = response.json() if response.text else {}
+        except Exception:
+            payload = {}
+        handle = str((payload or {}).get("h") or (payload or {}).get("handle") or "").strip()
+        if handle:
+            return handle[:2000]
+    return None
+
+
+def _generate_template_header_handle(
+    *,
+    image_url: str,
+    wa_token: str,
+    waba_id: str,
+) -> Optional[str]:
+    try:
+        binary, mime_type, file_name = _download_template_header_image(image_url)
+    except Exception:
+        logger.warning("⚠️ Failed downloading template header image | url=%s", image_url)
+        return None
+
+    owner_candidates = [
+        str(waba_id or "").strip(),
+        str(os.getenv("WHATSAPP_BUSINESS_ID") or "").strip(),
+        str(os.getenv("META_APP_ID") or "").strip(),
+        str(os.getenv("WHATSAPP_APP_ID") or "").strip(),
+    ]
+    owner_candidates = [value for value in owner_candidates if value]
+
+    for owner_id in owner_candidates:
+        session_id = _create_resumable_upload_session_id(
+            owner_id=owner_id,
+            wa_token=wa_token,
+            file_name=file_name,
+            file_length=len(binary),
+            file_type=mime_type,
+        )
+        if not session_id:
+            continue
+        handle = _upload_binary_to_resumable_session(
+            session_id=session_id,
+            wa_token=wa_token,
+            binary=binary,
+        )
+        if handle:
+            return handle
+    return None
+
+
+def _is_meta_invalid_parameter_error(error_text: Any) -> bool:
+    probe = str(error_text or "").lower()
+    if not probe:
+        return False
+    return (
+        "invalid parameter" in probe
+        or "code=100" in probe
+        or "subcode=2388299" in probe
+    )
 
 
 def _build_template_components(
@@ -1492,6 +1701,7 @@ def sync_canonical_templates_for_client(
 
     existing_remote = _list_meta_templates(waba_id=waba_id, wa_token=wa_token)
     country_code = get_client_country_code(client_id)
+    header_handle_cache: dict[str, Optional[str]] = {}
 
     for canonical in canonical_templates:
         canonical_id = canonical.get("id")
@@ -1511,21 +1721,69 @@ def sync_canonical_templates_for_client(
             status = _normalize_meta_status(remote.get("status"))
             remote_id = remote.get("id")
         else:
+            resolved_header_handle = _normalize_template_header_image_url(
+                buttons_json=canonical.get("buttons_json"),
+                header_image_url=canonical.get("header_example_media_url"),
+            )
+            if not resolved_header_handle:
+                header_image_url = _extract_template_header_image_url(
+                    buttons_json=canonical.get("buttons_json"),
+                    header_image_url=canonical.get("header_example_media_url"),
+                )
+                if header_image_url:
+                    cache_key = f"{client_id}:{header_image_url}"
+                    if cache_key in header_handle_cache:
+                        resolved_header_handle = header_handle_cache.get(cache_key)
+                    else:
+                        resolved_header_handle = _generate_template_header_handle(
+                            image_url=header_image_url,
+                            wa_token=wa_token,
+                            waba_id=waba_id,
+                        )
+                        header_handle_cache[cache_key] = resolved_header_handle
+
+            components = _build_template_components(
+                preview_body=canonical.get("preview_body"),
+                parameter_count=parameter_count,
+                template_type=template_type,
+                language=language,
+                buttons_json=canonical.get("buttons_json"),
+                header_image_url=resolved_header_handle,
+            )
             created = _create_meta_template(
                 waba_id=waba_id,
                 wa_token=wa_token,
                 template_name=client_template_name,
                 language=language,
                 category=category,
-                components=_build_template_components(
-                    preview_body=canonical.get("preview_body"),
-                    parameter_count=parameter_count,
-                    template_type=template_type,
-                    language=language,
-                    buttons_json=canonical.get("buttons_json"),
-                    header_image_url=canonical.get("header_example_media_url"),
-                ),
+                components=components,
             )
+            if (
+                not created["success"]
+                and _is_meta_invalid_parameter_error(created.get("error"))
+                and any(
+                    str((component or {}).get("type") or "").upper() == "HEADER"
+                    and str((component or {}).get("format") or "").upper() == "IMAGE"
+                    for component in components
+                )
+            ):
+                fallback_components = [
+                    component
+                    for component in components
+                    if not (
+                        str((component or {}).get("type") or "").upper() == "HEADER"
+                        and str((component or {}).get("format") or "").upper() == "IMAGE"
+                    )
+                ]
+                if fallback_components != components:
+                    created = _create_meta_template(
+                        waba_id=waba_id,
+                        wa_token=wa_token,
+                        template_name=client_template_name,
+                        language=language,
+                        category=category,
+                        components=fallback_components,
+                    )
 
             if not created["success"]:
                 status = "inactive"
