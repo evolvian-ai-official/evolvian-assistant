@@ -67,7 +67,14 @@ export default function AppointmentClients() {
     saveChanges: isEs ? "Guardar cambios" : "Save changes",
     saveInClients: isEs ? "Guardar en Clients" : "Save to Clients",
     saveFailed: isEs ? "No se pudo guardar." : "Could not save.",
+    deleteTitle: isEs ? "Eliminar cliente" : "Delete client",
+    deleting: isEs ? "Eliminando..." : "Deleting...",
+    deleteConfirm: isEs
+      ? "¿Seguro que quieres eliminar este cliente del directorio editable?"
+      : "Are you sure you want to delete this client from the editable directory?",
+    deleteFailed: isEs ? "No se pudo eliminar el cliente." : "Could not delete the client.",
     historyTitle: isEs ? "Histórico (cronológico)" : "History (chronological)",
+    internalNotesLabel: isEs ? "Notas internas" : "Internal notes",
     noHistory: isEs ? "Sin citas registradas todavía." : "No appointments recorded yet.",
   };
   const [loading, setLoading] = useState(true);
@@ -373,6 +380,28 @@ function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved }) {
     }
   };
 
+  const removeClient = async () => {
+    if (!client?.id || !clientId || saving) return;
+    if (!window.confirm(ui.deleteConfirm)) return;
+    setSaving(true);
+    setError("");
+    try {
+      const res = await authFetch(
+        `${API_BASE_URL}/appointments/clients/${client.id}?client_id=${clientId}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || ui.deleteFailed);
+      setIsEditing(false);
+      setExpanded(false);
+      await onSaved?.();
+    } catch (e) {
+      setError(e.message || ui.deleteFailed);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div style={card}>
       <div style={contactRowCompact}>
@@ -392,10 +421,21 @@ function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved }) {
           <button style={secondaryBtn} onClick={() => setExpanded((v) => !v)}>
             {expanded ? ui.hideHistory : ui.viewHistory}
           </button>
+          {client.id && (
+            <button
+              style={dangerIconBtn}
+              title={ui.deleteTitle}
+              onClick={removeClient}
+              disabled={saving}
+            >
+              {saving ? "…" : "🗑️"}
+            </button>
+          )}
           <button
             style={iconBtn}
             title={isEditing ? ui.closeEditTitle : ui.editTitle}
             onClick={() => setIsEditing((v) => !v)}
+            disabled={saving}
           >
             ✏️
           </button>
@@ -449,13 +489,23 @@ function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved }) {
           <div style={historyTitle}>{ui.historyTitle}</div>
           {client.history?.length ? (
             <div style={historyList}>
-              {client.history.map((item) => (
-                <div key={item.id} style={historyItem}>
-                  <span>{formatDateTime(item.scheduled_time, uiLocale)}</span>
-                  <span>{String(item.status || "confirmed")}</span>
-                  <span>{String(item.appointment_type || "general")}</span>
-                </div>
-              ))}
+              {client.history.map((item) => {
+                const internalNotes = String(item.internal_notes || "").trim();
+                return (
+                  <div key={item.id} style={historyItem}>
+                    <div style={historyMetaRow}>
+                      <span>{formatDateTime(item.scheduled_time, uiLocale)}</span>
+                      <span>{String(item.status || "confirmed")}</span>
+                      <span>{String(item.appointment_type || "general")}</span>
+                    </div>
+                    {internalNotes && (
+                      <div style={historyNote}>
+                        <strong>{ui.internalNotesLabel}:</strong> {internalNotes}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p style={subtleText}>{ui.noHistory}</p>
@@ -616,6 +666,16 @@ const iconBtn = {
   lineHeight: 1,
 };
 
+const dangerIconBtn = {
+  backgroundColor: "#FFF1F2",
+  border: "1px solid #FECACA",
+  color: "#BE123C",
+  borderRadius: 10,
+  padding: "0.5rem 0.65rem",
+  cursor: "pointer",
+  lineHeight: 1,
+};
+
 const editPanel = {
   marginTop: "0.75rem",
   paddingTop: "0.75rem",
@@ -727,13 +787,29 @@ const historyTitle = { color: "#274472", fontWeight: 700, marginBottom: "0.45rem
 const historyList = { display: "flex", flexDirection: "column", gap: "0.35rem" };
 
 const historyItem = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.4rem",
+  alignItems: "stretch",
+  padding: "0.45rem 0.55rem",
+  border: "1px solid #F0F1F3",
+  borderRadius: 8,
+};
+
+const historyMetaRow = {
   display: "grid",
   gridTemplateColumns: "minmax(150px, 1.6fr) 1fr 1fr",
   gap: "0.45rem",
   alignItems: "center",
-  padding: "0.45rem 0.55rem",
-  border: "1px solid #F0F1F3",
-  borderRadius: 8,
   fontSize: "0.83rem",
   color: "#374151",
+};
+
+const historyNote = {
+  borderTop: "1px dashed #E5E7EB",
+  paddingTop: "0.35rem",
+  fontSize: "0.82rem",
+  color: "#2B4058",
+  lineHeight: 1.35,
+  whiteSpace: "pre-wrap",
 };
