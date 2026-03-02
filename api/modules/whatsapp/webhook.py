@@ -316,6 +316,90 @@ def _log_marketing_opt_out_event(
         )
 
 
+def _compact_meta_status_error(status_item: dict) -> Optional[str]:
+    errors = status_item.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return None
+    first = errors[0] if isinstance(errors[0], dict) else {}
+    code = str(first.get("code") or "").strip()
+    title = str(first.get("title") or "").strip()
+    message = str(first.get("message") or "").strip()
+    parts = [part for part in [code, title, message] if part]
+    return " | ".join(parts) if parts else None
+
+
+def _sync_marketing_status_from_meta_callback(status_item: dict) -> None:
+    provider_message_id = str(status_item.get("id") or "").strip()
+    if not provider_message_id:
+        return
+
+    callback_status = str(status_item.get("status") or "").strip().lower() or "unknown"
+    error_text = _compact_meta_status_error(status_item)
+    updated_at = datetime.now(timezone.utc).isoformat()
+    mapped_send_status = "failed" if callback_status in {"failed", "undelivered"} else None
+
+    try:
+        rows = (
+            supabase.table("marketing_campaign_recipients")
+            .select("id,client_id,campaign_id,recipient_key")
+            .eq("provider", "meta")
+            .eq("provider_message_id", provider_message_id)
+            .limit(50)
+            .execute()
+        ).data or []
+    except Exception:
+        logger.exception(
+            "❌ Failed loading marketing recipients for Meta status callback | message_id=%s",
+            provider_message_id,
+        )
+        return
+
+    for row in rows:
+        recipient_id = str((row or {}).get("id") or "").strip()
+        if not recipient_id:
+            continue
+        try:
+            update_payload = {
+                "updated_at": updated_at,
+            }
+            if mapped_send_status:
+                update_payload["send_status"] = mapped_send_status
+                update_payload["send_error"] = error_text or f"meta_status:{callback_status}"
+
+            (
+                supabase.table("marketing_campaign_recipients")
+                .update(update_payload)
+                .eq("id", recipient_id)
+                .execute()
+            )
+        except Exception:
+            logger.exception(
+                "❌ Failed updating marketing recipient from Meta status callback | recipient_id=%s",
+                recipient_id,
+            )
+
+        try:
+            supabase.table("marketing_campaign_events").insert(
+                {
+                    "client_id": row.get("client_id"),
+                    "campaign_id": row.get("campaign_id"),
+                    "recipient_key": row.get("recipient_key"),
+                    "event_type": f"meta_{callback_status}",
+                    "metadata": {
+                        "provider_message_id": provider_message_id,
+                        "callback_status": callback_status,
+                        "error": error_text,
+                    },
+                    "created_at": updated_at,
+                }
+            ).execute()
+        except Exception:
+            logger.exception(
+                "❌ Failed writing marketing event from Meta status callback | message_id=%s",
+                provider_message_id,
+            )
+
+
 def _extract_user_text(message_type: str, message: dict) -> str | None:
     if message_type == "text":
         return message.get("text", {}).get("body")
@@ -611,7 +695,22 @@ async def process_whatsapp_payload(payload: dict):
         # 🛑 Ignorar callbacks de estado (sent, delivered, read)
         # -------------------------------------------------------------
         if "statuses" in value:
-            logger.info("WhatsApp status callback ignored")
+            statuses = value.get("statuses") or []
+            for status_item in statuses:
+                if not isinstance(status_item, dict):
+                    continue
+                provider_message_id = str(status_item.get("id") or "").strip() or "unknown"
+                callback_status = str(status_item.get("status") or "").strip().lower() or "unknown"
+                recipient_id = str(status_item.get("recipient_id") or "").strip() or "unknown"
+                error_text = _compact_meta_status_error(status_item)
+                logger.info(
+                    "WhatsApp status callback | message_id=%s | status=%s | recipient=%s | error=%s",
+                    provider_message_id,
+                    callback_status,
+                    recipient_id,
+                    error_text or "none",
+                )
+                _sync_marketing_status_from_meta_callback(status_item)
             return
 
         messages = value.get("messages")

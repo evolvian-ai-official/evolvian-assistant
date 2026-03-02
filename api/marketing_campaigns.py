@@ -95,12 +95,31 @@ def _normalize_email(value: Any) -> Optional[str]:
 def _normalize_phone(value: Any) -> Optional[str]:
     if value is None:
         return None
-    cleaned = str(value).strip().replace(" ", "").replace("-", "")
+    raw = str(value).strip()
+    if not raw:
+        return None
+    cleaned = re.sub(r"[^\d+]", "", raw)
     if not cleaned:
         return None
     if cleaned.startswith("00"):
         cleaned = "+" + cleaned[2:]
-    return cleaned
+
+    digits = re.sub(r"\D", "", cleaned)
+    if not digits:
+        return None
+
+    # Normalize legacy MX format 521XXXXXXXXXX -> 52XXXXXXXXXX
+    if digits.startswith("521") and len(digits) == 13:
+        digits = "52" + digits[3:]
+
+    # Basic E.164 sanity checks.
+    if len(digits) < 10 or len(digits) > 15:
+        return None
+    # Mexico numbers in E.164 should be country code 52 + 10 digits.
+    if digits.startswith("52") and len(digits) != 12:
+        return None
+
+    return f"+{digits}"
 
 
 def _normalize_name(value: Any) -> Optional[str]:
@@ -361,6 +380,36 @@ def _load_meta_template_buttons(meta_template_id: Any) -> Optional[Any]:
         return row.get("buttons_json")
     except Exception:
         return None
+
+
+def _disable_meta_template_header(meta_template_id: Any) -> bool:
+    normalized_meta_id = str(meta_template_id or "").strip()
+    if not normalized_meta_id:
+        return False
+    raw_buttons = _load_meta_template_buttons(normalized_meta_id)
+    if raw_buttons is None:
+        return False
+    decoded = _decode_buttons_json(raw_buttons)
+    if not decoded:
+        return False
+    if not isinstance(decoded.get("header"), dict):
+        return False
+    decoded.pop("header", None)
+    try:
+        (
+            supabase.table("meta_approved_templates")
+            .update(
+                {
+                    "buttons_json": decoded or None,
+                    "updated_at": _now_iso(),
+                }
+            )
+            .eq("id", normalized_meta_id)
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _enrich_campaign_for_ui(row: dict[str, Any]) -> dict[str, Any]:
@@ -1800,9 +1849,15 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     )
 
             else:
-                recipient_phone = _normalize_phone(target.get("phone"))
+                raw_phone = str(target.get("phone") or "").strip()
+                recipient_phone = _normalize_phone(raw_phone)
                 if not recipient_phone:
-                    base_row.update({"send_status": "skipped", "send_error": "missing_phone"})
+                    base_row.update(
+                        {
+                            "send_status": "skipped",
+                            "send_error": "invalid_phone_format" if raw_phone else "missing_phone",
+                        }
+                    )
                     _upsert_campaign_recipient(base_row)
                     summary["skipped"] += 1
                     continue
@@ -1854,6 +1909,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                         header_fallback_used = bool(send_result.get("success"))
                         if header_fallback_used:
                             summary["image_fallback_no_header"] += 1
+                            _disable_meta_template_header(campaign.get("meta_template_id"))
 
                 if send_result.get("success"):
                     base_row.update(
