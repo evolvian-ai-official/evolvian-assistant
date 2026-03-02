@@ -143,6 +143,7 @@ export default function CreateAppointment({ disabled = false }) {
     user_name: "",
     user_email: "",
     user_phone: "",
+    internal_notes: "",
     scheduled_time: "",
     appointment_type: "general",
     channel: "chat",
@@ -960,6 +961,7 @@ export default function CreateAppointment({ disabled = false }) {
       user_name: "",
       user_email: "",
       user_phone: "",
+      internal_notes: "",
       scheduled_time: "",
       appointment_type: "general",
       channel: "chat",
@@ -1025,6 +1027,7 @@ export default function CreateAppointment({ disabled = false }) {
           user_email: hasValidEmail ? normalizedEmail : undefined,
           user_phone: hasValidPhone ? normalizedPhone : undefined,
           appointment_type: form.appointment_type,
+          internal_notes: form.internal_notes?.trim() || undefined,
           send_reminders: enableReminder,
           replace_existing: replaceExisting,
           reminders: enableReminder
@@ -1229,6 +1232,21 @@ export default function CreateAppointment({ disabled = false }) {
                 {t("use_international_phone_format")}
               </p>
             )}
+
+            <label style={inputLabelStyle}>
+              {t("appointment_internal_notes_optional")}
+            </label>
+            <textarea
+              style={{ ...inputStyle, minHeight: 88, resize: "vertical" }}
+              placeholder={t("appointment_internal_notes_placeholder")}
+              name="internal_notes"
+              value={form.internal_notes}
+              onChange={handleChange}
+              maxLength={2000}
+            />
+            <p style={reminderHint}>
+              {t("appointment_internal_notes_hint")}
+            </p>
 
             <select
               style={inputStyle}
@@ -1729,6 +1747,14 @@ const inputStyle = {
   marginBottom: "0.75rem",
   borderRadius: 10,
   border: "1px solid #EDEDED",
+};
+
+const inputLabelStyle = {
+  display: "block",
+  fontSize: "0.85rem",
+  fontWeight: 600,
+  color: "#274472",
+  marginBottom: "0.35rem",
 };
 
 const clientPickerBox = {

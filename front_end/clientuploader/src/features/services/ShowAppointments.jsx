@@ -422,6 +422,7 @@ export default function ShowAppointments({ refreshKey = 0 }) {
           {filteredAppointments.map((a) => {
             const status = resolveStatus(a);
             const canEdit = status === "confirmed" || status === "pending";
+            const internalNotes = String(a.internal_notes || "").trim();
 
             return (
               <div key={a.id} style={card}>
@@ -472,6 +473,11 @@ export default function ShowAppointments({ refreshKey = 0 }) {
                   {a.user_phone && <span>📞 {a.user_phone}</span>}
                   {a.user_email && <span>✉️ {a.user_email}</span>}
                 </div>
+                {internalNotes && (
+                  <div style={internalNotesBox}>
+                    <strong>{t("appointment_internal_notes_label")}:</strong> {internalNotes}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -629,6 +635,18 @@ const contactRow = {
   gap: "1.2rem",
   fontSize: "0.85rem",
   color: "#274472",
+};
+
+const internalNotesBox = {
+  marginTop: "0.55rem",
+  padding: "0.55rem 0.65rem",
+  borderRadius: 8,
+  border: "1px solid #E9EEF5",
+  backgroundColor: "#F8FBFF",
+  color: "#2B4058",
+  fontSize: "0.86rem",
+  lineHeight: 1.4,
+  whiteSpace: "pre-wrap",
 };
 
 const editIconBtn = {

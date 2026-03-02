@@ -102,7 +102,7 @@ def _load_clean_appointments(client_id: str, desc: bool = True) -> list[dict]:
         supabase.table("appointments")
         .select(
             "id, user_name, user_email, user_phone, "
-            "scheduled_time, appointment_type, channel, status, created_at, recipient_language, recipient_locale"
+            "scheduled_time, appointment_type, internal_notes, channel, status, created_at, recipient_language, recipient_locale"
         )
         .eq("client_id", client_id)
         .order("scheduled_time", desc=desc)

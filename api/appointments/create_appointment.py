@@ -473,6 +473,7 @@ class CreateAppointmentPayload(BaseModel):
     user_email: Optional[EmailStr] = None
     user_phone: Optional[str] = None
     appointment_type: Optional[str] = "general"
+    internal_notes: Optional[str] = None
     channel: Optional[str] = "chat"
     send_reminders: bool = False
     reminders: Optional[Dict[str, Optional[str]]] = None
@@ -506,6 +507,15 @@ def _normalize_phone_e164_or_none(value: Optional[str]) -> Optional[str]:
     if not E164_PHONE_RE.fullmatch(raw):
         return None
     return raw
+
+
+def _normalize_internal_notes(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    note = str(value).strip()
+    if not note:
+        return None
+    return note[:2000]
 
 
 def _capture_inline_contact_consent(payload: CreateAppointmentPayload) -> str | None:
@@ -880,6 +890,8 @@ async def create_appointment(payload: CreateAppointmentPayload):
     if payload.user_email is not None:
         payload.user_email = str(payload.user_email).strip().lower() or None
 
+    payload.internal_notes = _normalize_internal_notes(payload.internal_notes)
+
     if payload.scheduled_time.tzinfo is None:
         scheduled_local = payload.scheduled_time.replace(tzinfo=LOCAL_TZ)
     else:
@@ -1218,6 +1230,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
         "user_phone": payload.user_phone,
         "scheduled_time": scheduled_utc.isoformat(),
         "appointment_type": payload.appointment_type,
+        "internal_notes": payload.internal_notes,
         "channel": payload.channel,
         "status": "confirmed",
         "session_id": str(payload.session_id),
