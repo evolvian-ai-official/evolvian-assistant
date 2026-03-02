@@ -44,6 +44,8 @@ class CampaignCreatePayload(BaseModel):
     cta_url: Optional[str] = Field(None, max_length=900)
     language_family: Optional[Literal["es", "en"]] = "es"
     status: Optional[Literal["draft", "scheduled", "active"]] = "draft"
+    whatsapp_opt_out_enabled: Optional[bool] = True
+    whatsapp_opt_out_label: Optional[str] = Field(None, max_length=25)
 
 
 class CampaignUpdatePayload(BaseModel):
@@ -57,6 +59,8 @@ class CampaignUpdatePayload(BaseModel):
     cta_url: Optional[str] = Field(None, max_length=900)
     language_family: Optional[Literal["es", "en"]] = None
     status: Optional[Literal["draft", "scheduled", "active", "paused", "sent", "archived"]] = None
+    whatsapp_opt_out_enabled: Optional[bool] = None
+    whatsapp_opt_out_label: Optional[str] = Field(None, max_length=25)
 
 
 class CampaignSendPayload(BaseModel):
@@ -289,6 +293,102 @@ def _generate_meta_template_name(campaign_name: str) -> str:
     return f"mk_{slug}_{stamp}"
 
 
+def _default_whatsapp_opt_out_label(language_family: Optional[str]) -> str:
+    return "Stop updates" if str(language_family or "").lower().startswith("en") else "No recibir más"
+
+
+def _normalize_whatsapp_opt_out_label(value: Any, language_family: Optional[str]) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if not text:
+        text = _default_whatsapp_opt_out_label(language_family)
+    return text[:25]
+
+
+def _decode_buttons_json(value: Any) -> dict[str, Any]:
+    raw = value
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = None
+    return raw if isinstance(raw, dict) else {}
+
+
+def _extract_campaign_whatsapp_controls(
+    *,
+    buttons_json: Any,
+    language_family: Optional[str],
+) -> dict[str, Any]:
+    decoded = _decode_buttons_json(buttons_json)
+    buttons = decoded.get("buttons")
+    opt_out_label = None
+    if isinstance(buttons, list):
+        for item in buttons:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip().upper() != "QUICK_REPLY":
+                continue
+            candidate = " ".join(str(item.get("text") or "").strip().split())
+            if candidate:
+                opt_out_label = candidate[:25]
+                break
+    header = decoded.get("header")
+    has_image_header = (
+        isinstance(header, dict)
+        and str(header.get("type") or "").strip().upper() == "IMAGE"
+        and bool(str(header.get("image_url") or header.get("url") or header.get("link") or "").strip())
+    )
+    return {
+        "whatsapp_opt_out_enabled": bool(opt_out_label),
+        "whatsapp_opt_out_label": opt_out_label or _default_whatsapp_opt_out_label(language_family),
+        "whatsapp_has_image_header": bool(has_image_header),
+    }
+
+
+def _load_meta_template_buttons(meta_template_id: Any) -> Optional[Any]:
+    normalized_meta_id = str(meta_template_id or "").strip()
+    if not normalized_meta_id:
+        return None
+    try:
+        res = (
+            supabase.table("meta_approved_templates")
+            .select("buttons_json")
+            .eq("id", normalized_meta_id)
+            .limit(1)
+            .execute()
+        )
+        row = (res.data or [None])[0] or {}
+        return row.get("buttons_json")
+    except Exception:
+        return None
+
+
+def _enrich_campaign_for_ui(row: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(row or {})
+    channel = str(enriched.get("channel") or "").strip().lower()
+    if channel != "whatsapp":
+        enriched["whatsapp_opt_out_enabled"] = False
+        enriched["whatsapp_opt_out_label"] = _default_whatsapp_opt_out_label(enriched.get("language_family"))
+        enriched["whatsapp_has_image_header"] = bool(str(enriched.get("image_url") or "").strip())
+        return enriched
+
+    raw_buttons = _load_meta_template_buttons(enriched.get("meta_template_id"))
+    if raw_buttons is None:
+        controls = {
+            "whatsapp_opt_out_enabled": False,
+            "whatsapp_opt_out_label": _default_whatsapp_opt_out_label(enriched.get("language_family")),
+            # Backward-compatible fallback: preserve previous image-send behavior.
+            "whatsapp_has_image_header": bool(str(enriched.get("image_url") or "").strip()),
+        }
+    else:
+        controls = _extract_campaign_whatsapp_controls(
+            buttons_json=raw_buttons,
+            language_family=enriched.get("language_family"),
+        )
+    enriched.update(controls)
+    return enriched
+
+
 def _campaign_template_type(base: str) -> str:
     # Keep one template row per campaign snapshot without hitting
     # unique constraints on (client_id, channel, type).
@@ -346,18 +446,35 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
     normalized_cta_url = _normalize_redirect_url(payload.cta_url) or ""
     normalized_cta_label = str(payload.cta_label or "").strip()
     normalized_image_url = str(payload.image_url or "").strip()
+    normalized_opt_out_enabled = bool(
+        True if payload.whatsapp_opt_out_enabled is None else payload.whatsapp_opt_out_enabled
+    )
+    normalized_opt_out_label = _normalize_whatsapp_opt_out_label(
+        payload.whatsapp_opt_out_label,
+        payload.language_family,
+    )
     if normalized_cta_url and not normalized_cta_label:
         normalized_cta_label = "Open site" if str(payload.language_family or "").lower().startswith("en") else "Abrir sitio"
 
     buttons_payload: dict[str, Any] = {}
+    normalized_buttons: list[dict[str, Any]] = []
     if normalized_cta_url:
-        buttons_payload["buttons"] = [
+        normalized_buttons.append(
             {
                 "type": "URL",
                 "text": normalized_cta_label[:25] or "Open",
                 "url": normalized_cta_url[:2000],
             }
-        ]
+        )
+    if normalized_opt_out_enabled:
+        normalized_buttons.append(
+            {
+                "type": "QUICK_REPLY",
+                "text": normalized_opt_out_label,
+            }
+        )
+    if normalized_buttons:
+        buttons_payload["buttons"] = normalized_buttons[:10]
     if normalized_image_url and (normalized_image_url.startswith("https://") or normalized_image_url.startswith("http://")):
         buttons_payload["header"] = {
             "type": "IMAGE",
@@ -873,7 +990,7 @@ def _load_campaign(client_id: str, campaign_id: str) -> dict[str, Any]:
     row = (res.data or [None])[0]
     if not row:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    return row
+    return _enrich_campaign_for_ui(row)
 
 
 def _to_json_response_payload(resp: Any) -> dict[str, Any]:
@@ -1128,7 +1245,7 @@ def list_campaigns(
                 or q_value in str(row.get("body") or "").lower()
             ]
 
-        return {"items": rows}
+        return {"items": [_enrich_campaign_for_ui(row) for row in rows]}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1196,6 +1313,8 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
                     "cta_mode": normalized_cta_mode,
                     "cta_url": normalized_cta_url,
                     "cta_label": normalized_cta_label,
+                    "whatsapp_opt_out_enabled": None,
+                    "whatsapp_opt_out_label": None,
                 }
             )
             email_template = _create_email_template_for_campaign(payload.client_id, normalized_payload)
@@ -1206,6 +1325,13 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
                     "cta_mode": normalized_cta_mode,
                     "cta_url": normalized_cta_url,
                     "cta_label": normalized_cta_label,
+                    "whatsapp_opt_out_enabled": (
+                        True if payload.whatsapp_opt_out_enabled is None else bool(payload.whatsapp_opt_out_enabled)
+                    ),
+                    "whatsapp_opt_out_label": _normalize_whatsapp_opt_out_label(
+                        payload.whatsapp_opt_out_label,
+                        payload.language_family,
+                    ),
                 }
             )
             wa_templates = _create_whatsapp_template_for_campaign(payload.client_id, normalized_payload)
@@ -1239,7 +1365,7 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
         if not row:
             raise HTTPException(status_code=500, detail="Could not create campaign")
 
-        return {"campaign": row}
+        return {"campaign": _enrich_campaign_for_ui(row)}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1306,10 +1432,36 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
             if not effective_url:
                 updates["cta_label"] = None
 
+        normalized_opt_out_label = None
+        if payload.whatsapp_opt_out_label is not None:
+            normalized_opt_out_label = _normalize_whatsapp_opt_out_label(
+                payload.whatsapp_opt_out_label,
+                updates.get("language_family") if "language_family" in updates else campaign.get("language_family"),
+            )
+
         should_version_whatsapp_template = False
         if str(campaign.get("channel") or "") == "whatsapp":
-            touched_fields = {"name", "body", "language_family", "cta_mode", "cta_label", "cta_url"}
+            touched_fields = {
+                "name",
+                "body",
+                "language_family",
+                "cta_mode",
+                "cta_label",
+                "cta_url",
+                "image_url",
+            }
             should_version_whatsapp_template = any(field in updates for field in touched_fields)
+            if payload.whatsapp_opt_out_enabled is not None:
+                current_enabled = bool(campaign.get("whatsapp_opt_out_enabled"))
+                if bool(payload.whatsapp_opt_out_enabled) != current_enabled:
+                    should_version_whatsapp_template = True
+            if payload.whatsapp_opt_out_label is not None:
+                current_label = _normalize_whatsapp_opt_out_label(
+                    campaign.get("whatsapp_opt_out_label"),
+                    updates.get("language_family") if "language_family" in updates else campaign.get("language_family"),
+                )
+                if normalized_opt_out_label != current_label:
+                    should_version_whatsapp_template = True
 
         if should_version_whatsapp_template:
             merged_cta_url = updates.get("cta_url") if "cta_url" in updates else _normalize_redirect_url(campaign.get("cta_url"))
@@ -1317,6 +1469,22 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
             merged_cta_mode = "url" if merged_cta_url else None
             if not merged_cta_url:
                 merged_cta_label = None
+            merged_language = (
+                updates.get("language_family") if "language_family" in updates else campaign.get("language_family")
+            ) or "es"
+            merged_opt_out_enabled = (
+                bool(payload.whatsapp_opt_out_enabled)
+                if payload.whatsapp_opt_out_enabled is not None
+                else bool(campaign.get("whatsapp_opt_out_enabled", True))
+            )
+            merged_opt_out_label = (
+                normalized_opt_out_label
+                if normalized_opt_out_label is not None
+                else _normalize_whatsapp_opt_out_label(
+                    campaign.get("whatsapp_opt_out_label"),
+                    merged_language,
+                )
+            )
             merged = CampaignCreatePayload(
                 client_id=payload.client_id,
                 name=str(updates.get("name") or campaign.get("name") or "Campaign"),
@@ -1327,7 +1495,9 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
                 cta_mode=merged_cta_mode,
                 cta_label=merged_cta_label,
                 cta_url=merged_cta_url,
-                language_family=updates.get("language_family") if "language_family" in updates else campaign.get("language_family") or "es",
+                language_family=merged_language,
+                whatsapp_opt_out_enabled=merged_opt_out_enabled,
+                whatsapp_opt_out_label=merged_opt_out_label,
             )
             wa_templates = _create_whatsapp_template_for_campaign(payload.client_id, merged)
             updates["template_id"] = wa_templates["message_template"].get("id")
@@ -1395,7 +1565,7 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
         if not row:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-        return {"campaign": row}
+        return {"campaign": _enrich_campaign_for_ui(row)}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1515,6 +1685,8 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
             "blocked_policy": 0,
             "skipped": summary_skipped,
             "dry_run": bool(payload.dry_run),
+            "image_fallback_no_header": 0,
+            "image_skipped_no_header_template": 0,
         }
         campaign_image_url = str(campaign.get("image_url") or "").strip() or None
         campaign_whatsapp_param = str(campaign.get("body") or "").strip() or (
@@ -1643,19 +1815,24 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     continue
 
                 language_code = _format_locale(campaign.get("language_family"))
+                template_has_header = bool(campaign.get("whatsapp_has_image_header"))
+                header_image_url = campaign_image_url if template_has_header else None
+                if campaign_image_url and not template_has_header:
+                    summary["image_skipped_no_header_template"] += 1
                 send_result = await send_whatsapp_template_for_client(
                     client_id=payload.client_id,
                     to_number=recipient_phone,
                     template_name=template_name,
                     parameters=[campaign_whatsapp_param],
-                    header_image_url=campaign_image_url,
+                    header_image_url=header_image_url,
                     language_code=language_code,
                     purpose="marketing",
                     recipient_email=_normalize_email(target.get("email")),
                     policy_source="marketing_campaign_send",
                     policy_source_id=campaign_id,
                 )
-                if not send_result.get("success") and campaign_image_url:
+                header_fallback_used = False
+                if not send_result.get("success") and header_image_url:
                     raw_error_probe = str(send_result.get("error") or "").lower()
                     if (
                         "header" in raw_error_probe
@@ -1674,6 +1851,9 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                             policy_source="marketing_campaign_send",
                             policy_source_id=campaign_id,
                         )
+                        header_fallback_used = bool(send_result.get("success"))
+                        if header_fallback_used:
+                            summary["image_fallback_no_header"] += 1
 
                 if send_result.get("success"):
                     base_row.update(
@@ -1695,6 +1875,8 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                             "provider": "meta",
                             "provider_message_id": send_result.get("meta_message_id"),
                             "policy_proof_id": send_result.get("policy_proof_id"),
+                            "header_fallback_no_image": header_fallback_used,
+                            "header_template_missing": bool(campaign_image_url and not template_has_header),
                         },
                     )
                     summary["sent"] += 1

@@ -1793,6 +1793,27 @@ def sync_canonical_templates_for_client(
             if (
                 not created["success"]
                 and _is_meta_invalid_parameter_error(created.get("error"))
+                and any(str((component or {}).get("type") or "").upper() == "HEADER" for component in components)
+                and any(str((component or {}).get("type") or "").upper() == "BUTTONS" for component in components)
+            ):
+                # Prefer preserving IMAGE header: first retry without BUTTONS.
+                header_preferred_components = [
+                    component
+                    for component in components
+                    if str((component or {}).get("type") or "").upper() != "BUTTONS"
+                ]
+                if header_preferred_components != components:
+                    created = _create_meta_template(
+                        waba_id=waba_id,
+                        wa_token=wa_token,
+                        template_name=client_template_name,
+                        language=language,
+                        category=category,
+                        components=header_preferred_components,
+                    )
+            if (
+                not created["success"]
+                and _is_meta_invalid_parameter_error(created.get("error"))
                 and any(
                     str((component or {}).get("type") or "").upper() == "HEADER"
                     and str((component or {}).get("format") or "").upper() == "IMAGE"

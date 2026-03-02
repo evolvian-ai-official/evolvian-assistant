@@ -3,7 +3,10 @@ import os
 import json
 import logging
 import re
+import uuid
+import unicodedata
 from datetime import datetime, timezone
+from typing import Any, Optional
 
 from api.modules.assistant_rag.rag_pipeline import handle_message
 from api.modules.whatsapp.whatsapp_sender import send_whatsapp_message
@@ -17,6 +20,14 @@ from api.modules.assistant_rag.supabase_client import (
     is_duplicate_wa_message,
     register_wa_message,
 )
+from api.privacy_dsr import (
+    build_initial_metadata,
+    calculate_due_at,
+    combine_details_and_metadata,
+    isoformat_utc,
+    now_utc,
+    split_details_and_metadata,
+)
 from api.webhook_security import verify_meta_signature
 
 router = APIRouter(prefix="/api/whatsapp")
@@ -29,6 +40,280 @@ if not VERIFY_TOKEN:
     logger.error("META_WHATSAPP_VERIFY_TOKEN is not configured.")
 
 CANCEL_KEYWORDS = ("cancelar", "cancel", "anular", "cancelacion", "cancelación")
+TERMINAL_OPT_OUT_STATUSES = {"withdrawn", "denied"}
+OPT_OUT_KEYWORDS = (
+    "stop",
+    "unsubscribe",
+    "optout",
+    "opt out",
+    "desuscribir",
+    "desuscribirme",
+    "darme de baja",
+    "no recibir",
+    "no mas",
+    "no más",
+)
+
+
+def _normalize_text_key(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _extract_context_message_id(message: dict) -> str | None:
+    context = message.get("context")
+    if not isinstance(context, dict):
+        return None
+    value = str(context.get("id") or "").strip()
+    return value or None
+
+
+def _extract_email_from_recipient_key(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.lower().startswith("email:"):
+        email = text.split(":", 1)[1].strip().lower()
+        return email or None
+    return None
+
+
+def _extract_opt_out_scope_client_id(details: Any) -> Optional[str]:
+    try:
+        plain_details, metadata = split_details_and_metadata(str(details or ""))
+        scoped = str((metadata or {}).get("client_id") or "").strip()
+        if scoped:
+            return scoped
+        match = re.search(r"\bclient_id=([a-f0-9-]{8,})\b", plain_details, flags=re.IGNORECASE)
+        if match:
+            return str(match.group(1)).strip()
+    except Exception:
+        return None
+    return None
+
+
+def _load_recent_marketing_recipient(
+    *,
+    client_id: str,
+    from_number: str,
+    context_message_id: Optional[str],
+) -> Optional[dict]:
+    if context_message_id:
+        try:
+            scoped = (
+                supabase.table("marketing_campaign_recipients")
+                .select("campaign_id,recipient_key,email,phone,provider_message_id,sent_at,updated_at")
+                .eq("client_id", client_id)
+                .eq("provider", "meta")
+                .eq("provider_message_id", context_message_id)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            row = (scoped.data or [None])[0]
+            if row:
+                return row
+        except Exception:
+            pass
+
+    phone_candidates = _phone_candidates(from_number)
+    if not phone_candidates:
+        return None
+    try:
+        by_phone = (
+            supabase.table("marketing_campaign_recipients")
+            .select("campaign_id,recipient_key,email,phone,provider_message_id,sent_at,updated_at")
+            .eq("client_id", client_id)
+            .eq("provider", "meta")
+            .in_("phone", phone_candidates)
+            .order("updated_at", desc=True)
+            .limit(5)
+            .execute()
+        )
+        return (by_phone.data or [None])[0]
+    except Exception:
+        return None
+
+
+def _load_campaign_opt_out_labels(client_id: str, campaign_id: Optional[str]) -> set[str]:
+    normalized_campaign_id = str(campaign_id or "").strip()
+    if not normalized_campaign_id:
+        return set()
+
+    try:
+        campaign_res = (
+            supabase.table("marketing_campaigns")
+            .select("meta_template_id")
+            .eq("id", normalized_campaign_id)
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        campaign_row = (campaign_res.data or [None])[0] or {}
+        meta_template_id = str(campaign_row.get("meta_template_id") or "").strip()
+        if not meta_template_id:
+            return set()
+
+        meta_res = (
+            supabase.table("meta_approved_templates")
+            .select("buttons_json")
+            .eq("id", meta_template_id)
+            .limit(1)
+            .execute()
+        )
+        meta_row = (meta_res.data or [None])[0] or {}
+        raw = meta_row.get("buttons_json")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = None
+        if not isinstance(raw, dict):
+            return set()
+        buttons = raw.get("buttons")
+        if not isinstance(buttons, list):
+            return set()
+
+        labels: set[str] = set()
+        for button in buttons:
+            if not isinstance(button, dict):
+                continue
+            if str(button.get("type") or "").strip().upper() != "QUICK_REPLY":
+                continue
+            label = _normalize_text_key(button.get("text"))
+            if label:
+                labels.add(label)
+        return labels
+    except Exception:
+        return set()
+
+
+def _is_marketing_opt_out_action(
+    *,
+    message_type: str,
+    user_text: Optional[str],
+    known_opt_out_labels: set[str],
+) -> bool:
+    normalized_text = _normalize_text_key(user_text)
+    if not normalized_text:
+        return False
+
+    is_button_like = message_type in {"interactive", "button"}
+    if is_button_like and normalized_text in known_opt_out_labels:
+        return True
+
+    return any(keyword in normalized_text for keyword in OPT_OUT_KEYWORDS)
+
+
+def _record_whatsapp_marketing_opt_out(
+    *,
+    client_id: str,
+    email: str,
+    campaign_id: Optional[str],
+    provider_message_id: Optional[str],
+    recipient_key: Optional[str],
+) -> bool:
+    normalized_email = str(email or "").strip().lower()
+    if not normalized_email:
+        return False
+
+    try:
+        existing = (
+            supabase.table("public_privacy_requests")
+            .select("id,status,created_at,details")
+            .eq("email", normalized_email)
+            .eq("request_type", "marketing_opt_out")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        rows = existing.data or []
+    except Exception:
+        rows = []
+
+    latest_for_client = None
+    for row in rows:
+        scoped_client_id = _extract_opt_out_scope_client_id((row or {}).get("details"))
+        if scoped_client_id and str(scoped_client_id) != str(client_id):
+            continue
+        latest_for_client = row or {}
+        break
+
+    status = str((latest_for_client or {}).get("status") or "").strip().lower()
+    has_active_opt_out = bool(latest_for_client) and status not in TERMINAL_OPT_OUT_STATUSES
+    if has_active_opt_out:
+        return True
+
+    submitted_at = now_utc()
+    due_at = calculate_due_at(submitted_at)
+    request_id = f"dsar_{uuid.uuid4().hex[:12]}"
+    metadata = build_initial_metadata(
+        request_id=request_id,
+        request_type="marketing_opt_out",
+        submitted_at=submitted_at,
+        due_at=due_at,
+        source="whatsapp_campaign_button",
+    )
+    metadata["client_id"] = str(client_id).strip()
+    if campaign_id:
+        metadata["campaign_id"] = str(campaign_id).strip()
+    if provider_message_id:
+        metadata["provider_message_id"] = str(provider_message_id).strip()
+    if recipient_key:
+        metadata["recipient_key"] = str(recipient_key).strip()
+
+    details = "Marketing opt-out via WhatsApp campaign button."
+    details_with_metadata = combine_details_and_metadata(details, metadata)
+    payload = {
+        "name": None,
+        "email": normalized_email,
+        "request_type": "marketing_opt_out",
+        "details": details_with_metadata,
+        "language": "es",
+        "consent_version": "2026-02",
+        "source": "whatsapp_campaign_button",
+        "status": "pending",
+        "ip_address": None,
+        "user_agent": "meta_whatsapp_webhook",
+        "created_at": isoformat_utc(submitted_at),
+    }
+    supabase.table("public_privacy_requests").insert(payload).execute()
+    return True
+
+
+def _log_marketing_opt_out_event(
+    *,
+    client_id: str,
+    campaign_id: Optional[str],
+    recipient_key: Optional[str],
+    provider_message_id: Optional[str],
+) -> None:
+    normalized_campaign_id = str(campaign_id or "").strip()
+    normalized_recipient_key = str(recipient_key or "").strip()
+    if not normalized_campaign_id:
+        return
+    try:
+        supabase.table("marketing_campaign_events").insert(
+            {
+                "client_id": client_id,
+                "campaign_id": normalized_campaign_id,
+                "recipient_key": normalized_recipient_key or None,
+                "event_type": "opt_out",
+                "metadata": {"provider_message_id": provider_message_id} if provider_message_id else {},
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+    except Exception:
+        logger.exception(
+            "❌ Failed logging marketing opt-out event | client_id=%s | campaign_id=%s",
+            client_id,
+            normalized_campaign_id,
+        )
 
 
 def _extract_user_text(message_type: str, message: dict) -> str | None:
@@ -381,6 +666,56 @@ async def process_whatsapp_payload(payload: dict):
             )
 
             session_id = f"whatsapp-{from_number}"
+            context_message_id = _extract_context_message_id(message)
+
+            recent_marketing_row = _load_recent_marketing_recipient(
+                client_id=client_id,
+                from_number=from_number,
+                context_message_id=context_message_id,
+            )
+            known_opt_out_labels = _load_campaign_opt_out_labels(
+                client_id=client_id,
+                campaign_id=(recent_marketing_row or {}).get("campaign_id"),
+            )
+            is_opt_out_candidate = bool(recent_marketing_row) or message_type in {"interactive", "button"}
+            if is_opt_out_candidate and _is_marketing_opt_out_action(
+                message_type=message_type,
+                user_text=user_text,
+                known_opt_out_labels=known_opt_out_labels,
+            ):
+                recipient_email = str((recent_marketing_row or {}).get("email") or "").strip().lower()
+                if not recipient_email:
+                    recipient_email = (
+                        _extract_email_from_recipient_key((recent_marketing_row or {}).get("recipient_key"))
+                        or ""
+                    )
+
+                if recipient_email:
+                    _record_whatsapp_marketing_opt_out(
+                        client_id=client_id,
+                        email=recipient_email,
+                        campaign_id=(recent_marketing_row or {}).get("campaign_id"),
+                        provider_message_id=context_message_id or (recent_marketing_row or {}).get("provider_message_id"),
+                        recipient_key=(recent_marketing_row or {}).get("recipient_key"),
+                    )
+                    _log_marketing_opt_out_event(
+                        client_id=client_id,
+                        campaign_id=(recent_marketing_row or {}).get("campaign_id"),
+                        recipient_key=(recent_marketing_row or {}).get("recipient_key"),
+                        provider_message_id=context_message_id or (recent_marketing_row or {}).get("provider_message_id"),
+                    )
+                    await send_whatsapp_message(
+                        to_number=from_number,
+                        text="Listo. Dejaste de recibir campañas de marketing.",
+                        channel=channel,
+                    )
+                else:
+                    await send_whatsapp_message(
+                        to_number=from_number,
+                        text="No pude completar la baja automática. Escríbenos para ayudarte.",
+                        channel=channel,
+                    )
+                continue
 
             # ---------------------------------------------------------
             # Cancelación directa desde botón rápido

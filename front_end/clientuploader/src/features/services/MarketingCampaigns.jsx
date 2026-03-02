@@ -92,6 +92,12 @@ export default function MarketingCampaigns() {
     sendSummarySuccess: isEs ? "Campaña enviada correctamente." : "Campaign sent successfully.",
     sendSummaryPartial: isEs ? "Campaña enviada parcialmente." : "Campaign sent partially.",
     sendSummaryFailed: isEs ? "No se pudo enviar la campaña." : "Campaign could not be sent.",
+    sendSummaryImageFallback: isEs
+      ? "Algunos mensajes se enviaron sin imagen porque Meta rechazó el header en esa plantilla."
+      : "Some messages were sent without image because Meta rejected the template header.",
+    sendSummaryImageNoHeader: isEs
+      ? "Esta plantilla no tiene header de imagen en Meta; los envíos salen solo con texto/botones."
+      : "This template has no image header in Meta; sends go out as text/buttons only.",
     sent: isEs ? "Enviados" : "Sent",
     failed: isEs ? "Fallidos" : "Failed",
     blocked: isEs ? "Bloqueados política" : "Policy blocked",
@@ -122,6 +128,12 @@ export default function MarketingCampaigns() {
     whatsappFormatLine5: isEs
       ? "Plantilla final enviada a Meta: Hola, {{1}}, Gracias."
       : "Final template sent to Meta: Hello, {{1}}, Thank you.",
+    whatsappOptOutToggle: isEs ? "Agregar botón de baja (opt-out)" : "Add opt-out button",
+    whatsappOptOutLabel: isEs ? "Texto botón de baja" : "Opt-out button text",
+    whatsappOptOutHelp: isEs
+      ? "Si el contacto hace click, se registra opt-out y ya no podrá seleccionarse para campañas."
+      : "If a contact clicks it, an opt-out is recorded and it will no longer be selectable for campaigns.",
+    whatsappOptOutPlaceholder: isEs ? "No recibir más información" : "Stop receiving updates",
     formRulesTitle: isEs ? "Reglas antes de guardar" : "Rules before saving",
     formRuleName: isEs ? "Nombre de campaña obligatorio (mínimo 3 caracteres)." : "Campaign name is required (minimum 3 characters).",
     formRuleBody: isEs ? "Contenido obligatorio." : "Content is required.",
@@ -195,6 +207,8 @@ export default function MarketingCampaigns() {
     cta_label: "",
     cta_url: "",
     language_family: isEs ? "es" : "en",
+    whatsapp_opt_out_enabled: true,
+    whatsapp_opt_out_label: "",
   });
 
   const fetchAudience = async ({ segment = "all", q = "" } = {}) => {
@@ -515,6 +529,8 @@ export default function MarketingCampaigns() {
       cta_label: "",
       cta_url: "",
       language_family: isEs ? "es" : "en",
+      whatsapp_opt_out_enabled: true,
+      whatsapp_opt_out_label: "",
     });
     setImageFileName("");
   };
@@ -617,6 +633,8 @@ export default function MarketingCampaigns() {
       cta_label: selectedCampaign.cta_label || "",
       cta_url: selectedCampaign.cta_url || "",
       language_family: selectedCampaign.language_family || (isEs ? "es" : "en"),
+      whatsapp_opt_out_enabled: selectedCampaign.whatsapp_opt_out_enabled ?? true,
+      whatsapp_opt_out_label: selectedCampaign.whatsapp_opt_out_label || "",
     }));
     setImageFileName("");
     setNotice(null);
@@ -685,6 +703,10 @@ export default function MarketingCampaigns() {
         cta_label: normalizedCtaUrl ? (form.cta_label.trim() || null) : null,
         cta_url: normalizedCtaUrl,
         language_family: form.language_family,
+        whatsapp_opt_out_enabled: form.channel === "whatsapp" ? Boolean(form.whatsapp_opt_out_enabled) : null,
+        whatsapp_opt_out_label: form.channel === "whatsapp"
+          ? (form.whatsapp_opt_out_enabled ? (form.whatsapp_opt_out_label.trim() || null) : null)
+          : null,
       };
 
       const isEditing = Boolean(editingCampaignId);
@@ -785,12 +807,20 @@ export default function MarketingCampaigns() {
       const failed = Number(summary.failed || 0);
       const blocked = Number(summary.blocked_policy || 0);
       const skipped = Number(summary.skipped || 0);
+      const imageFallbackNoHeader = Number(summary.image_fallback_no_header || 0);
+      const imageSkippedNoHeaderTemplate = Number(summary.image_skipped_no_header_template || 0);
 
       const messageCounts = `${text.sent}: ${sent} · ${text.failed}: ${failed} · ${text.blocked}: ${blocked} · ${text.skipped}: ${skipped}`;
       if (sent > 0 && failed === 0 && blocked === 0) {
-        setNotice({ type: "success", message: `${text.sendSummarySuccess} ${messageCounts}` });
+        let extra = "";
+        if (imageSkippedNoHeaderTemplate > 0) extra += ` ${text.sendSummaryImageNoHeader}`;
+        if (imageFallbackNoHeader > 0) extra += ` ${text.sendSummaryImageFallback}`;
+        setNotice({ type: "success", message: `${text.sendSummarySuccess} ${messageCounts}${extra}` });
       } else if (sent > 0) {
-        setNotice({ type: "warning", message: `${text.sendSummaryPartial} ${messageCounts}` });
+        let extra = "";
+        if (imageSkippedNoHeaderTemplate > 0) extra += ` ${text.sendSummaryImageNoHeader}`;
+        if (imageFallbackNoHeader > 0) extra += ` ${text.sendSummaryImageFallback}`;
+        setNotice({ type: "warning", message: `${text.sendSummaryPartial} ${messageCounts}${extra}` });
       } else {
         setError(`${text.sendSummaryFailed} ${messageCounts}`);
       }
@@ -1060,9 +1090,35 @@ export default function MarketingCampaigns() {
                     {selectedCampaign.status}
                     {selectedCampaign.subject ? ` · ${selectedCampaign.subject}` : ""}
                   </small>
+                  {selectedCampaign.channel === "whatsapp" ? (
+                    <div style={{ marginTop: "0.32rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                      <span style={badgeStyle}>
+                        {selectedCampaign.whatsapp_opt_out_enabled
+                          ? `${text.whatsappOptOutToggle}: ${selectedCampaign.whatsapp_opt_out_label || text.whatsappOptOutPlaceholder}`
+                          : text.whatsappOptOutToggle}
+                      </span>
+                      <span
+                        style={{
+                          ...badgeStyle,
+                          background: selectedCampaign.whatsapp_has_image_header ? "#ecfdf3" : "#fff7ed",
+                          color: selectedCampaign.whatsapp_has_image_header ? "#047857" : "#9a3412",
+                          borderColor: selectedCampaign.whatsapp_has_image_header ? "#bbf7d0" : "#fed7aa",
+                        }}
+                      >
+                        {selectedCampaign.whatsapp_has_image_header
+                          ? (isEs ? "Header imagen activo" : "Image header active")
+                          : (isEs ? "Sin header imagen en Meta" : "No image header in Meta")}
+                      </span>
+                    </div>
+                  ) : null}
                   <p style={{ ...smallStyle, marginTop: "0.35rem", color: "#334155", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                     {selectedCampaign.body || ""}
                   </p>
+                  {selectedCampaign.channel === "whatsapp" && selectedCampaign.image_url && !selectedCampaign.whatsapp_has_image_header ? (
+                    <p style={{ ...smallStyle, marginTop: "0.3rem", color: "#b45309" }}>
+                      {text.sendSummaryImageNoHeader}
+                    </p>
+                  ) : null}
                   <div style={{ marginTop: "0.5rem" }}>
                     <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
                       <button type="button" className="ia-button ia-button-ghost" onClick={openCampaignPicker} style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}>
@@ -1288,6 +1344,35 @@ export default function MarketingCampaigns() {
                       </div>
                     ) : null}
 
+                    {form.channel === "whatsapp" ? (
+                      <div style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.45rem" }}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(form.whatsapp_opt_out_enabled)}
+                            onChange={(e) => setForm((prev) => ({ ...prev, whatsapp_opt_out_enabled: e.target.checked }))}
+                          />
+                          <strong style={{ ...smallStyle, color: "#0f172a" }}>{text.whatsappOptOutToggle}</strong>
+                        </label>
+                        {form.whatsapp_opt_out_enabled ? (
+                          <>
+                            <small style={{ ...smallStyle, display: "block", marginBottom: "0.25rem", color: "#334155" }}>
+                              {text.whatsappOptOutLabel}
+                            </small>
+                            <input
+                              className="ia-form-input"
+                              placeholder={text.whatsappOptOutPlaceholder}
+                              value={form.whatsapp_opt_out_label}
+                              onChange={(e) => setForm((prev) => ({ ...prev, whatsapp_opt_out_label: e.target.value }))}
+                            />
+                          </>
+                        ) : null}
+                        <small style={{ ...smallStyle, display: "block", marginTop: "0.35rem" }}>
+                          {text.whatsappOptOutHelp}
+                        </small>
+                      </div>
+                    ) : null}
+
                     <input
                       className="ia-form-input"
                       placeholder={isEs ? "Texto botón de redirección (opcional)" : "Redirect button text (optional)"}
@@ -1442,6 +1527,23 @@ export default function MarketingCampaigns() {
                       {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
                     </a>
                   ) : null}
+                  {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_opt_out_enabled ? (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        marginTop: "0.45rem",
+                        marginLeft: selectedCampaignCtaUrl ? "0.45rem" : 0,
+                        padding: "0.38rem 0.62rem",
+                        borderRadius: 8,
+                        border: "1px solid #fecaca",
+                        background: "#fff1f2",
+                        color: "#9f1239",
+                        fontSize: "0.8rem",
+                      }}
+                    >
+                      {selectedCampaign.whatsapp_opt_out_label || text.whatsappOptOutPlaceholder}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1492,6 +1594,23 @@ export default function MarketingCampaigns() {
                         >
                           {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
                         </a>
+                      ) : null}
+                      {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_opt_out_enabled ? (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            marginTop: "0.45rem",
+                            marginLeft: selectedCampaignCtaUrl ? "0.45rem" : 0,
+                            padding: "0.38rem 0.62rem",
+                            borderRadius: 8,
+                            border: "1px solid #fecaca",
+                            background: "#fff1f2",
+                            color: "#9f1239",
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          {selectedCampaign.whatsapp_opt_out_label || text.whatsappOptOutPlaceholder}
+                        </span>
                       ) : null}
                     </div>
                   </div>
