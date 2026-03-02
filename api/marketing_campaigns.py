@@ -334,7 +334,12 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
     locale_code = _format_locale(payload.language_family)
     # Keep campaign templates stable for Meta approval:
     # all campaign content is sent as single variable {{1}}.
-    preview_body = "Hello,\n\n{{1}}" if str(payload.language_family or "").lower().startswith("en") else "Hola,\n\n{{1}}"
+    # Keep variable away from final position to satisfy Meta validation rules.
+    preview_body = (
+        "Hello,\n\n{{1}}\n\nThank you."
+        if str(payload.language_family or "").lower().startswith("en")
+        else "Hola,\n\n{{1}}\n\nGracias."
+    )
 
     meta_template_name = _generate_meta_template_name(payload.name)
     normalized_cta_url = _normalize_redirect_url(payload.cta_url) or ""

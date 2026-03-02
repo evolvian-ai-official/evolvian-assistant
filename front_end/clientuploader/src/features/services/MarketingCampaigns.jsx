@@ -108,14 +108,32 @@ export default function MarketingCampaigns() {
       : "WhatsApp campaign updated. A new Meta template version was created.",
     whatsappFormatTitle: isEs ? "Formato WhatsApp aceptado" : "Accepted WhatsApp format",
     whatsappFormatLine1: isEs
-      ? "Texto de plantilla con variable {{1}} (nombre del contacto)."
-      : "Template body text with {{1}} variable (contact name).",
+      ? "Texto de plantilla con variable {{1}} (contenido completo de la campaña)."
+      : "Template body text with {{1}} variable (full campaign content).",
     whatsappFormatLine2: isEs
       ? "Botón opcional de URL (https://...) usando el CTA."
       : "Optional URL button (https://...) using the CTA fields.",
     whatsappFormatLine3: isEs
       ? "Imagen opcional como header (solo URL pública https://...)."
       : "Optional image header (public https://... URL only).",
+    whatsappFormatLine4: isEs
+      ? "No uses {1} ni {{1}} en tu texto: el sistema lo agrega automáticamente."
+      : "Do not use {1} or {{1}} in your text: the system injects it automatically.",
+    whatsappFormatLine5: isEs
+      ? "Plantilla final enviada a Meta: Hola, {{1}}, Gracias."
+      : "Final template sent to Meta: Hello, {{1}}, Thank you.",
+    formRulesTitle: isEs ? "Reglas antes de guardar" : "Rules before saving",
+    formRuleName: isEs ? "Nombre de campaña obligatorio (mínimo 3 caracteres)." : "Campaign name is required (minimum 3 characters).",
+    formRuleBody: isEs ? "Contenido obligatorio." : "Content is required.",
+    formRuleCta: isEs ? "Si agregas URL, debe ser un enlace válido http(s)." : "If URL is provided, it must be a valid http(s) link.",
+    formRuleWhatsappConnected: isEs
+      ? "Para enviar por WhatsApp, primero conecta WhatsApp en Channels."
+      : "To send via WhatsApp, connect WhatsApp first in Channels.",
+    formErrorName: isEs ? "Falta nombre de campaña." : "Campaign name is missing.",
+    formErrorBody: isEs ? "Falta contenido de campaña." : "Campaign content is missing.",
+    formErrorCta: isEs ? "La URL del botón no es válida." : "Button URL is invalid.",
+    formCannotSave: isEs ? "No se puede guardar todavía." : "Cannot save yet.",
+    ctaNormalizedAs: isEs ? "Se guardará como:" : "Will be saved as:",
   };
 
   const [loading, setLoading] = useState(true);
@@ -316,6 +334,19 @@ export default function MarketingCampaigns() {
     () => normalizeCtaUrl(selectedCampaign?.cta_url),
     [selectedCampaign?.cta_url],
   );
+  const normalizedFormCtaUrl = useMemo(
+    () => normalizeCtaUrl(form.cta_url),
+    [form.cta_url],
+  );
+  const formValidationErrors = useMemo(() => {
+    const errors = [];
+    if (!String(form.name || "").trim()) errors.push(text.formErrorName);
+    if (!String(form.body || "").trim()) errors.push(text.formErrorBody);
+    const rawCtaUrl = String(form.cta_url || "").trim();
+    if (rawCtaUrl && !normalizedFormCtaUrl) errors.push(text.formErrorCta);
+    return errors;
+  }, [form.name, form.body, form.cta_url, normalizedFormCtaUrl, text.formErrorName, text.formErrorBody, text.formErrorCta]);
+  const canSaveCampaign = formValidationErrors.length === 0 && !busy && !uploadingImage;
 
   const selectedCampaignChannel = String(selectedCampaign?.channel || "").toLowerCase();
   const audienceByKey = useMemo(() => {
@@ -590,7 +621,7 @@ export default function MarketingCampaigns() {
     setError("");
     try {
       const rawCtaUrl = form.cta_url.trim();
-      const normalizedCtaUrl = rawCtaUrl ? normalizeCtaUrl(rawCtaUrl) : null;
+      const normalizedCtaUrl = rawCtaUrl ? normalizedFormCtaUrl : null;
       if (rawCtaUrl && !normalizedCtaUrl) {
         setError(text.invalidCtaUrl);
         return;
@@ -1073,6 +1104,16 @@ export default function MarketingCampaigns() {
                   </button>
                 </div>
 
+                <div style={{ ...itemCardStyle, background: "#fff7ed", borderColor: "#fed7aa", marginBottom: "0.7rem" }}>
+                  <strong style={{ ...smallStyle, color: "#7c2d12" }}>{text.formRulesTitle}</strong>
+                  <ul style={{ margin: "0.35rem 0 0 1rem", padding: 0, color: "#9a3412", fontSize: "0.8rem", lineHeight: 1.45 }}>
+                    <li>{text.formRuleName}</li>
+                    <li>{text.formRuleBody}</li>
+                    <li>{text.formRuleCta}</li>
+                    {form.channel === "whatsapp" ? <li>{text.formRuleWhatsappConnected}</li> : null}
+                  </ul>
+                </div>
+
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: "0.8rem" }}>
                   <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
                     <input
@@ -1175,6 +1216,8 @@ export default function MarketingCampaigns() {
                           <li>{text.whatsappFormatLine1}</li>
                           <li>{text.whatsappFormatLine2}</li>
                           <li>{text.whatsappFormatLine3}</li>
+                          <li>{text.whatsappFormatLine4}</li>
+                          <li>{text.whatsappFormatLine5}</li>
                         </ul>
                       </div>
                     ) : null}
@@ -1192,6 +1235,13 @@ export default function MarketingCampaigns() {
                       value={form.cta_url}
                       onChange={(e) => setForm((prev) => ({ ...prev, cta_url: e.target.value }))}
                     />
+                    {String(form.cta_url || "").trim() ? (
+                      <small style={{ ...smallStyle, color: normalizedFormCtaUrl ? "#065f46" : "#b91c1c" }}>
+                        {normalizedFormCtaUrl
+                          ? `${text.ctaNormalizedAs} ${normalizedFormCtaUrl}`
+                          : text.invalidCtaUrl}
+                      </small>
+                    ) : null}
 
                     <select
                       className="ia-form-input"
@@ -1208,10 +1258,20 @@ export default function MarketingCampaigns() {
                   <button type="button" className="ia-button ia-button-ghost" disabled={busy || uploadingImage} onClick={cancelCampaignEdit}>
                     {text.cancel}
                   </button>
-                  <button type="button" className="ia-button ia-button-primary" disabled={busy || uploadingImage} onClick={createCampaign}>
+                  <button type="button" className="ia-button ia-button-primary" disabled={!canSaveCampaign} onClick={createCampaign}>
                     {busy ? text.loading : (editingCampaignId ? text.updateCampaign : text.create)}
                   </button>
                 </div>
+                {formValidationErrors.length > 0 ? (
+                  <div style={{ ...itemCardStyle, marginTop: "0.6rem", background: "#fef2f2", borderColor: "#fecaca" }}>
+                    <strong style={{ ...smallStyle, color: "#b91c1c" }}>{text.formCannotSave}</strong>
+                    <ul style={{ margin: "0.35rem 0 0 1rem", padding: 0, color: "#b91c1c", fontSize: "0.8rem", lineHeight: 1.4 }}>
+                      {formValidationErrors.map((rule) => (
+                        <li key={rule}>{rule}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}

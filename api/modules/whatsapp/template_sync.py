@@ -573,6 +573,21 @@ def _default_quick_reply_button_specs(*, template_type: Optional[str], language:
     return [{"type": "QUICK_REPLY", "text": text}]
 
 
+def _normalize_template_button_url(value: Any) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    candidate = raw
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+        candidate = f"https://{raw.lstrip('/')}"
+    parsed = urlparse(candidate)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return None
+    if not parsed.netloc:
+        return None
+    return candidate[:2000]
+
+
 def _normalize_template_buttons(
     *,
     buttons_json: Any,
@@ -606,10 +621,10 @@ def _normalize_template_buttons(
         if button_type == "QUICK_REPLY":
             normalized.append({"type": "QUICK_REPLY", "text": text[:25]})
         elif button_type == "URL":
-            url = str(item.get("url") or "").strip()
-            if not (url.startswith("https://") or url.startswith("http://")):
+            url = _normalize_template_button_url(item.get("url"))
+            if not url:
                 continue
-            normalized.append({"type": "URL", "text": text[:25], "url": url[:2000]})
+            normalized.append({"type": "URL", "text": text[:25], "url": url})
         else:
             continue
         if len(normalized) >= 10:
@@ -876,9 +891,14 @@ def _build_template_components(
     safe_params = max(0, int(parameter_count or 0))
     if _is_campaign_meta_type(template_type):
         # Normalize all marketing campaign templates to single variable payload.
-        safe_params = max(1, safe_params)
+        # Keep variable away from terminal position to satisfy Meta validation.
+        safe_params = 1
         family, _ = normalize_language_preferences(locale_code=language)
-        body_seed = "Hello,\n\n{{1}}" if family == "en" else "Hola,\n\n{{1}}"
+        body_seed = (
+            "Hello,\n\n{{1}}\n\nThank you."
+            if family == "en"
+            else "Hola,\n\n{{1}}\n\nGracias."
+        )
         body_text = _ensure_body_placeholders(body_seed, safe_params)
     else:
         body_text = _ensure_body_placeholders(preview_body or "", safe_params)
