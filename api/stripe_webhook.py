@@ -43,7 +43,8 @@ async def stripe_webhook(request: Request):
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
             client_id       = session.get("client_reference_id")
-            plan_id         = session.get("metadata", {}).get("plan_id")
+            session_metadata = session.get("metadata", {}) or {}
+            plan_id         = session_metadata.get("plan_id")
             subscription_id = session.get("subscription")
 
             if client_id and plan_id and subscription_id:
@@ -52,14 +53,22 @@ async def stripe_webhook(request: Request):
                 # Actualizar el cliente con el nuevo plan y sub
                 await update_client_plan_by_id(client_id, plan_id, subscription_id)
 
-                # Obtener la suscripción vieja marcada como pendiente
-                rec = supabase.table("client_settings").select("pending_deleted_subscription_id").eq("client_id", client_id).execute()
-                old_sub = None
-                if rec.data and rec.data[0].get("pending_deleted_subscription_id"):
-                    old_sub = rec.data[0]["pending_deleted_subscription_id"]
+                # Suscripción anterior: primero metadata de la sesión (nuevo),
+                # luego fallback legacy de DB.
+                old_sub = session_metadata.get("previous_subscription_id")
+                if not old_sub:
+                    rec = (
+                        supabase.table("client_settings")
+                        .select("pending_deleted_subscription_id")
+                        .eq("client_id", client_id)
+                        .maybe_single()
+                        .execute()
+                    )
+                    if rec and rec.data:
+                        old_sub = rec.data.get("pending_deleted_subscription_id")
 
                 # Cancelar la vieja si existe
-                if old_sub:
+                if old_sub and old_sub != subscription_id:
                     try:
                         print(f"🧹 Cancelando suscripción anterior {old_sub} (upgrade confirmado)")
                         stripe.Subscription.delete(old_sub)
@@ -67,7 +76,7 @@ async def stripe_webhook(request: Request):
                     except Exception as e:
                         print(f"⚠️ Falló al cancelar suscripción antigua {old_sub}: {e}")
 
-                # Limpiar flags
+                # Limpiar flags legacy
                 supabase.table("client_settings").update({
                     "upgrade_in_progress": False,
                     "scheduled_plan_id": None,
@@ -78,7 +87,20 @@ async def stripe_webhook(request: Request):
                 print("⚠️ checkout.session.completed con datos faltantes")
 
         # -------------------------------------------------------------
-        # 2️⃣ invoice.paid / invoice.payment_succeeded → Confirmar ciclo
+        # 2️⃣ checkout.session.expired → limpiar flags legacy huérfanos
+        # -------------------------------------------------------------
+        elif event["type"] == "checkout.session.expired":
+            session = event["data"]["object"]
+            client_id = session.get("client_reference_id")
+            if client_id:
+                print(f"⌛ Checkout expirado para cliente {client_id}; limpiando flags legacy")
+                supabase.table("client_settings").update({
+                    "upgrade_in_progress": False,
+                    "pending_deleted_subscription_id": None
+                }).eq("client_id", client_id).execute()
+
+        # -------------------------------------------------------------
+        # 3️⃣ invoice.paid / invoice.payment_succeeded → Confirmar ciclo
         # -------------------------------------------------------------
         elif event["type"] in ["invoice.paid", "invoice.payment_succeeded", "invoice_payment.paid"]:
             invoice = event["data"]["object"]
@@ -112,7 +134,7 @@ async def stripe_webhook(request: Request):
             }).eq("client_id", client_id).execute()
 
         # -------------------------------------------------------------
-        # 3️⃣ customer.subscription.updated → Cancel-at-period-end
+        # 4️⃣ customer.subscription.updated → Cancel-at-period-end
         # -------------------------------------------------------------
         elif event["type"] == "customer.subscription.updated":
             subscription = event["data"]["object"]
@@ -142,7 +164,7 @@ async def stripe_webhook(request: Request):
                 }).eq("client_id", client_id).execute()
 
         # -------------------------------------------------------------
-        # 4️⃣ customer.subscription.deleted → Manejo de bajas
+        # 5️⃣ customer.subscription.deleted → Manejo de bajas
         # -------------------------------------------------------------
         elif event["type"] == "customer.subscription.deleted":
             subscription   = event["data"]["object"]
@@ -172,21 +194,19 @@ async def stripe_webhook(request: Request):
 
             print(f"🔍 pending_deleted_subscription_id = {pending_deleted}, upgrade_in_progress = {in_progress}")
 
-            # Si es la vieja del upgrade → ignorar downgrade
-            if subscription_id == pending_deleted or in_progress:
-                print("🚫 Ignorando evento deleted: corresponde a una suscripción vieja o upgrade en curso.")
-                supabase.table("client_settings").update({
-                    "pending_deleted_subscription_id": None,
-                    "upgrade_in_progress": False
-                }).eq("client_id", client_id).execute()
-                return Response(status_code=200)
-
             # Verificar si quedan suscripciones activas
             active_subs = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
             has_active = bool(active_subs.data)
             print(f"🔍 has_active_subscriptions = {has_active}")
 
             if has_active:
+                # Si había estado legacy de upgrade, limpiarlo sin forzar downgrade.
+                if subscription_id == pending_deleted or in_progress:
+                    print("✅ Deleted de sub vieja durante upgrade; limpiando flags legacy.")
+                    supabase.table("client_settings").update({
+                        "pending_deleted_subscription_id": None,
+                        "upgrade_in_progress": False
+                    }).eq("client_id", client_id).execute()
                 print(f"🚫 Downgrade cancelado (otra sub activa) para cliente {client_id}")
                 return Response(status_code=200)
 

@@ -148,7 +148,7 @@ export default function AppointmentClients() {
       map.get(key).push(appt);
     }
     for (const [, list] of map) {
-      list.sort((a, b) => String(a?.scheduled_time || "").localeCompare(String(b?.scheduled_time || "")));
+      list.sort((a, b) => String(b?.scheduled_time || "").localeCompare(String(a?.scheduled_time || "")));
     }
     return map;
   }, [appointments]);
