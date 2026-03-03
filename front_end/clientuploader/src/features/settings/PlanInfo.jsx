@@ -10,6 +10,8 @@ import { authFetch } from "@/lib/authFetch";
 import { trackClientEvent } from "../../lib/tracking";
 import "./PlanInfo.css";
 
+const CHECKOUT_PENDING_PLAN_KEY = "evolvian_checkout_pending_plan";
+
 export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   const { t } = useLanguage();
   const clientId = useClientId();
@@ -20,6 +22,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   const [userEmail, setUserEmail] = useState("");
   const [reactivating, setReactivating] = useState(false);
   const [confirmModal, setConfirmModal] = useState(null); // 🔹 Abre modal
+  const [checkoutSuccessPlan, setCheckoutSuccessPlan] = useState(null);
 
   // 🔹 Obtener email del usuario autenticado
   useEffect(() => {
@@ -89,6 +92,12 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
     return normalized === "enterprise" ? "white_label" : normalized;
   };
 
+  const planNameById = (planId) => {
+    if (planId === "starter") return t("plan_starter");
+    if (planId === "premium") return t("plan_premium");
+    return t("current_plan_label");
+  };
+
   const planOrder = { free: 1, starter: 2, premium: 3, white_label: 4 };
   const currentPlanId = normalizePlanId(formData?.plan?.id || "free");
   const currentPlanName = formData?.plan?.name || t("current_plan_label");
@@ -132,17 +141,35 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   // 🔁 Detectar retorno desde Stripe
   useEffect(() => {
     const query = new URLSearchParams(location.search);
-    if (query.get("session_id")) {
+    const sessionId = query.get("session_id");
+    if (sessionId) {
+      let pendingPlan = null;
+      try {
+        pendingPlan = normalizePlanId(localStorage.getItem(CHECKOUT_PENDING_PLAN_KEY));
+        localStorage.removeItem(CHECKOUT_PENDING_PLAN_KEY);
+      } catch {
+        pendingPlan = null;
+      }
+
+      const validCheckoutPlan =
+        pendingPlan === "starter" || pendingPlan === "premium" ? pendingPlan : null;
+
+      setCheckoutSuccessPlan(validCheckoutPlan);
       toast({
         title: t("subscription_activated_title"),
         description: t("subscription_activated_desc"),
       });
       refetchSettings?.();
-      navigate("/dashboard");
+      query.delete("session_id");
+      navigate(
+        {
+          pathname: location.pathname,
+          search: query.toString() ? `?${query.toString()}` : "",
+        },
+        { replace: true }
+      );
     }
-  }, [location]);
-
-  if (activeTab !== "plan") return null;
+  }, [location.pathname, location.search, navigate, refetchSettings, t]);
 
   // 🔹 Funciones (sin cambios funcionales)
   const handleUpgrade = async (planId) => {
@@ -165,6 +192,11 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       });
       const data = await res.json();
       if (res.ok && data.url) {
+        try {
+          localStorage.setItem(CHECKOUT_PENDING_PLAN_KEY, normalizePlanId(planId));
+        } catch {
+          // no-op: si storage falla, seguimos con checkout y mostramos mensaje genérico al volver.
+        }
         void trackClientEvent({
           clientId,
           name: "Funnel_Upgrade_Started",
@@ -180,7 +212,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
         });
         window.location.href = data.url;
       }
-      else throw new Error(data.error || t("checkout_session_failed"));
+      else throw new Error(data?.error || data?.detail || t("checkout_session_failed"));
     } catch (err) {
       toast({ title: t("upgrade_failed"), description: err.message });
     } finally {
@@ -447,59 +479,60 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
     );
   };
 
+  const CheckoutSuccessModal = ({ planId, onClose }) => (
+    <div className="checkout-success-overlay" role="dialog" aria-modal="true">
+      <div className="checkout-success-window">
+        <img src="/logo-evolvian.svg" alt="Evolvian Logo" className="checkout-success-logo" />
+        <h3 className="checkout-success-title">{t("checkout_success_title")}</h3>
+        <p className="checkout-success-text">
+          {t("checkout_success_message_prefix")} <strong>{planNameById(planId)}</strong>.
+        </p>
+        <p className="checkout-success-note">
+          {planId === "premium"
+            ? t("checkout_success_note_premium")
+            : t("checkout_success_note_starter")}
+        </p>
+        <button className="btn confirm checkout-success-btn" onClick={onClose}>
+          {t("checkout_success_cta")}
+        </button>
+      </div>
+    </div>
+  );
+
+  if (activeTab !== "plan") {
+    return checkoutSuccessPlan ? (
+      <CheckoutSuccessModal
+        planId={checkoutSuccessPlan}
+        onClose={() => setCheckoutSuccessPlan(null)}
+      />
+    ) : null;
+  }
+
   // 🔹 Render principal (branding por clases; lógica intacta)
   return (
-    <section className="plans-section">
-      <h2 className="plans-title">{t("choose_plan_fit_business")}</h2>
+    <>
+      <section className="plans-section">
+        <h2 className="plans-title">{t("choose_plan_fit_business")}</h2>
 
-      {cancellationRequested && (
-        <div className="cancel-banner">
-          ⚠️ {t("your_plan_will_be_cancelled_on")} <strong>{currentPlanName}</strong> {t("on_date")}{" "}
-          <strong>{formatDate(subscriptionEnd)}</strong>.
-          <button onClick={handleReactivate} disabled={reactivating} className="reactivate-btn">
-            {reactivating ? t("reactivating") : `🔄 ${t("reactivate")} ${currentPlanName}`}
-          </button>
-        </div>
-      )}
+        {cancellationRequested && (
+          <div className="cancel-banner">
+            ⚠️ {t("your_plan_will_be_cancelled_on")} <strong>{currentPlanName}</strong> {t("on_date")}{" "}
+            <strong>{formatDate(subscriptionEnd)}</strong>.
+            <button onClick={handleReactivate} disabled={reactivating} className="reactivate-btn">
+              {reactivating ? t("reactivating") : `🔄 ${t("reactivate")} ${currentPlanName}`}
+            </button>
+          </div>
+        )}
 
-      <section className="plans-compare">
-        <h3 className="plans-compare-title">
-          {t("change_or_update_plan") || "Change or update plan"}: {t("included_features") || "Included Features"}
-        </h3>
-        <div className="plans-compare-wrapper">
-          <table className="plans-compare-table">
-            <thead>
-              <tr>
-                <th>{t("included_features") || "Feature"}</th>
-                {availablePlans.map((p) => {
-                  const planId = normalizePlanId(p.id);
-                  const colClass = [
-                    planId === currentPlanId ? "is-current-col" : "",
-                    planId === "premium" ? "is-premium-col" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ");
-
-                  return (
-                    <th key={`head-${p.id}`} className={colClass}>
-                      <div className="compare-plan-head">
-                        <div className="compare-plan-name-row">
-                          <span>{p.name}</span>
-                          {p.badge ? <span className="compare-badge">{p.badge}</span> : null}
-                        </div>
-                        <div className="compare-plan-price">{p.price}</div>
-                        <p className="compare-plan-desc">{p.desc}</p>
-                        <div className="compare-plan-cta">{renderPlanAction(p)}</div>
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {comparisonRows.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.label}</td>
+        <section className="plans-compare">
+          <h3 className="plans-compare-title">
+            {t("change_or_update_plan") || "Change or update plan"}: {t("included_features") || "Included Features"}
+          </h3>
+          <div className="plans-compare-wrapper">
+            <table className="plans-compare-table">
+              <thead>
+                <tr>
+                  <th>{t("included_features") || "Feature"}</th>
                   {availablePlans.map((p) => {
                     const planId = normalizePlanId(p.id);
                     const colClass = [
@@ -510,31 +543,68 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
                       .join(" ");
 
                     return (
-                      <td key={`${row.id}-${p.id}`} className={colClass}>
-                        {row.values[planId] || "—"}
-                      </td>
+                      <th key={`head-${p.id}`} className={colClass}>
+                        <div className="compare-plan-head">
+                          <div className="compare-plan-name-row">
+                            <span>{p.name}</span>
+                            {p.badge ? <span className="compare-badge">{p.badge}</span> : null}
+                          </div>
+                          <div className="compare-plan-price">{p.price}</div>
+                          <p className="compare-plan-desc">{p.desc}</p>
+                          <div className="compare-plan-cta">{renderPlanAction(p)}</div>
+                        </div>
+                      </th>
                     );
                   })}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {comparisonRows.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.label}</td>
+                    {availablePlans.map((p) => {
+                      const planId = normalizePlanId(p.id);
+                      const colClass = [
+                        planId === currentPlanId ? "is-current-col" : "",
+                        planId === "premium" ? "is-premium-col" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ");
+
+                      return (
+                        <td key={`${row.id}-${p.id}`} className={colClass}>
+                          {row.values[planId] || "—"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Modal */}
+        {confirmModal && (
+          <ConfirmationModal
+            type={confirmModal.type}
+            plan={confirmModal.plan}
+            onCancel={() => setConfirmModal(null)}
+            onConfirm={() =>
+              confirmModal.type === "upgrade"
+                ? handleUpgrade(confirmModal.plan.id)
+                : handleDowngrade(confirmModal.plan.id)
+            }
+          />
+        )}
       </section>
 
-      {/* Modal */}
-      {confirmModal && (
-        <ConfirmationModal
-          type={confirmModal.type}
-          plan={confirmModal.plan}
-          onCancel={() => setConfirmModal(null)}
-          onConfirm={() =>
-            confirmModal.type === "upgrade"
-              ? handleUpgrade(confirmModal.plan.id)
-              : handleDowngrade(confirmModal.plan.id)
-          }
+      {checkoutSuccessPlan && (
+        <CheckoutSuccessModal
+          planId={checkoutSuccessPlan}
+          onClose={() => setCheckoutSuccessPlan(null)}
         />
       )}
-    </section>
+    </>
   );
 }

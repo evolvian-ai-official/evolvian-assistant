@@ -15,6 +15,7 @@ from google.auth.transport import requests as google_requests
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.internal_auth import require_internal_request
+from api.utils.effective_plan import resolve_effective_plan_id
 
 router = APIRouter(prefix="/gmail_poll", tags=["Gmail Automation"])
 
@@ -178,7 +179,12 @@ async def check_new_emails(request: Request):
 
             if client_id not in plan_map:
                 cs = supabase.table("client_settings").select("plan_id").eq("client_id", client_id).maybe_single().execute()
-                plan_map[client_id] = (cs.data or {}).get("plan_id", "")
+                base_plan_id = (cs.data or {}).get("plan_id", "")
+                plan_map[client_id] = resolve_effective_plan_id(
+                    client_id,
+                    base_plan_id=base_plan_id,
+                    supabase_client=supabase,
+                )
             plan = (plan_map[client_id] or "").strip().lower()
 
             if plan not in eligible_plans:

@@ -11,6 +11,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from api.config.config import supabase
 from api.authz import authorize_client_request
 from api.modules.document_processor import process_file
+from api.utils.effective_plan import normalize_plan_id, resolve_effective_plan_id
 from api.utils.usage_limiter import check_and_increment_usage
 
 router = APIRouter()
@@ -45,7 +46,7 @@ async def upload_document(
         settings_res = (
             supabase
             .table("client_settings")
-            .select("client_id, plan_id, plans(max_documents)")
+            .select("client_id, plan_id, plans(id, max_documents, is_unlimited)")
             .eq("client_id", client_id)
             .single()
             .execute()
@@ -55,7 +56,27 @@ async def upload_document(
         if not settings:
             raise HTTPException(status_code=404, detail="client_settings_not_found")
 
-        max_documents = settings.get("plans", {}).get("max_documents") or 0
+        base_plan_id = normalize_plan_id(settings.get("plan_id"))
+        effective_plan_id = resolve_effective_plan_id(
+            client_id,
+            base_plan_id=base_plan_id,
+            supabase_client=supabase,
+        )
+
+        plan_limits = settings.get("plans", {}) or {}
+        if effective_plan_id != base_plan_id:
+            override_plan_res = (
+                supabase.table("plans")
+                .select("id, max_documents, is_unlimited")
+                .eq("id", effective_plan_id)
+                .maybe_single()
+                .execute()
+            )
+            if override_plan_res and override_plan_res.data:
+                plan_limits = override_plan_res.data
+
+        max_documents = plan_limits.get("max_documents") or 0
+        is_unlimited = bool(plan_limits.get("is_unlimited"))
 
         # --------------------------------------------------
         # 2️⃣ Contar documentos activos (metadata)
@@ -71,7 +92,7 @@ async def upload_document(
 
         current_docs = meta_res.count or 0
 
-        if max_documents and current_docs >= max_documents:
+        if not is_unlimited and max_documents and current_docs >= max_documents:
             raise HTTPException(status_code=403, detail="document_limit_reached")
 
         # --------------------------------------------------

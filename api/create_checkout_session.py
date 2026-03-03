@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.utils.effective_plan import get_client_override_plan_id
 import traceback
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
@@ -78,6 +79,12 @@ async def create_checkout_session(request: Request):
 
     stripe_price_id = expected_price_id
     authorize_client_request(request, client_id)
+    override_plan_id = get_client_override_plan_id(client_id, supabase_client=supabase)
+    if override_plan_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Plan managed internally for this client; Stripe checkout is disabled.",
+        )
 
     try:
         print(f"🔎 Creando sesión para plan '{plan_id}' y cliente '{client_id}'")

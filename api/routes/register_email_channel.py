@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.utils.effective_plan import resolve_effective_plan_id
 
 router = APIRouter(
     prefix="/register_email_channel",
@@ -36,8 +37,13 @@ async def register_email_channel(payload: dict, request: Request):
         print("⚠️ Cliente no encontrado en client_settings.")
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    plan_id = client_settings_resp.data[0]["plan_id"]
-    print(f"🧾 Plan detectado: {plan_id}")
+    base_plan_id = client_settings_resp.data[0]["plan_id"]
+    plan_id = resolve_effective_plan_id(
+        client_id,
+        base_plan_id=base_plan_id,
+        supabase_client=supabase,
+    )
+    print(f"🧾 Plan detectado (efectivo): {plan_id}")
 
     if plan_id not in ["premium", "white_label"]:
         raise HTTPException(

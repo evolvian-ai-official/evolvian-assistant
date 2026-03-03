@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from api.config.config import supabase
 from api.authz import authorize_client_request
 from api.utils.stripe_plan_utils import modify_subscription_plan, cancel_subscription_at_period_end
+from api.utils.effective_plan import get_client_override_plan_id
 import stripe
 
 load_dotenv()
@@ -32,6 +33,12 @@ async def change_plan(request: Request):
         if not client_id or not new_plan_id:
             raise HTTPException(status_code=400, detail="Faltan parámetros requeridos.")
         authorize_client_request(request, client_id)
+        override_plan_id = get_client_override_plan_id(client_id, supabase_client=supabase)
+        if override_plan_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Plan managed internally for this client; Stripe plan changes are disabled.",
+            )
 
         print(f"➡️ Cliente {client_id} solicita cambio a plan '{new_plan_id}'")
 

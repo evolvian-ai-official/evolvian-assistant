@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.utils.effective_plan import get_client_override_plan_id
 import stripe
 import os
 
@@ -26,6 +27,12 @@ async def reactivate_subscription(request: Request):
         if not client_id:
             raise HTTPException(status_code=400, detail="Missing client_id")
         authorize_client_request(request, client_id)
+        override_plan_id = get_client_override_plan_id(client_id, supabase_client=supabase)
+        if override_plan_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Plan managed internally for this client; Stripe reactivation is disabled.",
+            )
 
         # 🔹 Buscar configuración del cliente
         settings_res = (

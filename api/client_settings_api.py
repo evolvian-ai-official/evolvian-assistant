@@ -7,6 +7,10 @@ import time
 import httpx
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.utils.effective_plan import (
+    normalize_plan_id,
+    resolve_effective_plan_id,
+)
 
 # 🧠 Prompt base por defecto
 DEFAULT_PROMPT = "You are a helpful assistant. Provide relevant answers based only on the uploaded documents."
@@ -201,6 +205,7 @@ async def upsert_client_settings(request: Request):
         # 🔹 Verificar plan válido
         plan_id = payload_dict.get("plan_id")
         if plan_id:
+            plan_id = normalize_plan_id(plan_id) or "free"
             plan_check = supabase.table("plans").select("id").eq("id", plan_id).single().execute()
             if not plan_check.data:
                 raise HTTPException(status_code=400, detail="Plan no válido")
@@ -212,11 +217,17 @@ async def upsert_client_settings(request: Request):
                 .maybe_single()
                 .execute()
             )
-            plan_id = current_plan_res.data["plan_id"] if current_plan_res.data else "free"
+            plan_id = normalize_plan_id(current_plan_res.data["plan_id"]) if current_plan_res.data else "free"
         payload_dict.setdefault("plan_id", plan_id)
 
+        effective_plan_id = resolve_effective_plan_id(
+            payload.client_id,
+            base_plan_id=plan_id,
+            supabase_client=supabase,
+        )
+
         # 🔒 Solo premium / white_label puede editar custom_prompt
-        if plan_id not in ["premium", "white_label"]:
+        if effective_plan_id not in ["premium", "white_label"]:
             payload_dict.pop("custom_prompt", None)
 
         # 💾 Guardar configuración limpia
@@ -434,6 +445,35 @@ def get_client_settings(
                 "plan_features": []
             }
 
+        base_plan_id = normalize_plan_id(plan.get("id") or settings.get("plan_id"))
+        effective_plan_id = resolve_effective_plan_id(
+            client_id,
+            base_plan_id=base_plan_id,
+            supabase_client=supabase,
+        )
+        if effective_plan_id != base_plan_id:
+            override_plan_res = _run_timed(
+                perf_ms,
+                "override_plan_query",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("plans")
+                        .select(
+                            "id, name, description, max_messages, max_documents, "
+                            "is_unlimited, show_powered_by, supports_chat, supports_email, "
+                            "supports_whatsapp, price_usd, duration, "
+                            "plan_features(feature, is_active)"
+                        )
+                        .eq("id", effective_plan_id)
+                        .maybe_single()
+                        .execute()
+                    ),
+                    op_name="client_settings.override_plan",
+                ),
+            )
+            if override_plan_res and override_plan_res.data:
+                plan = override_plan_res.data
+
         # 🔹 Filtrar features activas
         raw_features = plan.get("plan_features", []) or []
 
@@ -467,7 +507,7 @@ def get_client_settings(
         settings["font_family"] = font_raw
 
         # Si plan no es premium/white_label, aplicar tema base
-        plan_id = plan["id"]
+        plan_id = normalize_plan_id(plan["id"])
         if plan_id not in ["premium", "white_label"]:
             settings.update({
                 "header_color": settings.get("header_color") or "#fff9f0",

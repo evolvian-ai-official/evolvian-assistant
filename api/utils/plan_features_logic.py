@@ -3,6 +3,7 @@
 # ============================================================
 import os
 from supabase import create_client
+from api.utils.effective_plan import resolve_effective_plan_id
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -20,10 +21,14 @@ def get_client_plan_id(client_id: str) -> str | None:
             .execute()
         )
         if res and res.data:
-            return res.data["plan_id"]
+            return resolve_effective_plan_id(
+                client_id,
+                base_plan_id=res.data.get("plan_id"),
+                supabase_client=supabase,
+            )
     except Exception as e:
         print(f"⚠️ Error getting plan_id for client {client_id}: {e}")
-    return None
+    return resolve_effective_plan_id(client_id, supabase_client=supabase)
 
 
 def client_has_feature(client_id: str, feature_key: str) -> bool:

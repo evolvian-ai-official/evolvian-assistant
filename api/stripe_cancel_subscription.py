@@ -3,6 +3,8 @@ import stripe
 import os
 from dotenv import load_dotenv
 from api.authz import authorize_client_request
+from api.config.config import supabase
+from api.utils.effective_plan import get_client_override_plan_id
 
 load_dotenv()
 router = APIRouter()
@@ -18,6 +20,12 @@ async def cancel_subscription(request: Request):
         if not subscription_id or not client_id:
             raise HTTPException(status_code=400, detail="Missing parameters")
         authorize_client_request(request, client_id)
+        override_plan_id = get_client_override_plan_id(client_id, supabase_client=supabase)
+        if override_plan_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Plan managed internally for this client; Stripe cancellation is disabled.",
+            )
 
         # ✅ Cancelar al final del período
         stripe.Subscription.modify(

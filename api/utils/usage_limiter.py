@@ -3,6 +3,7 @@
 from datetime import datetime
 from fastapi import HTTPException
 from api.modules.assistant_rag.supabase_client import supabase
+from api.utils.effective_plan import normalize_plan_id, resolve_effective_plan_id
 
 def check_and_increment_usage(client_id: str, usage_type: str, delta: int = 1):
     """
@@ -26,7 +27,24 @@ def check_and_increment_usage(client_id: str, usage_type: str, delta: int = 1):
         if not settings_res or not settings_res.data:
             raise HTTPException(status_code=404, detail="Configuración de cliente no encontrada.")
 
-        plan_data = settings_res.data.get("plans", {})
+        base_plan_id = normalize_plan_id(settings_res.data.get("plan_id"))
+        effective_plan_id = resolve_effective_plan_id(
+            client_id,
+            base_plan_id=base_plan_id,
+            supabase_client=supabase,
+        )
+        plan_data = settings_res.data.get("plans", {}) or {}
+
+        if effective_plan_id != base_plan_id:
+            override_plan_res = (
+                supabase.table("plans")
+                .select("id, max_messages, max_documents, is_unlimited")
+                .eq("id", effective_plan_id)
+                .maybe_single()
+                .execute()
+            )
+            if override_plan_res and override_plan_res.data:
+                plan_data = override_plan_res.data
 
         if plan_data.get("is_unlimited"):
             return  # ✅ sin límite

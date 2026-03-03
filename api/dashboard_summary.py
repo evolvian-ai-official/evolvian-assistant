@@ -2,6 +2,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.utils.effective_plan import (
+    get_client_override_plan_id,
+    normalize_plan_id,
+    resolve_effective_plan_id,
+)
 import logging
 from datetime import datetime
 import time
@@ -179,19 +184,58 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
             raise HTTPException(status_code=404, detail="client_id no encontrado")
 
         config = settings_res.data
-        plan = config.get("plans", {})
+        plan = config.get("plans", {}) or {}
+
+        base_plan_id = normalize_plan_id(plan.get("id") or config.get("plan_id"))
+        effective_plan_id = resolve_effective_plan_id(
+            client_id,
+            base_plan_id=base_plan_id,
+            supabase_client=supabase,
+        )
+        override_plan_id = get_client_override_plan_id(client_id, supabase_client=supabase)
+        strategic_override_active = bool(override_plan_id)
+
+        if normalize_plan_id(plan.get("id")) != effective_plan_id:
+            override_plan_res = _run_timed(
+                perf_ms,
+                "override_plan_query",
+                lambda: _with_retries(
+                    lambda: (
+                        supabase.table("plans")
+                        .select(
+                            "id, name, max_messages, max_documents, is_unlimited, "
+                            "show_powered_by, supports_chat, supports_email, supports_whatsapp, "
+                            "price_usd, plan_features(feature, is_active)"
+                        )
+                        .eq("id", effective_plan_id)
+                        .maybe_single()
+                        .execute()
+                    ),
+                    op_name="dashboard.override_plan",
+                ),
+            )
+            if override_plan_res and override_plan_res.data:
+                plan = override_plan_res.data
 
         # 2️⃣ Obtener información de suscripción
-        sub_data = {
-            "subscription_start": config.get("subscription_start"),
-            "subscription_end": config.get("subscription_end"),
-            "cancellation_requested_at": config.get("cancellation_requested_at"),
-            "scheduled_plan_id": config.get("scheduled_plan_id"),
-        }
+        if strategic_override_active:
+            sub_data = {
+                "subscription_start": None,
+                "subscription_end": None,
+                "cancellation_requested_at": None,
+                "scheduled_plan_id": None,
+            }
+        else:
+            sub_data = {
+                "subscription_start": config.get("subscription_start"),
+                "subscription_end": config.get("subscription_end"),
+                "cancellation_requested_at": config.get("cancellation_requested_at"),
+                "scheduled_plan_id": config.get("scheduled_plan_id"),
+            }
 
         # 🧩 Nuevo bloque: estado de cancelación
         cancellation_status = None
-        if sub_data.get("cancellation_requested_at"):
+        if not strategic_override_active and sub_data.get("cancellation_requested_at"):
             plan_name = plan.get("name", "").capitalize() or config.get("plan_id", "Your plan").capitalize()
             cancel_date = format_date(sub_data.get("subscription_end"))
             next_plan = sub_data.get("scheduled_plan_id", "Free").capitalize()
@@ -213,7 +257,7 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
         ]
 
         plan_info = {
-            "id": plan.get("id"),
+            "id": effective_plan_id or plan.get("id"),
             "name": plan.get("name"),
             "max_messages": plan.get("max_messages"),
             "max_documents": plan.get("max_documents"),

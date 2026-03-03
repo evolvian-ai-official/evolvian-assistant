@@ -3,24 +3,14 @@ import logging
 from fastapi import HTTPException
 
 from api.modules.assistant_rag.supabase_client import supabase
+from api.utils.effective_plan import resolve_effective_plan_id
 
 
 logger = logging.getLogger(__name__)
 
 
 def get_client_plan_id(client_id: str) -> str:
-    try:
-        res = (
-            supabase.table("client_settings")
-            .select("plan_id")
-            .eq("client_id", client_id)
-            .maybe_single()
-            .execute()
-        )
-        return str((res.data or {}).get("plan_id") or "free").strip().lower() or "free"
-    except Exception as e:
-        logger.warning("Could not resolve plan_id for client %s: %s", client_id, e)
-        return "free"
+    return resolve_effective_plan_id(client_id, supabase_client=supabase)
 
 
 def client_has_active_feature(client_id: str, feature_key: str) -> bool:
