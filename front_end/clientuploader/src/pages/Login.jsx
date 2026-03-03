@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { FaGoogle, FaEye, FaEyeSlash } from "react-icons/fa";
 import AuthLayout from "../components/ui/AuthLayout";
 import { supabase } from "../lib/supabaseClient";
@@ -8,10 +8,12 @@ import { useLanguage } from "../contexts/LanguageContext";
 export default function Login() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [checkingSession, setCheckingSession] = useState(true);
 
   useEffect(() => {
@@ -22,6 +24,15 @@ export default function Login() {
     };
     checkSession();
   }, [navigate]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("password_updated") === "1") {
+      setSuccessMsg(t("password_changed_login_again"));
+    } else {
+      setSuccessMsg("");
+    }
+  }, [location.search, t]);
 
   const initializeUser = async (user, accessToken) => {
     try {
@@ -125,6 +136,7 @@ export default function Login() {
             </button>
           </div>
 
+          {successMsg && <p className="auth-status-success">{successMsg}</p>}
           {errorMsg && <p className="auth-status-error">{errorMsg}</p>}
 
           <button type="submit" className="auth-btn auth-btn-primary">

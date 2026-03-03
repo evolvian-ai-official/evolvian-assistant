@@ -34,8 +34,16 @@ export default function ResetPassword() {
     if (error) {
       toast.error(`❌ ${t("error_updating_password")}: ${error.message}`);
     } else {
+      const persistedLang = localStorage.getItem("lang");
+      await supabase.auth.signOut();
+      localStorage.removeItem("client_id");
+      localStorage.removeItem("public_client_id");
+      localStorage.removeItem("user_id");
+      localStorage.removeItem("alreadyRedirected");
+      if (persistedLang) localStorage.setItem("lang", persistedLang);
       toast.success(`🔒 ${t("password_updated_successfully")}`);
-      navigate("/login");
+      navigate("/login?password_updated=1", { replace: true });
+      window.location.reload();
     }
 
     setLoading(false);

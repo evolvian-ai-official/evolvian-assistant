@@ -1,8 +1,10 @@
 import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import countries from "../../assets/countries.json";
 import { authFetch, getAuthHeaders } from "../../lib/authFetch";
+import { supabase } from "../../lib/supabaseClient";
 import "../../components/ui/internal-admin-responsive.css";
 
 /* =========================
@@ -118,11 +120,21 @@ const timezones = [
 
 export default function MyProfile() {
   const clientId = useClientId();
+  const navigate = useNavigate();
   const { t, lang, changeLanguage } = useLanguage();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(null);
+  const [accountEmail, setAccountEmail] = useState("");
+  const [canChangePassword, setCanChangePassword] = useState(true);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordStatus, setPasswordStatus] = useState(null);
+  const [passwordForm, setPasswordForm] = useState({
+    newPassword: "",
+    confirmPassword: "",
+  });
 
   const [formData, setFormData] = useState({
     contact_name: "",
@@ -145,6 +157,34 @@ export default function MyProfile() {
     return countries
       .map((c) => (typeof c === "string" ? c : c.name))
       .sort((a, b) => a.localeCompare(b));
+  }, []);
+
+  useEffect(() => {
+    const fetchAuthProfile = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) throw error;
+
+        const user = data?.user;
+        setAccountEmail(user?.email || "");
+
+        const provider = String(user?.app_metadata?.provider || "").toLowerCase();
+        const providers = Array.isArray(user?.app_metadata?.providers)
+          ? user.app_metadata.providers.map((item) => String(item).toLowerCase())
+          : [];
+
+        const hasEmailProvider =
+          provider === "email" || providers.includes("email");
+
+        setCanChangePassword(
+          hasEmailProvider || (!provider && providers.length === 0)
+        );
+      } catch (err) {
+        console.error("❌ Error fetching auth profile:", err);
+      }
+    };
+
+    fetchAuthProfile();
   }, []);
 
   /* =========================
@@ -284,6 +324,86 @@ export default function MyProfile() {
     setSaving(false);
   };
 
+  const openPasswordModal = () => {
+    setPasswordForm({ newPassword: "", confirmPassword: "" });
+    setPasswordStatus(null);
+    setIsPasswordModalOpen(true);
+  };
+
+  const closePasswordModal = () => {
+    setIsPasswordModalOpen(false);
+    setPasswordForm({ newPassword: "", confirmPassword: "" });
+    setPasswordStatus(null);
+  };
+
+  const handlePasswordChange = (e) => {
+    const { name, value } = e.target;
+    setPasswordForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handlePasswordSubmit = async (e) => {
+    e.preventDefault();
+    setPasswordStatus(null);
+
+    if (!canChangePassword) {
+      setPasswordStatus({
+        type: "error",
+        message: t("password_not_available_for_google_sso"),
+      });
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordStatus({
+        type: "error",
+        message: t("passwords_do_not_match"),
+      });
+      return;
+    }
+
+    const passwordRegex = /^[A-Za-z0-9]{8,}$/;
+    if (!passwordRegex.test(passwordForm.newPassword)) {
+      setPasswordStatus({
+        type: "error",
+        message: `${t("invalid_password_format")} ${t("password_hint")}`,
+      });
+      return;
+    }
+
+    try {
+      setPasswordSaving(true);
+      const { error } = await supabase.auth.updateUser({
+        password: passwordForm.newPassword,
+      });
+
+      if (error) {
+        setPasswordStatus({
+          type: "error",
+          message: `${t("error_updating_password")}: ${error.message}`,
+        });
+        return;
+      }
+
+      const persistedLang = localStorage.getItem("lang");
+      await supabase.auth.signOut();
+      localStorage.removeItem("client_id");
+      localStorage.removeItem("public_client_id");
+      localStorage.removeItem("user_id");
+      localStorage.removeItem("alreadyRedirected");
+      if (persistedLang) localStorage.setItem("lang", persistedLang);
+      navigate("/login?password_updated=1", { replace: true });
+      window.location.reload();
+    } catch (err) {
+      console.error("❌ Error updating password:", err);
+      setPasswordStatus({
+        type: "error",
+        message: t("error_updating_password"),
+      });
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
   /* =========================
      Loading
   ========================= */
@@ -306,6 +426,14 @@ export default function MyProfile() {
       <h3 style={sectionTitle}>{t("my_profile")}</h3>
 
       <div style={card}>
+        <Input
+          label={t("account_email")}
+          name="email"
+          value={accountEmail}
+          disabled
+          readOnly
+        />
+
         <Input
           label={t("contact_name")}
           name="contact_name"
@@ -394,7 +522,96 @@ export default function MyProfile() {
             {status.message}
           </p>
         )}
+
+        <div style={secondaryActions}>
+          <button
+            type="button"
+            style={secondaryButton}
+            onClick={openPasswordModal}
+          >
+            {t("change_password")}
+          </button>
+        </div>
       </div>
+
+      {isPasswordModalOpen && (
+        <div className="ia-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
+          <div className="ia-modal" style={passwordModalCard}>
+            <div className="ia-modal-main">
+              <h3 id="change-password-title" className="ia-modal-title" style={passwordModalTitle}>
+                {t("change_password_modal_title")}
+              </h3>
+              <p className="ia-modal-muted" style={{ marginBottom: "1rem" }}>
+                {t("change_password_modal_subtitle")}
+              </p>
+
+              {canChangePassword ? (
+                <form onSubmit={handlePasswordSubmit} style={passwordFormStyle}>
+                  <Input
+                    label={t("new_password")}
+                    name="newPassword"
+                    type="password"
+                    value={passwordForm.newPassword}
+                    onChange={handlePasswordChange}
+                    required
+                  />
+
+                  <Input
+                    label={t("confirm_password")}
+                    name="confirmPassword"
+                    type="password"
+                    value={passwordForm.confirmPassword}
+                    onChange={handlePasswordChange}
+                    required
+                  />
+
+                  <div className="ia-modal-actions" style={passwordModalActions}>
+                    <button
+                      type="button"
+                      className="ia-button ia-button-ghost"
+                      onClick={closePasswordModal}
+                    >
+                      {t("cancel")}
+                    </button>
+                    <button
+                      type="submit"
+                      className="ia-button ia-button-primary"
+                      disabled={passwordSaving}
+                    >
+                      {passwordSaving ? t("updating") : t("update_password")}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div>
+                  <p style={passwordSsoMessage}>{t("password_not_available_for_google_sso")}</p>
+                  <div className="ia-modal-actions" style={passwordModalActions}>
+                    <button
+                      type="button"
+                      className="ia-button ia-button-ghost"
+                      onClick={closePasswordModal}
+                    >
+                      {t("cancel")}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {passwordStatus && (
+                <p
+                  style={{
+                    marginTop: "0.6rem",
+                    fontWeight: "600",
+                    color: passwordStatus.type === "error" ? "#e63946" : "#2eb39a",
+                  }}
+                >
+                  {passwordStatus.message}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </form>
   );
 }
@@ -403,11 +620,18 @@ export default function MyProfile() {
    Reusable Components
 ========================= */
 
-function Input({ label, ...props }) {
+function Input({ label, style, ...props }) {
   return (
     <div style={inputGroup}>
       <label style={labelStyle}>{label}</label>
-      <input {...props} style={inputStyle} />
+      <input
+        {...props}
+        style={{
+          ...inputStyle,
+          ...(props.disabled ? disabledInputStyle : {}),
+          ...style,
+        }}
+      />
     </div>
   );
 }
@@ -482,6 +706,12 @@ const inputStyle = {
   backgroundColor: "#FFFFFF",
 };
 
+const disabledInputStyle = {
+  backgroundColor: "#f7f8fb",
+  color: "#6b7280",
+  cursor: "not-allowed",
+};
+
 const saveButton = {
   marginTop: "1rem",
   backgroundColor: "#4a90e2",
@@ -493,6 +723,47 @@ const saveButton = {
   fontWeight: "bold",
   width: "100%",
   maxWidth: 260,
+};
+
+const secondaryActions = {
+  marginTop: "0.4rem",
+  display: "flex",
+};
+
+const secondaryButton = {
+  border: "1px solid #d9dce5",
+  backgroundColor: "#f8f9fc",
+  color: "#274472",
+  padding: "10px 16px",
+  borderRadius: "10px",
+  cursor: "pointer",
+  fontWeight: "600",
+  width: "100%",
+  maxWidth: 260,
+};
+
+const passwordModalCard = {
+  width: "min(95vw, 520px)",
+};
+
+const passwordModalTitle = {
+  color: "#274472",
+};
+
+const passwordFormStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.8rem",
+};
+
+const passwordModalActions = {
+  marginTop: "0.4rem",
+};
+
+const passwordSsoMessage = {
+  color: "#4b5563",
+  fontSize: "0.93rem",
+  lineHeight: 1.45,
 };
 
 const loadingStyle = {
