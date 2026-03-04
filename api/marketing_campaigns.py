@@ -23,6 +23,7 @@ from api.modules.assistant_rag.llm import openai_chat
 from api.privacy_dsr import split_details_and_metadata
 from api.utils.feature_access import get_client_plan_id
 from api.compliance.marketing_consent_adapter import backfill_default_marketing_consents_for_contacts
+from api.security.unsubscribe_client_id_crypto import encrypt_unsubscribe_client_id
 
 router = APIRouter(prefix="/marketing", tags=["Marketing Campaigns"])
 
@@ -1105,7 +1106,8 @@ def _build_unsubscribe_url(base_url: Optional[str], email: str, client_id: str) 
     default_base = f"{api_base}/api/public/privacy/unsubscribe"
     base = (base_url or os.getenv("EVOLVIAN_MARKETING_UNSUBSCRIBE_BASE_URL") or default_base).strip()
     separator = "&" if "?" in base else "?"
-    return f"{base}{separator}email={quote_plus(email)}&client_id={quote_plus(client_id)}"
+    encrypted_client_id = encrypt_unsubscribe_client_id(client_id)
+    return f"{base}{separator}email={quote_plus(email)}&client_id={quote_plus(encrypted_client_id)}"
 
 
 def _render_campaign_html(campaign: dict[str, Any], recipient: dict[str, Any]) -> str:

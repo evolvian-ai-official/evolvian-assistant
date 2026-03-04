@@ -19,6 +19,7 @@ from api.privacy_dsr import (
     split_details_and_metadata,
 )
 from api.security.request_limiter import enforce_rate_limit, get_request_ip
+from api.security.unsubscribe_client_id_crypto import decrypt_unsubscribe_client_id
 
 router = APIRouter(prefix="/api/public/privacy", tags=["Public Privacy"])
 
@@ -198,6 +199,10 @@ def unsubscribe_marketing_email(
     normalized_email = str(email).strip().lower()
     if not normalized_email:
         raise HTTPException(status_code=400, detail="Email is required.")
+    raw_client_id = str(client_id or "").strip()
+    resolved_client_id = decrypt_unsubscribe_client_id(raw_client_id)
+    if raw_client_id and not resolved_client_id:
+        raise HTTPException(status_code=400, detail="invalid_client_id_token")
 
     try:
         existing = (
@@ -216,7 +221,7 @@ def unsubscribe_marketing_email(
     latest_applicable = None
     for row in existing_rows:
         scoped_client_id = _extract_opt_out_client_id((row or {}).get("details"))
-        if client_id and scoped_client_id and str(scoped_client_id) != str(client_id):
+        if resolved_client_id and scoped_client_id and str(scoped_client_id) != str(resolved_client_id):
             continue
         latest_applicable = row or {}
         break
@@ -235,8 +240,8 @@ def unsubscribe_marketing_email(
             due_at=due_at,
             source="email_unsubscribe_link",
         )
-        if client_id:
-            dsar_metadata["client_id"] = str(client_id).strip()
+        if resolved_client_id:
+            dsar_metadata["client_id"] = str(resolved_client_id).strip()
         details = "One-click marketing unsubscribe from campaign email."
         details_with_metadata = combine_details_and_metadata(details, dsar_metadata)
 
@@ -257,26 +262,80 @@ def unsubscribe_marketing_email(
             supabase.table(PRIVACY_REQUEST_TABLE).insert(record).execute()
         except Exception as insert_error:
             print(
-                f"⚠️ Failed recording marketing unsubscribe | email={normalized_email} | client_id={client_id or 'none'} | error={insert_error}"
+                f"⚠️ Failed recording marketing unsubscribe | email={normalized_email} | client_id={resolved_client_id or 'none'} | error={insert_error}"
             )
-            if language == "es":
-                fail_title = "No se pudo completar la baja"
-                fail_body = "No pudimos registrar tu solicitud de baja. Intenta de nuevo en unos minutos."
-            else:
-                fail_title = "Unsubscribe could not be completed"
-                fail_body = "We could not record your unsubscribe request. Please try again in a few minutes."
+            # In race/duplicate scenarios, an active opt-out may already exist.
+            try:
+                retry_existing = (
+                    supabase.table(PRIVACY_REQUEST_TABLE)
+                    .select("id,status,created_at,details")
+                    .eq("email", normalized_email)
+                    .eq("request_type", "marketing_opt_out")
+                    .order("created_at", desc=True)
+                    .limit(50)
+                    .execute()
+                )
+                retry_rows = retry_existing.data or []
+            except Exception:
+                retry_rows = []
 
-            fail_html = (
-                "<!doctype html><html><head><meta charset='utf-8'/>"
-                "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
-                f"<title>{fail_title}</title></head>"
-                "<body style='font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;'>"
-                "<div style='max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;'>"
-                f"<h2 style='margin:0 0 10px;color:#0f172a;'>{fail_title}</h2>"
-                f"<p style='margin:0;color:#334155;line-height:1.6;'>{fail_body}</p>"
-                "</div></body></html>"
-            )
-            return HTMLResponse(content=fail_html, status_code=503)
+            retry_latest = None
+            for row in retry_rows:
+                scoped_client_id = _extract_opt_out_client_id((row or {}).get("details"))
+                if resolved_client_id and scoped_client_id and str(scoped_client_id) != str(resolved_client_id):
+                    continue
+                retry_latest = row or {}
+                break
+
+            retry_status = str((retry_latest or {}).get("status") or "").strip().lower()
+            retry_has_active_opt_out = bool(retry_latest) and retry_status not in {"withdrawn", "denied"}
+            if not retry_has_active_opt_out:
+                fallback_message = (
+                    f"Request ID: {request_id}\n"
+                    "Privacy request type: marketing_opt_out\n"
+                    f"Submitted at: {isoformat_utc(submitted_at)}\n"
+                    f"Due at: {isoformat_utc(due_at)}\n"
+                    f"Language: {language}\n"
+                    f"Client ID: {resolved_client_id or 'N/A'}\n"
+                    "Details: One-click marketing unsubscribe from campaign email."
+                )
+                fallback_record = {
+                    "name": "Unsubscribe request",
+                    "email": normalized_email,
+                    "subject": "Marketing unsubscribe request",
+                    "interested_plan": "Privacy",
+                    "message": fallback_message[:3900],
+                    "accepted_terms": True,
+                    "accepted_marketing": False,
+                    "terms_accepted_at": isoformat_utc(submitted_at),
+                    "source": "privacy_unsubscribe_fallback",
+                    "ip_address": request_ip,
+                    "user_agent": request.headers.get("user-agent"),
+                }
+                try:
+                    supabase.table("contactame").insert(fallback_record).execute()
+                except Exception as fallback_error:
+                    if language == "es":
+                        fail_title = "No se pudo completar la baja"
+                        fail_body = "No pudimos registrar tu solicitud de baja. Intenta de nuevo en unos minutos."
+                    else:
+                        fail_title = "Unsubscribe could not be completed"
+                        fail_body = "We could not record your unsubscribe request. Please try again in a few minutes."
+
+                    print(
+                        f"⚠️ Failed unsubscribe fallback | email={normalized_email} | client_id={resolved_client_id or 'none'} | error={fallback_error}"
+                    )
+                    fail_html = (
+                        "<!doctype html><html><head><meta charset='utf-8'/>"
+                        "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
+                        f"<title>{fail_title}</title></head>"
+                        "<body style='font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;'>"
+                        "<div style='max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;'>"
+                        f"<h2 style='margin:0 0 10px;color:#0f172a;'>{fail_title}</h2>"
+                        f"<p style='margin:0;color:#334155;line-height:1.6;'>{fail_body}</p>"
+                        "</div></body></html>"
+                    )
+                    return HTMLResponse(content=fail_html, status_code=503)
 
     if language == "es":
         title = "Has sido dado de baja"
