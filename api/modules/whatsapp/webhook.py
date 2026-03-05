@@ -232,14 +232,17 @@ def _is_marketing_interest_action(
     known_opt_out_labels: set[str],
 ) -> bool:
     normalized_text = _normalize_text_key(user_text)
+
+    # Any marketing button click should open a human handoff unless it is an opt-out label.
+    if message_type in {"interactive", "button"}:
+        if normalized_text and normalized_text in known_opt_out_labels:
+            return False
+        return True
+
     if not normalized_text:
         return False
     if normalized_text in known_opt_out_labels:
         return False
-
-    # Most marketing intent clicks come as quick-reply callbacks.
-    if message_type in {"interactive", "button"}:
-        return True
 
     return any(keyword in normalized_text for keyword in INTEREST_KEYWORDS)
 
@@ -812,8 +815,13 @@ async def process_whatsapp_payload(payload: dict):
 
             user_text = _extract_user_text(message_type, message)
 
-            if not wa_message_id or not from_number or not user_text:
+            if not wa_message_id or not from_number:
                 continue
+            if not user_text:
+                if message_type in {"interactive", "button"}:
+                    user_text = "button_click"
+                else:
+                    continue
 
             # ---------------------------------------------------------
             # Resolver canal / cliente (MULTITENANT)

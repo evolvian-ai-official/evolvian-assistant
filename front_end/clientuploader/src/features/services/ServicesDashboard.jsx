@@ -17,6 +17,7 @@ export default function ServicesDashboard() {
             <div className="ia-service-item">💬 {t("whatsapp")}</div>
             <div className="ia-service-item">🗓️ {t("appointments_nav")}</div>
             <div className="ia-service-item">📣 Marketing Campaigns</div>
+            <div className="ia-service-item">👥 Clients</div>
           </div>
         </section>
       </div>

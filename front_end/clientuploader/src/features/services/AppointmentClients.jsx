@@ -16,11 +16,16 @@ import {
 } from "./appointmentContactUtils";
 
 const API_BASE_URL =
-  import.meta.env.MODE === "development"
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.MODE === "development"
     ? "http://localhost:8001"
-    : "https://evolvian-assistant.onrender.com";
+    : "https://evolvian-assistant.onrender.com");
 
-export default function AppointmentClients() {
+export default function AppointmentClients({
+  showCampaignHistory = false,
+  appointmentsCtaHref = "",
+  appointmentsCtaLabel = "",
+}) {
   const clientId = useClientId();
   const { t, lang } = useLanguage();
   const isEs = lang === "es";
@@ -76,6 +81,21 @@ export default function AppointmentClients() {
     historyTitle: isEs ? "Histórico (cronológico)" : "History (chronological)",
     internalNotesLabel: isEs ? "Notas internas" : "Internal notes",
     noHistory: isEs ? "Sin citas registradas todavía." : "No appointments recorded yet.",
+    campaignsTitle: isEs ? "Campañas enviadas" : "Sent campaigns",
+    campaignsLoading: isEs ? "Cargando campañas..." : "Loading campaigns...",
+    noCampaignHistory: isEs ? "Sin campañas enviadas para este cliente." : "No sent campaigns for this client.",
+    campaignsNeedsContact: isEs
+      ? "Este cliente necesita email o teléfono válido para mapear campañas."
+      : "This client needs a valid email or phone to map campaigns.",
+    campaignsLoadFailed: isEs ? "No se pudo cargar el historial de campañas." : "Could not load campaign history.",
+    campaignsUnavailable: isEs
+      ? "Marketing Campaigns no está disponible todavía para este cliente."
+      : "Marketing Campaigns is not available yet for this client.",
+    campaignLabel: isEs ? "Campaña" : "Campaign",
+    sentAtLabel: isEs ? "Enviado" : "Sent at",
+    lastUpdateLabel: isEs ? "Actualización" : "Updated",
+    sendErrorLabel: isEs ? "Error" : "Error",
+    goToAppointments: isEs ? "Ir a Appointments" : "Go to Appointments",
   };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -230,9 +250,22 @@ export default function AppointmentClients() {
             {ui.subtitle}
           </p>
         </div>
-        <button style={primaryBtn(saving)} onClick={() => setShowNewClient((v) => !v)} disabled={saving}>
-          {showNewClient ? ui.close : ui.newClient}
-        </button>
+        <div style={headerActions}>
+          {appointmentsCtaHref ? (
+            <button
+              style={secondaryBtn}
+              onClick={() => {
+                window.location.href = appointmentsCtaHref;
+              }}
+              disabled={saving}
+            >
+              {appointmentsCtaLabel || ui.goToAppointments}
+            </button>
+          ) : null}
+          <button style={primaryBtn(saving)} onClick={() => setShowNewClient((v) => !v)} disabled={saving}>
+            {showNewClient ? ui.close : ui.newClient}
+          </button>
+        </div>
       </div>
 
       <div style={searchRow}>
@@ -307,6 +340,7 @@ export default function AppointmentClients() {
               ui={ui}
               uiLocale={uiLocale}
               onSaved={refreshData}
+              showCampaignHistory={showCampaignHistory}
             />
           ))}
         </div>
@@ -315,11 +349,15 @@ export default function AppointmentClients() {
   );
 }
 
-function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved }) {
+function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved, showCampaignHistory = false }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [campaignLoading, setCampaignLoading] = useState(false);
+  const [campaignError, setCampaignError] = useState("");
+  const [campaignHistory, setCampaignHistory] = useState([]);
+  const [loadedCampaignRecipientKey, setLoadedCampaignRecipientKey] = useState("");
   const initialPhone = splitE164Phone(client.user_phone || "");
   const [draft, setDraft] = useState({
     user_name: client.user_name || "",
@@ -337,16 +375,58 @@ function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved }) {
       localPhone: nextPhone.localNumber,
     });
     setIsEditing(false);
+    setCampaignLoading(false);
+    setCampaignError("");
+    setCampaignHistory([]);
+    setLoadedCampaignRecipientKey("");
   }, [client.id, client.match_key, client.user_name, client.user_email, client.user_phone]);
 
   const fullPhone = composeE164Phone(draft.countryCode, draft.localPhone);
   const normalizedEmail = normalizeAppointmentEmail(draft.user_email);
   const normalizedName = normalizeAppointmentName(draft.user_name);
+  const recipientKey = buildMarketingRecipientKey(client);
   const canSave =
     normalizedName.length >= 2 &&
     isValidAppointmentEmail(normalizedEmail) &&
     isValidAppointmentPhone(fullPhone) &&
     Boolean(normalizedEmail || fullPhone);
+
+  useEffect(() => {
+    if (!showCampaignHistory || !expanded || !clientId || !recipientKey) return;
+    if (loadedCampaignRecipientKey === recipientKey) return;
+
+    let active = true;
+    const fetchCampaignHistory = async () => {
+      setCampaignLoading(true);
+      setCampaignError("");
+      try {
+        const params = new URLSearchParams({
+          client_id: String(clientId),
+          recipient_key: recipientKey,
+        });
+        const res = await authFetch(`${API_BASE_URL}/marketing/audience/history?${params.toString()}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status === 503) throw new Error(ui.campaignsUnavailable);
+          throw new Error(data?.detail || ui.campaignsLoadFailed);
+        }
+        if (!active) return;
+        setCampaignHistory(Array.isArray(data?.items) ? data.items : []);
+        setLoadedCampaignRecipientKey(recipientKey);
+      } catch (e) {
+        if (!active) return;
+        setCampaignHistory([]);
+        setCampaignError(e?.message || ui.campaignsLoadFailed);
+      } finally {
+        if (active) setCampaignLoading(false);
+      }
+    };
+
+    fetchCampaignHistory();
+    return () => {
+      active = false;
+    };
+  }, [showCampaignHistory, expanded, clientId, recipientKey, loadedCampaignRecipientKey, ui.campaignsUnavailable, ui.campaignsLoadFailed]);
 
   const save = async () => {
     if (!canSave || !clientId || saving) return;
@@ -510,10 +590,65 @@ function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved }) {
           ) : (
             <p style={subtleText}>{ui.noHistory}</p>
           )}
+
+          {showCampaignHistory && (
+            <div style={campaignHistoryBox}>
+              <div style={historyTitle}>{ui.campaignsTitle}</div>
+              {!recipientKey ? (
+                <p style={subtleText}>{ui.campaignsNeedsContact}</p>
+              ) : campaignLoading ? (
+                <p style={subtleText}>{ui.campaignsLoading}</p>
+              ) : campaignError ? (
+                <p style={fieldHintError}>{campaignError}</p>
+              ) : campaignHistory.length ? (
+                <div style={historyList}>
+                  {campaignHistory.map((item, idx) => (
+                    <div key={`${item.campaign_id || "campaign"}-${item.updated_at || idx}`} style={historyItem}>
+                      <div style={campaignHeaderRow}>
+                        <strong style={{ color: "#274472" }}>
+                          {item.campaign_name || `${ui.campaignLabel} ${item.campaign_id || ""}`}
+                        </strong>
+                        <span style={contactChip}>{String(item.campaign_channel || "—").toUpperCase()}</span>
+                        <span style={campaignStatusPill}>{String(item.send_status || "unknown")}</span>
+                      </div>
+                      <div style={campaignMetaText}>
+                        {ui.sentAtLabel}: {formatDateTime(item.sent_at, uiLocale)}
+                      </div>
+                      <div style={campaignMetaText}>
+                        {ui.lastUpdateLabel}: {formatDateTime(item.updated_at, uiLocale)}
+                      </div>
+                      {item.send_error && (
+                        <div style={campaignErrorText}>
+                          <strong>{ui.sendErrorLabel}:</strong> {String(item.send_error)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={subtleText}>{ui.noCampaignHistory}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function buildMarketingRecipientKey(client) {
+  const matchKey = String(client?.match_key || "").trim();
+  if (matchKey.startsWith("email:") || matchKey.startsWith("phone:")) {
+    return matchKey;
+  }
+
+  const normalizedEmail = normalizeAppointmentEmail(client?.user_email || "");
+  if (normalizedEmail) return `email:${normalizedEmail}`;
+
+  const normalizedPhone = String(client?.user_phone || "").trim();
+  if (isValidAppointmentPhone(normalizedPhone)) return `phone:${normalizedPhone}`;
+
+  return "";
 }
 
 function PhoneInputRow({ countryCode, localPhone, onCountryCodeChange, onLocalPhoneChange, phonePlaceholder = "Phone" }) {
@@ -574,6 +709,7 @@ const headerRow = {
 
 const title = { margin: 0, color: "#274472", fontSize: "1.1rem" };
 const hint = { margin: "0.35rem 0 0", color: "#6b7280", fontSize: "0.9rem" };
+const headerActions = { display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" };
 
 const searchRow = {
   display: "flex",
@@ -783,6 +919,12 @@ const historyBox = {
   paddingTop: "0.8rem",
 };
 
+const campaignHistoryBox = {
+  marginTop: "0.9rem",
+  borderTop: "1px dashed #E5E7EB",
+  paddingTop: "0.75rem",
+};
+
 const historyTitle = { color: "#274472", fontWeight: 700, marginBottom: "0.45rem" };
 const historyList = { display: "flex", flexDirection: "column", gap: "0.35rem" };
 
@@ -811,5 +953,36 @@ const historyNote = {
   fontSize: "0.82rem",
   color: "#2B4058",
   lineHeight: 1.35,
+  whiteSpace: "pre-wrap",
+};
+
+const campaignHeaderRow = {
+  display: "flex",
+  gap: "0.4rem",
+  alignItems: "center",
+  flexWrap: "wrap",
+};
+
+const campaignMetaText = {
+  margin: 0,
+  fontSize: "0.82rem",
+  color: "#475569",
+};
+
+const campaignStatusPill = {
+  backgroundColor: "#EEF2FF",
+  border: "1px solid #C7D2FE",
+  color: "#3730A3",
+  borderRadius: 999,
+  padding: "0.18rem 0.55rem",
+  fontSize: "0.75rem",
+  fontWeight: 700,
+};
+
+const campaignErrorText = {
+  borderTop: "1px dashed #E5E7EB",
+  paddingTop: "0.35rem",
+  fontSize: "0.8rem",
+  color: "#BE123C",
   whiteSpace: "pre-wrap",
 };

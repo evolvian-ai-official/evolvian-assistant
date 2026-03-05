@@ -57,6 +57,9 @@ const marketingCopyById = (id, isEs, requiredPlanLabel) => {
     "/services/marketing-campaigns": isEs
       ? `Lanza campañas de email y WhatsApp con segmentación y tracking de envíos. Disponible en ${tier}.`
       : `Launch Email and WhatsApp campaigns with segmentation and delivery tracking. Available on ${tier}.`,
+    "/services/clients": isEs
+      ? `Centraliza clientes, citas agendadas y campañas enviadas en una sola vista operativa. Disponible en ${tier}.`
+      : `Centralize clients, booked appointments, and sent campaigns in one operational view. Available on ${tier}.`,
     "/services/chat": isEs
       ? `Activa un asistente en tu web para captar y responder 24/7. Disponible en ${tier}.`
       : `Launch a web assistant to capture and answer leads 24/7. Available on ${tier}.`,
@@ -188,6 +191,12 @@ export default function Sidebar({ mobile = false, onNavigate }) {
       label: "Marketing Campaigns",
       path: "/services/marketing-campaigns",
       feature: "marketing_campaigns",
+      fallbackRequiredPlan: "premium",
+    },
+    {
+      id: "/services/clients",
+      label: isEs ? "Clientes" : "Clients",
+      path: "/services/clients",
       fallbackRequiredPlan: "premium",
     },
   ].map((item) => {

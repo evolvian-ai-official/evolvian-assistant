@@ -4,11 +4,10 @@ import { authFetch } from "../lib/authFetch";
 import { useLanguage } from "../contexts/LanguageContext";
 import "../components/ui/internal-admin-responsive.css";
 
-const FILTER_OPTIONS = ["open", "prospects", "acknowledged", "resolved", "all"];
+const FILTER_OPTIONS = ["open", "acknowledged", "resolved", "all"];
 
 const prettyStatus = (value) => {
   const raw = String(value || "").trim().toLowerCase();
-  if (raw === "prospects") return "Prospects";
   return raw
     .replace(/_/g, " ")
     .replace(/\b\w/g, (m) => m.toUpperCase());

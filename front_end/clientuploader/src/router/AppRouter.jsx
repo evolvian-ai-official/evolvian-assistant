@@ -28,6 +28,7 @@ import InboxHandoff from "../pages/InboxHandoff";
 /* ✅ NUEVO */
 import Templates from "../features/services/Templates";
 import MarketingCampaigns from "../features/services/MarketingCampaigns";
+import ClientsHub from "../features/services/ClientsHub";
 
 export default function AppRouter() {
   return (
@@ -166,6 +167,17 @@ export default function AppRouter() {
           <PrivateRoutes>
             <MainLayout>
               <MarketingCampaigns />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
+        path="/services/clients"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <ClientsHub />
             </MainLayout>
           </PrivateRoutes>
         }
