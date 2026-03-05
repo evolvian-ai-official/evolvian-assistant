@@ -14,11 +14,36 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 ALERT_STATUSES = {"open", "acknowledged", "resolved", "dismissed"}
+PROSPECT_REASON_VALUES = {"campaign_interest"}
 
 
 class ConversationAlertUpdateInput(BaseModel):
     client_id: str
     status: str
+
+
+def _coerce_metadata(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            import json
+
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
+def _is_converted_handoff(handoff_row: dict) -> bool:
+    metadata = _coerce_metadata((handoff_row or {}).get("metadata"))
+    if not isinstance(metadata, dict):
+        return False
+    if bool(metadata.get("converted_to_client")):
+        return True
+    return str(metadata.get("lifecycle_stage") or "").strip().lower() == "client"
 
 
 @router.get("/conversation_alerts")
@@ -33,8 +58,13 @@ def list_conversation_alerts(
         require_client_feature(client_id, "handoff", required_plan_label="premium")
 
         status_filter = (status or "open").strip().lower()
-        if status_filter != "all" and status_filter not in ALERT_STATUSES:
+        if status_filter != "all" and status_filter != "prospects" and status_filter not in ALERT_STATUSES:
             raise HTTPException(status_code=400, detail="Invalid status filter")
+
+        query_limit = limit
+        if status_filter == "prospects":
+            # Prospects are filtered after handoff enrichment.
+            query_limit = max(limit * 4, 80)
 
         query = (
             supabase.table("conversation_alerts")
@@ -44,9 +74,9 @@ def list_conversation_alerts(
             )
             .eq("client_id", client_id)
             .order("created_at", desc=True)
-            .limit(limit)
+            .limit(query_limit)
         )
-        if status_filter != "all":
+        if status_filter != "all" and status_filter != "prospects":
             query = query.eq("status", status_filter)
 
         alerts_res = query.execute()
@@ -75,6 +105,17 @@ def list_conversation_alerts(
             if source_handoff_id and source_handoff_id in handoff_map:
                 alert["handoff"] = handoff_map[source_handoff_id]
 
+        if status_filter == "prospects":
+            def _is_prospect_alert(alert_row: dict) -> bool:
+                handoff = alert_row.get("handoff") if isinstance(alert_row.get("handoff"), dict) else {}
+                reason = str(handoff.get("reason") or "").strip().lower()
+                trigger = str(handoff.get("trigger") or "").strip().lower()
+                if _is_converted_handoff(handoff):
+                    return False
+                return reason in PROSPECT_REASON_VALUES or trigger == "campaign_interest_button"
+
+            alerts = [row for row in alerts if _is_prospect_alert(row)][:limit]
+
         counts = {}
         try:
             for s in ("open", "acknowledged", "resolved"):
@@ -87,6 +128,19 @@ def list_conversation_alerts(
                     .execute()
                 )
                 counts[s] = getattr(count_res, "count", 0) or 0
+
+            prospects_rows_res = (
+                supabase.table("conversation_handoff_requests")
+                .select("id,metadata")
+                .eq("client_id", client_id)
+                .in_("reason", list(PROSPECT_REASON_VALUES))
+                .in_("status", ["open", "assigned", "in_progress"])
+                .limit(5000)
+                .execute()
+            )
+            counts["prospects"] = sum(
+                1 for row in (prospects_rows_res.data or []) if not _is_converted_handoff(row or {})
+            )
         except Exception as count_error:
             logger.warning("Could not load conversation alert counts: %s", count_error)
 

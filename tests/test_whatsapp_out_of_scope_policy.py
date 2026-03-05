@@ -126,3 +126,34 @@ def test_whatsapp_explicit_human_request_escalates(monkeypatch):
 
     assert "te responderemos lo más pronto posible por este mismo chat" in result
     assert [c["role"] for c in history_calls] == ["user", "assistant"]
+
+
+def test_whatsapp_campaign_interest_active_skips_rag(monkeypatch):
+    from api.modules.assistant_rag import intent_router as module
+
+    history_calls = []
+
+    monkeypatch.setattr(module, "save_history", _capture_save_history(history_calls))
+    monkeypatch.setattr(
+        module,
+        "_get_active_campaign_interest_handoff",
+        lambda *_args, **_kwargs: {"id": "handoff_campaign_1", "reason": "campaign_interest"},
+    )
+    monkeypatch.setattr(
+        module,
+        "route_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("route_message should not run")),
+    )
+
+    result = asyncio.run(
+        module.process_user_message(
+            client_id="client_1",
+            session_id="whatsapp-5215512345678",
+            message="Me interesa, ¿qué sigue?",
+            channel="whatsapp",
+            provider="meta",
+        )
+    )
+
+    assert "asesor humano ya está dando seguimiento" in result
+    assert [c["role"] for c in history_calls] == ["user", "assistant"]

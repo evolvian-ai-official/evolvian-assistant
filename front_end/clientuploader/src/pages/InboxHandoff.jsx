@@ -4,12 +4,15 @@ import { authFetch } from "../lib/authFetch";
 import { useLanguage } from "../contexts/LanguageContext";
 import "../components/ui/internal-admin-responsive.css";
 
-const FILTER_OPTIONS = ["open", "acknowledged", "resolved", "all"];
+const FILTER_OPTIONS = ["open", "prospects", "acknowledged", "resolved", "all"];
 
-const prettyStatus = (value) =>
-  String(value || "")
+const prettyStatus = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "prospects") return "Prospects";
+  return raw
     .replace(/_/g, " ")
     .replace(/\b\w/g, (m) => m.toUpperCase());
+};
 
 const fmtDate = (value) => {
   if (!value) return "";
@@ -108,6 +111,34 @@ const humanDeliveryModeLabel = (mode, isEs) => {
   return "";
 };
 
+const parseHandoffMetadata = (handoff) => {
+  const raw = handoff?.metadata;
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return raw && typeof raw === "object" ? raw : {};
+};
+
+const isConvertedProspect = (alert) => {
+  const metadata = parseHandoffMetadata(alert?.handoff || {});
+  if (metadata?.converted_to_client) return true;
+  return String(metadata?.lifecycle_stage || "").trim().toLowerCase() === "client";
+};
+
+const isProspectAlert = (alert) => {
+  const handoff = alert?.handoff || {};
+  const reason = String(handoff?.reason || "").trim().toLowerCase();
+  const trigger = String(handoff?.trigger || "").trim().toLowerCase();
+  if (isConvertedProspect(alert)) return false;
+  return reason === "campaign_interest" || trigger === "campaign_interest_button";
+};
+
 export default function InboxHandoff() {
   const clientId = useClientId();
   const { lang } = useLanguage();
@@ -139,6 +170,8 @@ export default function InboxHandoff() {
   const [sendReplySuccess, setSendReplySuccess] = useState("");
   const [updatingAlertId, setUpdatingAlertId] = useState(null);
   const [updatingHandoffId, setUpdatingHandoffId] = useState(null);
+  const [convertingProspect, setConvertingProspect] = useState(false);
+  const [prospectActionSuccess, setProspectActionSuccess] = useState("");
 
   const selectedAlert = useMemo(
     () => (alertsData.items || []).find((item) => item.id === selectedAlertId) || null,
@@ -288,6 +321,7 @@ export default function InboxHandoff() {
     setSuggestedReplyError("");
     setSendReplyError("");
     setSendReplySuccess("");
+    setProspectActionSuccess("");
     const defaultReplyChannel = getDefaultReplyChannel(selectedAlert?.handoff || {});
     setReplyChannelOverride(defaultReplyChannel);
     setEmailReplySubject(
@@ -451,6 +485,35 @@ export default function InboxHandoff() {
     }
   };
 
+  const convertProspectToClient = async () => {
+    const handoffId = selectedAlert?.source_handoff_request_id || selectedAlert?.handoff?.id;
+    if (!clientId || !handoffId) return;
+    setConvertingProspect(true);
+    setDetailError("");
+    setProspectActionSuccess("");
+    try {
+      const res = await authFetch(
+        `${import.meta.env.VITE_API_URL}/conversation_handoff_requests/${handoffId}/convert_to_client`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_id: clientId }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || "Could not convert prospect");
+
+      setProspectActionSuccess(
+        isEs ? "Prospect convertido a cliente exitosamente." : "Prospect converted to client successfully."
+      );
+      await loadAlerts(filter);
+    } catch (err) {
+      setDetailError(err?.message || "Could not convert prospect");
+    } finally {
+      setConvertingProspect(false);
+    }
+  };
+
   const counts = alertsData.counts || {};
 
   return (
@@ -576,6 +639,34 @@ export default function InboxHandoff() {
                           flexWrap: "wrap",
                         }}
                       >
+                        {isProspectAlert(alert) ? (
+                          <span
+                            style={{
+                              border: "1px solid #FCD34D",
+                              background: "#FFFBEB",
+                              color: "#92400E",
+                              borderRadius: "999px",
+                              padding: "0.08rem 0.45rem",
+                              fontWeight: 700,
+                            }}
+                          >
+                            Prospect
+                          </span>
+                        ) : null}
+                        {isConvertedProspect(alert) ? (
+                          <span
+                            style={{
+                              border: "1px solid #86EFAC",
+                              background: "#F0FDF4",
+                              color: "#166534",
+                              borderRadius: "999px",
+                              padding: "0.08rem 0.45rem",
+                              fontWeight: 700,
+                            }}
+                          >
+                            Client
+                          </span>
+                        ) : null}
                         <span>{channelLabel(handoff.channel)}</span>
                         {handoff.status ? <span>· handoff {prettyStatus(handoff.status)}</span> : null}
                         {handoff.assigned_user_id ? <span>· owner {handoff.assigned_user_id.slice(0, 8)}</span> : null}
@@ -602,10 +693,15 @@ export default function InboxHandoff() {
                   updating={updatingAlertId === selectedAlert.id}
                   onUpdateHandoff={updateHandoff}
                   updatingHandoff={updatingHandoffId === selectedAlert?.source_handoff_request_id}
+                  onConvertProspect={convertProspectToClient}
+                  convertingProspect={convertingProspect}
                 />
 
                 {detailError ? (
                   <div style={{ color: "#9F2D2D", marginBottom: "0.75rem" }}>{detailError}</div>
+                ) : null}
+                {prospectActionSuccess ? (
+                  <div style={{ color: "#166534", marginBottom: "0.75rem" }}>{prospectActionSuccess}</div>
                 ) : null}
                 {assigneesError ? (
                   <div style={{ color: "#9F2D2D", marginBottom: "0.75rem" }}>{assigneesError}</div>
@@ -760,11 +856,14 @@ function InboxDetailHeader({
   updating,
   onUpdateHandoff,
   updatingHandoff,
+  onConvertProspect,
+  convertingProspect,
 }) {
   const currentStatus = String(alert?.status || "").toLowerCase();
   const handoff = alert?.handoff || {};
   const handoffStatus = String(handoff.status || "").toLowerCase();
   const handoffId = alert?.source_handoff_request_id || handoff?.id || null;
+  const canConvertProspect = isProspectAlert(alert);
   return (
     <div
       style={{
@@ -829,6 +928,23 @@ function InboxDetailHeader({
             style={{ borderRadius: "10px", padding: "0.45rem 0.7rem" }}
           >
             {updatingHandoff ? (isEs ? "Guardando..." : "Saving...") : isEs ? "Resolver handoff" : "Resolve handoff"}
+          </button>
+        )}
+        {handoffId && canConvertProspect && (
+          <button
+            type="button"
+            className="ia-button"
+            disabled={convertingProspect}
+            onClick={onConvertProspect}
+            style={{
+              borderRadius: "10px",
+              border: "1px solid #86EFAC",
+              background: "#F0FDF4",
+              color: "#166534",
+              padding: "0.45rem 0.7rem",
+            }}
+          >
+            {convertingProspect ? (isEs ? "Convirtiendo..." : "Converting...") : isEs ? "Convertir a cliente" : "Convert to client"}
           </button>
         )}
         {currentStatus !== "acknowledged" && currentStatus !== "resolved" && (

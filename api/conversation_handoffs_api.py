@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 import logging
+import json
+import re
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -23,6 +25,61 @@ class ConversationHandoffUpdateInput(BaseModel):
     clear_assignee: bool = False
     assigned_user_id: Optional[str] = None
     internal_resolution_note: Optional[str] = None
+
+
+class ConvertProspectToClientInput(BaseModel):
+    client_id: str
+
+
+def _normalize_email(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip().lower()
+    return cleaned or None
+
+
+def _normalize_phone(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    cleaned = re.sub(r"[^\d+]", "", raw)
+    if cleaned.startswith("00"):
+        cleaned = "+" + cleaned[2:]
+    digits = re.sub(r"\D", "", cleaned)
+    if not digits:
+        return None
+    if digits.startswith("521") and len(digits) == 13:
+        digits = "52" + digits[3:]
+    if len(digits) < 10 or len(digits) > 15:
+        return None
+    return f"+{digits}"
+
+
+def _normalize_name(value: Optional[str]) -> Optional[str]:
+    cleaned = " ".join(str(value or "").strip().split())
+    return cleaned or None
+
+
+def _coerce_metadata(value: object) -> dict:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
+def _is_missing_appointment_clients_table(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "appointment_clients" in msg and (
+        "does not exist" in msg or "relation" in msg or "schema cache" in msg or "not found" in msg
+    )
 
 
 def _get_allowed_assignee_ids(client_id: str, auth_user_id: str) -> set[str]:
@@ -222,3 +279,157 @@ def update_conversation_handoff_request(
     except Exception as e:
         logger.exception("Error updating conversation handoff request")
         raise HTTPException(status_code=500, detail=f"Conversation handoff update error: {e}")
+
+
+@router.post("/conversation_handoff_requests/{handoff_id}/convert_to_client")
+def convert_prospect_to_client(
+    handoff_id: str,
+    payload: ConvertProspectToClientInput,
+    request: Request,
+):
+    try:
+        authorize_client_request(request, payload.client_id)
+        require_client_feature(payload.client_id, "handoff", required_plan_label="premium")
+
+        handoff_res = (
+            supabase.table("conversation_handoff_requests")
+            .select(
+                "id,client_id,conversation_id,status,trigger,reason,contact_name,contact_email,"
+                "contact_phone,metadata"
+            )
+            .eq("id", handoff_id)
+            .eq("client_id", payload.client_id)
+            .maybe_single()
+            .execute()
+        )
+        handoff = handoff_res.data if handoff_res else None
+        if not handoff:
+            raise HTTPException(status_code=404, detail="Handoff request not found")
+
+        reason = str(handoff.get("reason") or "").strip().lower()
+        trigger = str(handoff.get("trigger") or "").strip().lower()
+        is_prospect = reason == "campaign_interest" or trigger == "campaign_interest_button"
+        if not is_prospect:
+            raise HTTPException(status_code=409, detail="This handoff is not a campaign prospect")
+
+        user_name = _normalize_name(handoff.get("contact_name")) or "Client"
+        user_email = _normalize_email(handoff.get("contact_email"))
+        user_phone = _normalize_phone(handoff.get("contact_phone"))
+        if not user_email and not user_phone:
+            raise HTTPException(status_code=422, detail="Prospect has no valid email or phone to create client record")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing = None
+        if user_email:
+            existing_email_res = (
+                supabase.table("appointment_clients")
+                .select("*")
+                .eq("client_id", payload.client_id)
+                .eq("normalized_email", user_email)
+                .limit(1)
+                .execute()
+            )
+            existing = (existing_email_res.data or [None])[0]
+        if not existing and user_phone:
+            existing_phone_res = (
+                supabase.table("appointment_clients")
+                .select("*")
+                .eq("client_id", payload.client_id)
+                .eq("normalized_phone", user_phone)
+                .limit(1)
+                .execute()
+            )
+            existing = (existing_phone_res.data or [None])[0]
+
+        clean_payload = {
+            "user_name": user_name,
+            "user_email": user_email,
+            "user_phone": user_phone,
+            "normalized_email": user_email,
+            "normalized_phone": user_phone,
+        }
+        if existing:
+            update_payload = {**clean_payload, "updated_at": now_iso}
+            if "deleted_at" in existing:
+                update_payload["deleted_at"] = None
+            client_row_res = (
+                supabase.table("appointment_clients")
+                .update(update_payload)
+                .eq("id", existing["id"])
+                .eq("client_id", payload.client_id)
+                .execute()
+            )
+            client_row = (client_row_res.data or [None])[0]
+        else:
+            client_row_res = (
+                supabase.table("appointment_clients")
+                .insert(
+                    {
+                        "client_id": payload.client_id,
+                        **clean_payload,
+                        "created_at": now_iso,
+                        "updated_at": now_iso,
+                    }
+                )
+                .execute()
+            )
+            client_row = (client_row_res.data or [None])[0]
+
+        if not client_row:
+            raise HTTPException(status_code=500, detail="Unable to create/update appointment client record")
+
+        metadata = _coerce_metadata(handoff.get("metadata"))
+        metadata.update(
+            {
+                "lifecycle_stage": "client",
+                "converted_to_client": True,
+                "converted_to_client_at": now_iso,
+                "appointment_client_id": client_row.get("id"),
+            }
+        )
+
+        handoff_update_res = (
+            supabase.table("conversation_handoff_requests")
+            .update({"metadata": metadata, "updated_at": now_iso})
+            .eq("id", handoff_id)
+            .eq("client_id", payload.client_id)
+            .execute()
+        )
+        updated_handoff = (handoff_update_res.data or [None])[0] or handoff
+
+        conversation_id = handoff.get("conversation_id")
+        if conversation_id:
+            try:
+                (
+                    supabase.table("conversations")
+                    .update(
+                        {
+                            "contact_name": user_name,
+                            "contact_email": user_email,
+                            "contact_phone": user_phone,
+                            "updated_at": now_iso,
+                        }
+                    )
+                    .eq("id", conversation_id)
+                    .eq("client_id", payload.client_id)
+                    .execute()
+                )
+            except Exception as convo_sync_error:
+                logger.warning("Could not sync conversation contact info for handoff %s: %s", handoff_id, convo_sync_error)
+
+        return {
+            "success": True,
+            "handoff_id": handoff_id,
+            "appointment_client": client_row,
+            "handoff": updated_handoff,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if _is_missing_appointment_clients_table(e):
+            raise HTTPException(
+                status_code=503,
+                detail="appointment_clients table is not available yet. Run the SQL migration first.",
+            )
+        logger.exception("Error converting prospect to client")
+        raise HTTPException(status_code=500, detail=f"Conversation prospect conversion error: {e}")

@@ -253,6 +253,39 @@ def _whatsapp_handoff_confirmation_message(lang: str) -> str:
     )
 
 
+def _campaign_interest_followup_message(lang: str) -> str:
+    if lang == "en":
+        return (
+            "Thanks for your interest. A human advisor is already following up with you "
+            "directly in this chat."
+        )
+    return (
+        "Gracias por tu interés. Un asesor humano ya está dando seguimiento contigo "
+        "directamente por este chat."
+    )
+
+
+def _get_active_campaign_interest_handoff(client_id: str, session_id: str) -> dict[str, Any] | None:
+    try:
+        res = (
+            supabase.table("conversation_handoff_requests")
+            .select("id,status,assigned_user_id,reason,trigger,updated_at")
+            .eq("client_id", client_id)
+            .eq("session_id", session_id)
+            .eq("channel", "whatsapp")
+            .in_("reason", ["campaign_interest"])
+            .in_("status", ["open", "assigned", "in_progress"])
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        row = (res.data or [None])[0]
+        return row if isinstance(row, dict) else None
+    except Exception as e:
+        logger.warning("Could not read active campaign-interest handoff for session=%s: %s", session_id, e)
+        return None
+
+
 def _extract_phone_from_session(session_id: str) -> str | None:
     raw = str(session_id or "").strip()
     if not raw:
@@ -312,6 +345,11 @@ def _upsert_whatsapp_handoff(
     trigger: str,
     reason: str,
     language: str,
+    metadata_origin: str = "whatsapp_policy",
+    metadata_extra: Optional[dict[str, Any]] = None,
+    alert_type: str = "human_intervention",
+    alert_priority: str = "normal",
+    alert_title: str = "Human intervention requested",
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "feature_enabled": False,
@@ -420,6 +458,13 @@ def _upsert_whatsapp_handoff(
                 .execute()
             )
         else:
+            metadata = {
+                "language": "en" if language == "en" else "es",
+                "auto_handoff": True,
+                "origin": metadata_origin,
+            }
+            if isinstance(metadata_extra, dict):
+                metadata.update(metadata_extra)
             insert_res = (
                 supabase.table("conversation_handoff_requests")
                 .insert(
@@ -437,11 +482,7 @@ def _upsert_whatsapp_handoff(
                         "accepted_email_marketing": False,
                         "last_user_message": (user_message or "").strip() or None,
                         "last_ai_message": (ai_message or "").strip() or None,
-                        "metadata": {
-                            "language": "en" if language == "en" else "es",
-                            "auto_handoff": True,
-                            "origin": "whatsapp_policy",
-                        },
+                        "metadata": metadata,
                         "updated_at": now_iso,
                     }
                 )
@@ -476,10 +517,10 @@ def _upsert_whatsapp_handoff(
                     "client_id": client_id,
                     "conversation_id": conversation_id,
                     "source_handoff_request_id": handoff_id,
-                    "alert_type": "human_intervention",
+                    "alert_type": str(alert_type or "human_intervention"),
                     "status": "open",
-                    "priority": "normal",
-                    "title": "Human intervention requested",
+                    "priority": str(alert_priority or "normal"),
+                    "title": str(alert_title or "Human intervention requested"),
                     "body": (user_message or ai_message or "WhatsApp escalation request")[:500],
                 }
             )
@@ -692,6 +733,43 @@ async def process_user_message(
     print(f"🌍 Detected language: {lang}")
     normalized_channel = _normalize_channel_name(channel)
     is_whatsapp = normalized_channel == "whatsapp"
+
+    if is_whatsapp:
+        campaign_interest_handoff = _get_active_campaign_interest_handoff(client_id, session_id)
+        if campaign_interest_handoff:
+            answer = _campaign_interest_followup_message(lang)
+            save_history(
+                client_id,
+                session_id,
+                "user",
+                message,
+                channel=channel,
+                provider=provider,
+            )
+            save_history(
+                client_id,
+                session_id,
+                "assistant",
+                answer,
+                channel=channel,
+                provider=provider,
+                metadata={
+                    "whatsapp_policy": {
+                        "event": "campaign_interest_handoff_active",
+                        "handoff_id": campaign_interest_handoff.get("id"),
+                    }
+                },
+            )
+            payload = {
+                "answer": answer,
+                "confidence_score": 1.0,
+                "handoff_recommended": True,
+                "human_intervention_recommended": True,
+                "needs_human": True,
+                "handoff_reason": "campaign_interest_active",
+                "confidence_reason": "campaign_interest_handoff_active",
+            }
+            return payload if return_metadata else answer
 
     if is_whatsapp and _is_whatsapp_handoff_request(message):
         handoff_info = _upsert_whatsapp_handoff(

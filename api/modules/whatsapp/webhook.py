@@ -53,6 +53,21 @@ OPT_OUT_KEYWORDS = (
     "no mas",
     "no más",
 )
+INTEREST_KEYWORDS = (
+    "me interesa",
+    "estoy interesado",
+    "estoy interesada",
+    "quiero info",
+    "quiero informacion",
+    "quiero información",
+    "quiero saber mas",
+    "quiero saber más",
+    "interested",
+    "i'm interested",
+    "im interested",
+    "tell me more",
+    "more info",
+)
 
 
 def _normalize_text_key(value: Any) -> str:
@@ -210,6 +225,33 @@ def _is_marketing_opt_out_action(
     return any(keyword in normalized_text for keyword in OPT_OUT_KEYWORDS)
 
 
+def _is_marketing_interest_action(
+    *,
+    message_type: str,
+    user_text: Optional[str],
+    known_opt_out_labels: set[str],
+) -> bool:
+    normalized_text = _normalize_text_key(user_text)
+    if not normalized_text:
+        return False
+    if normalized_text in known_opt_out_labels:
+        return False
+
+    # Most marketing intent clicks come as quick-reply callbacks.
+    if message_type in {"interactive", "button"}:
+        return True
+
+    return any(keyword in normalized_text for keyword in INTEREST_KEYWORDS)
+
+
+def _resolve_interest_language(user_text: Optional[str]) -> str:
+    text = _normalize_text_key(user_text)
+    if not text:
+        return "es"
+    en_signals = ("interested", "tell me more", "more info", "i'm", "im ")
+    return "en" if any(signal in text for signal in en_signals) else "es"
+
+
 def _record_whatsapp_marketing_opt_out(
     *,
     client_id: str,
@@ -311,6 +353,42 @@ def _log_marketing_opt_out_event(
     except Exception:
         logger.exception(
             "❌ Failed logging marketing opt-out event | client_id=%s | campaign_id=%s",
+            client_id,
+            normalized_campaign_id,
+        )
+
+
+def _log_marketing_interest_event(
+    *,
+    client_id: str,
+    campaign_id: Optional[str],
+    recipient_key: Optional[str],
+    provider_message_id: Optional[str],
+    handoff_id: Optional[str],
+) -> None:
+    normalized_campaign_id = str(campaign_id or "").strip()
+    normalized_recipient_key = str(recipient_key or "").strip()
+    if not normalized_campaign_id:
+        return
+    metadata: dict[str, Any] = {}
+    if provider_message_id:
+        metadata["provider_message_id"] = provider_message_id
+    if handoff_id:
+        metadata["handoff_id"] = handoff_id
+    try:
+        supabase.table("marketing_campaign_events").insert(
+            {
+                "client_id": client_id,
+                "campaign_id": normalized_campaign_id,
+                "recipient_key": normalized_recipient_key or None,
+                "event_type": "interest",
+                "metadata": metadata,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+    except Exception:
+        logger.exception(
+            "❌ Failed logging marketing interest event | client_id=%s | campaign_id=%s",
             client_id,
             normalized_campaign_id,
         )
@@ -814,6 +892,69 @@ async def process_whatsapp_payload(payload: dict):
                         text="No pude completar la baja automática. Escríbenos para ayudarte.",
                         channel=channel,
                     )
+                continue
+
+            if recent_marketing_row and _is_marketing_interest_action(
+                message_type=message_type,
+                user_text=user_text,
+                known_opt_out_labels=known_opt_out_labels,
+            ):
+                handoff_info: dict[str, Any] = {}
+                try:
+                    # Local import keeps webhook load fast and avoids startup coupling.
+                    from api.modules.assistant_rag import intent_router as _intent_router
+
+                    handoff_info = _intent_router._upsert_whatsapp_handoff(
+                        client_id=client_id,
+                        session_id=session_id,
+                        user_message=user_text,
+                        ai_message="",
+                        trigger="campaign_interest_button",
+                        reason="campaign_interest",
+                        language=_resolve_interest_language(user_text),
+                        metadata_origin="marketing_campaign",
+                        metadata_extra={
+                            "campaign_id": (recent_marketing_row or {}).get("campaign_id"),
+                            "recipient_key": (recent_marketing_row or {}).get("recipient_key"),
+                        },
+                        alert_type="human_intervention",
+                        alert_priority="high",
+                        alert_title="Prospect interested in campaign",
+                    )
+                except Exception as handoff_error:
+                    logger.exception(
+                        "❌ Failed creating campaign-interest handoff | client_id=%s | session_id=%s | err=%s",
+                        client_id,
+                        session_id,
+                        handoff_error,
+                    )
+
+                _log_marketing_interest_event(
+                    client_id=client_id,
+                    campaign_id=(recent_marketing_row or {}).get("campaign_id"),
+                    recipient_key=(recent_marketing_row or {}).get("recipient_key"),
+                    provider_message_id=context_message_id or (recent_marketing_row or {}).get("provider_message_id"),
+                    handoff_id=(handoff_info or {}).get("handoff_id"),
+                )
+
+                if (handoff_info or {}).get("handoff_id"):
+                    interest_ack = (
+                        "Thanks for your interest. A human advisor will continue with you here."
+                        if _resolve_interest_language(user_text) == "en"
+                        else "Gracias por tu interés. Un asesor humano continuará contigo por este mismo chat."
+                    )
+                else:
+                    interest_ack = (
+                        "Thanks, we got your message. Our team will follow up shortly."
+                        if _resolve_interest_language(user_text) == "en"
+                        else "Gracias, recibimos tu mensaje. Nuestro equipo te dará seguimiento en breve."
+                    )
+
+                await send_whatsapp_message(
+                    to_number=from_number,
+                    text=interest_ack,
+                    channel=channel,
+                )
                 continue
 
             # ---------------------------------------------------------
