@@ -4,6 +4,7 @@ import base64
 import time
 import socket
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 from email.mime.text import MIMEText
 
 from fastapi import APIRouter, Request, HTTPException
@@ -49,10 +50,66 @@ if WORKSPACE_MODE:
     ]
 
 
+def _request_host(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-host")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower()
+    return (request.url.hostname or "").lower()
+
+
+def _request_scheme(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower()
+    return (request.url.scheme or "https").lower()
+
+
+def _is_local_host(host: str) -> bool:
+    return host in {"localhost", "127.0.0.1"} or host.endswith(".local")
+
+
+def _build_callback_from_request(request: Request) -> str | None:
+    host = _request_host(request)
+    if not host:
+        return None
+    scheme = _request_scheme(request)
+    return f"{scheme}://{host}/gmail_oauth/callback"
+
+
+def _resolve_gmail_redirect_uri(request: Request) -> str | None:
+    local_uri = os.getenv("GMAIL_REDIRECT_URI_LOCAL")
+    prod_uri = os.getenv("GMAIL_REDIRECT_URI_PROD")
+    forced_uri = os.getenv("GMAIL_REDIRECT_URI_FORCE")
+    legacy_uri = os.getenv("GMAIL_REDIRECT_URI")
+    host = _request_host(request)
+    dynamic_uri = _build_callback_from_request(request)
+    env = os.getenv("ENV", "").strip().lower()
+
+    if forced_uri:
+        return forced_uri
+
+    def _host_of(uri: str | None) -> str:
+        if not uri:
+            return ""
+        return (urlparse(uri).hostname or "").lower()
+
+    if not _is_local_host(host):
+        for candidate in (prod_uri, dynamic_uri, legacy_uri, local_uri):
+            if candidate and _host_of(candidate) == host:
+                return candidate
+        return dynamic_uri or prod_uri or legacy_uri or local_uri
+
+    if env == "prod":
+        return prod_uri or dynamic_uri or legacy_uri or local_uri
+    return local_uri or dynamic_uri or legacy_uri or prod_uri
+
+
 def _ui_email_setup_url(request: Request, extra_query: dict | None = None) -> str:
-    host = (request.url.hostname or "").lower()
-    is_local = host in {"localhost", "127.0.0.1"}
-    base = "http://localhost:4223/services/email" if is_local else "https://evolvianai.com/services/email"
+    host = _request_host(request)
+    is_local = _is_local_host(host)
+    local_base = os.getenv("EMAIL_SETUP_REDIRECT_URL_LOCAL", "http://localhost:4223/services/email")
+    prod_base = os.getenv("EMAIL_SETUP_REDIRECT_URL_PROD", "https://evolvianai.net/services/email")
+    base = local_base if is_local else prod_base
     if not extra_query:
         return base
     return f"{base}?{urlencode(extra_query)}"
@@ -96,7 +153,8 @@ def _oauth_redirect(request: Request, **query):
 # ---------------------------------------------------------
 @router.get("/authorize", response_model=None)
 async def authorize(request: Request, client_id: str):
-    if not GMAIL_CLIENT_ID or not GMAIL_CLIENT_SECRET or not GMAIL_REDIRECT_URI:
+    redirect_uri = _resolve_gmail_redirect_uri(request)
+    if not GMAIL_CLIENT_ID or not GMAIL_CLIENT_SECRET or not redirect_uri:
         raise HTTPException(status_code=500, detail="Faltan variables de entorno Gmail OAuth.")
     authorize_client_request(request, client_id)
 
@@ -110,7 +168,7 @@ async def authorize(request: Request, client_id: str):
             }
         },
         scopes=SCOPES,
-        redirect_uri=GMAIL_REDIRECT_URI,
+        redirect_uri=redirect_uri,
     )
 
     authorization_url, state = flow.authorization_url(
@@ -158,6 +216,10 @@ async def oauth_callback(request: Request):
     if not state:
         return _oauth_redirect(request, gmail_error="missing_state")
 
+    redirect_uri = _resolve_gmail_redirect_uri(request)
+    if not GMAIL_CLIENT_ID or not GMAIL_CLIENT_SECRET or not redirect_uri:
+        return _oauth_redirect(request, gmail_error="oauth_failed")
+
     try:
         print("⏱️ [1] Intercambiando código por tokens...")
         t1 = time.time()
@@ -171,7 +233,7 @@ async def oauth_callback(request: Request):
                 }
             },
             scopes=SCOPES,
-            redirect_uri=GMAIL_REDIRECT_URI,
+            redirect_uri=redirect_uri,
         )
         flow.fetch_token(code=code)
         credentials = flow.credentials
