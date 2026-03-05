@@ -54,7 +54,8 @@ def reindex_client(client_id: str):
             logging.info(f"📄 Processing document: {d['storage_path']}")
             process_file(
                 file_url=signed_url,
-                client_id=client_id
+                client_id=client_id,
+                storage_path=d["storage_path"],
             )
         except Exception as e:
             logging.exception(f"❌ Failed processing {d['storage_path']}: {e}")

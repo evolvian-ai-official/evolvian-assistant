@@ -4,10 +4,11 @@ from fastapi import APIRouter, Query, HTTPException, Request
 from pathlib import Path
 import re
 from api.authz import authorize_client_request
+from api.utils.paths import get_base_data_path
 
 router = APIRouter()
 SAFE_CLIENT_ID = re.compile(r"^[a-zA-Z0-9_-]{3,80}$")
-CHROMA_ROOT = Path("chroma_db").resolve()
+CHROMA_ROOT = Path(get_base_data_path()).resolve()
 
 @router.get("/list_chunks")
 def list_chunks(request: Request, client_id: str = Query(...)):
@@ -16,7 +17,7 @@ def list_chunks(request: Request, client_id: str = Query(...)):
         if not SAFE_CLIENT_ID.fullmatch(client_id):
             raise HTTPException(status_code=400, detail="Invalid client_id format")
 
-        base_path = (CHROMA_ROOT / client_id).resolve()
+        base_path = (CHROMA_ROOT / f"chroma_{client_id}").resolve()
         if CHROMA_ROOT not in base_path.parents:
             raise HTTPException(status_code=400, detail="Invalid client_id path")
 

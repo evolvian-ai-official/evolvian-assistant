@@ -11,6 +11,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from api.config.config import supabase
 from api.authz import authorize_client_request
 from api.modules.document_processor import process_file
+from api.internal.reindex_single_client import reindex_client
 from api.utils.effective_plan import normalize_plan_id, resolve_effective_plan_id
 from api.utils.usage_limiter import check_and_increment_usage
 
@@ -124,7 +125,30 @@ async def upload_document(
 
         # --------------------------------------------------
         # 4️⃣ Guardar metadata (FUENTE DE VERDAD)
+        #     Si el path ya existía activo, se desactiva la versión previa.
         # --------------------------------------------------
+        existing_same_path = (
+            supabase
+            .table("document_metadata")
+            .select("id")
+            .eq("client_id", client_id)
+            .eq("storage_path", storage_path)
+            .eq("is_active", True)
+            .execute()
+        ).data or []
+
+        had_prior_active_path = bool(existing_same_path)
+        if had_prior_active_path:
+            (
+                supabase
+                .table("document_metadata")
+                .update({"is_active": False})
+                .eq("client_id", client_id)
+                .eq("storage_path", storage_path)
+                .eq("is_active", True)
+                .execute()
+            )
+
         supabase.table("document_metadata").insert({
             "client_id": client_id,
             "storage_path": storage_path,
@@ -152,7 +176,8 @@ async def upload_document(
 
         chunks = process_file(
             file_url=signed_url,
-            client_id=client_id
+            client_id=client_id,
+            storage_path=storage_path,
         )
 
         # --------------------------------------------------
@@ -161,7 +186,16 @@ async def upload_document(
         supabase.table("document_metadata") \
             .update({"indexed_at": "now()"}) \
             .eq("storage_path", storage_path) \
+            .eq("is_active", True) \
             .execute()
+
+        # Si hubo reemplazo de versión en el mismo path, reconstruimos índice.
+        if had_prior_active_path:
+            logging.info(
+                "♻️ Existing active file replaced; rebuilding vectorstore for client %s",
+                client_id,
+            )
+            reindex_client(client_id)
 
         # --------------------------------------------------
         # 8️⃣ Actualizar uso

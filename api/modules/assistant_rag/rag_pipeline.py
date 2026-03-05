@@ -306,6 +306,26 @@ def _has_active_documents(client_id: str) -> bool:
     return bool(res.data)
 
 
+def _get_active_storage_paths(client_id: str) -> set[str]:
+    """Devuelve rutas activas para reforzar aislamiento de documentos vigentes."""
+    from api.config.config import supabase
+
+    res = (
+        supabase
+        .table("document_metadata")
+        .select("storage_path")
+        .eq("client_id", client_id)
+        .eq("is_active", True)
+        .execute()
+    )
+    rows = res.data or []
+    return {
+        str(row.get("storage_path") or "").strip()
+        for row in rows
+        if str(row.get("storage_path") or "").strip()
+    }
+
+
 def ask_question(
     messages: Union[List[Dict[str, str]], str],
     client_id: str,
@@ -554,6 +574,18 @@ Rules:
         )
 
         retrieved_docs = retriever.invoke(rewritten_question)
+
+        # Refuerzo: usar solo chunks asociados a documentos activos cuando exista metadata.
+        active_storage_paths = _get_active_storage_paths(client_id)
+        docs_with_storage_meta = [
+            d for d in retrieved_docs
+            if isinstance(getattr(d, "metadata", None), dict) and d.metadata.get("storage_path")
+        ]
+        if docs_with_storage_meta:
+            retrieved_docs = [
+                d for d in docs_with_storage_meta
+                if str(d.metadata.get("storage_path")).strip() in active_storage_paths
+            ]
 
         if not retrieved_docs:
             if persist_history:

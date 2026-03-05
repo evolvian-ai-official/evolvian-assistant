@@ -42,7 +42,7 @@ def load_pdf_with_fallback(file_path: str):
     raise Exception("❌ No se pudo extraer texto del PDF con ningún loader")
 
 
-def process_file(file_url: str, client_id: str):
+def process_file(file_url: str, client_id: str, storage_path: str | None = None):
     """
     Descarga un archivo desde Supabase, lo procesa, divide en chunks
     y lo guarda en Chroma de forma aislada por cliente.
@@ -97,11 +97,15 @@ def process_file(file_url: str, client_id: str):
         logging.info(f"🧠 Documento dividido en {len(chunks)} chunks")
 
         # --------------------------------------------------
-        # 🔐 FIX 2 — Blindaje multi-tenant (CRÍTICO)
+        # 🔐 Blindaje multi-tenant + trazabilidad por archivo
         # --------------------------------------------------
         for chunk in chunks:
             chunk.metadata = chunk.metadata or {}
             chunk.metadata["client_id"] = client_id
+            if storage_path:
+                chunk.metadata["storage_path"] = storage_path
+                # Normalizamos "source" para facilitar depuración y filtros.
+                chunk.metadata["source"] = storage_path
 
         # --------------------------------------------------
         # 💾 Guardar en Chroma (indexer intacto)
