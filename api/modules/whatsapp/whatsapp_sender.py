@@ -200,6 +200,7 @@ async def send_meta_template(
     template_name: str,
     language_code: str,
     parameters: Optional[List[str]] = None,
+    button_url_parameters: Optional[List[str]] = None,
     header_image_url: Optional[str] = None,
     phone_number_id: str,
     access_token: str,
@@ -227,6 +228,8 @@ async def send_meta_template(
     # -------------------------------
     if parameters is None:
         parameters = []
+    if button_url_parameters is None:
+        button_url_parameters = []
 
     if not isinstance(parameters, list):
         return {
@@ -238,6 +241,11 @@ async def send_meta_template(
         }
 
     normalized_parameters = [_sanitize_meta_template_param(str(p or "")) for p in parameters]
+    normalized_button_url_parameters = [
+        _sanitize_meta_template_param(str(p or ""))
+        for p in button_url_parameters
+        if str(p or "").strip()
+    ]
 
     if any(p == "" for p in normalized_parameters):
         return {
@@ -283,6 +291,19 @@ async def send_meta_template(
                 ],
             }
         )
+
+    if normalized_button_url_parameters:
+        for idx, button_value in enumerate(normalized_button_url_parameters):
+            template_components.append(
+                {
+                    "type": "button",
+                    "sub_type": "url",
+                    "index": str(idx),
+                    "parameters": [
+                        {"type": "text", "text": button_value},
+                    ],
+                }
+            )
 
     if template_components:
         template_payload["components"] = template_components
@@ -359,6 +380,7 @@ async def send_whatsapp_template_for_client(
     to_number: str,
     template_name: str,
     parameters: Optional[List[str]] = None,
+    button_url_parameters: Optional[List[str]] = None,
     header_image_url: str | None = None,
     language_code: str = "es_MX",
     purpose: str = "transactional",
@@ -454,6 +476,7 @@ async def send_whatsapp_template_for_client(
             template_name=template_name,
             language_code=language_code,
             parameters=parameters,
+            button_url_parameters=button_url_parameters,
             header_image_url=header_image_url,
             phone_number_id=channel["wa_phone_id"],
             access_token=channel["wa_token"],

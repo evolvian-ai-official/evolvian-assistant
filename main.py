@@ -64,6 +64,7 @@ from api.public.plans import router as public_plans_router
 from api.public.contact import router as public_contact_router
 from api.public.demo import router as public_demo_router
 from api.public.privacy import router as public_privacy_router
+from api.public.marketing import router as public_marketing_router
 from api.internal.privacy_requests import router as internal_privacy_router
 from api.internal.retention_jobs import router as internal_retention_router
 from api.internal.incident_readiness import router as internal_incident_router
@@ -311,7 +312,7 @@ routers = [
     clear_new_user_flag_router, client_profile_router,
     list_files_router, list_chunks_router, delete_chunks_router,
     embed_router, public_plans_router, public_contact_router, public_privacy_router,
-    public_demo_router,
+    public_demo_router, public_marketing_router,
     internal_privacy_router, internal_retention_router, internal_incident_router,
     stripe_router, checkout_router,
     stripe_cancel_router, stripe_change_plan_router,

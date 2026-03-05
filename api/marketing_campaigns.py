@@ -478,7 +478,38 @@ def _create_email_template_for_campaign(client_id: str, payload: CampaignCreateP
     return row
 
 
-def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCreatePayload) -> dict[str, Any]:
+def _campaign_interest_tracking_base_url() -> str:
+    api_base = (
+        os.getenv("EVOLVIAN_API_BASE_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or "https://evolvianai.com"
+    ).strip().rstrip("/")
+    return f"{api_base}/api/public/marketing/interest/click"
+
+
+def _build_campaign_interest_tracking_url(
+    *,
+    campaign_id: str,
+    channel: str,
+    recipient_key: Optional[str] = None,
+    recipient_key_placeholder: Optional[str] = None,
+) -> str:
+    base = _campaign_interest_tracking_base_url()
+    campaign_q = quote_plus(str(campaign_id or "").strip())
+    channel_q = quote_plus(str(channel or "").strip().lower() or "unknown")
+    if recipient_key_placeholder is not None:
+        # Keep placeholder literal for Meta template variable expansion.
+        return f"{base}?campaign_id={campaign_q}&channel={channel_q}&recipient_key={recipient_key_placeholder}"
+    recipient_q = quote_plus(str(recipient_key or "").strip())
+    return f"{base}?campaign_id={campaign_q}&channel={channel_q}&recipient_key={recipient_q}"
+
+
+def _create_whatsapp_template_for_campaign(
+    client_id: str,
+    payload: CampaignCreatePayload,
+    *,
+    campaign_id: str,
+) -> dict[str, Any]:
     template_type = _campaign_template_type("campaign_whatsapp")
     _ensure_template_type_exists(template_type, "Marketing campaign WhatsApp snapshot")
 
@@ -509,11 +540,16 @@ def _create_whatsapp_template_for_campaign(client_id: str, payload: CampaignCrea
     buttons_payload: dict[str, Any] = {}
     normalized_buttons: list[dict[str, Any]] = []
     if normalized_cta_url:
+        tracking_url_with_placeholder = _build_campaign_interest_tracking_url(
+            campaign_id=campaign_id,
+            channel="whatsapp",
+            recipient_key_placeholder="{{1}}",
+        )
         normalized_buttons.append(
             {
                 "type": "URL",
                 "text": normalized_cta_label[:25] or "Open",
-                "url": normalized_cta_url[:2000],
+                "url": tracking_url_with_placeholder[:2000],
             }
         )
     if normalized_opt_out_enabled:
@@ -1110,12 +1146,17 @@ def _build_unsubscribe_url(base_url: Optional[str], email: str, client_id: str) 
     return f"{base}{separator}email={quote_plus(email)}&client_id={quote_plus(encrypted_client_id)}"
 
 
-def _render_campaign_html(campaign: dict[str, Any], recipient: dict[str, Any]) -> str:
+def _render_campaign_html(
+    campaign: dict[str, Any],
+    recipient: dict[str, Any],
+    *,
+    cta_url_override: Optional[str] = None,
+) -> str:
     body = str(campaign.get("body") or "").strip().replace("\n", "<br />\n")
     image_url = str(campaign.get("image_url") or "").strip()
     cta_mode = str(campaign.get("cta_mode") or "").strip().lower()
     cta_label = str(campaign.get("cta_label") or "").strip() or "Open"
-    cta_url = _normalize_redirect_url(campaign.get("cta_url")) or ""
+    cta_url = _normalize_redirect_url(cta_url_override) or _normalize_redirect_url(campaign.get("cta_url")) or ""
     recipient_name = str(recipient.get("recipient_name") or "").strip()
 
     lines = [f"<p>{body}</p>"]
@@ -1354,10 +1395,37 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
         if not normalized_cta_url:
             normalized_cta_label = None
 
-        template_id = None
-        meta_template_id = None
-        meta_template_name = None
+        insert_payload = {
+            "client_id": payload.client_id,
+            "name": payload.name,
+            "channel": payload.channel,
+            "status": payload.status or "draft",
+            "subject": payload.subject,
+            "body": payload.body,
+            "image_url": payload.image_url,
+            "cta_mode": normalized_cta_mode,
+            "cta_label": normalized_cta_label,
+            "cta_url": normalized_cta_url,
+            "language_family": payload.language_family or "es",
+            "template_id": None,
+            "meta_template_id": None,
+            "meta_template_name": None,
+            "created_by_user_id": auth_user_id,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "is_active": True,
+        }
 
+        result = supabase.table("marketing_campaigns").insert(insert_payload).execute()
+        row = (result.data or [None])[0]
+        if not row:
+            raise HTTPException(status_code=500, detail="Could not create campaign")
+
+        campaign_id = str(row.get("id") or "").strip()
+        if not campaign_id:
+            raise HTTPException(status_code=500, detail="Could not resolve campaign id")
+
+        template_updates: dict[str, Any] = {}
         if payload.channel == "email":
             normalized_payload = payload.model_copy(
                 update={
@@ -1369,7 +1437,7 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
                 }
             )
             email_template = _create_email_template_for_campaign(payload.client_id, normalized_payload)
-            template_id = email_template.get("id")
+            template_updates["template_id"] = email_template.get("id")
         else:
             normalized_payload = payload.model_copy(
                 update={
@@ -1385,36 +1453,27 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
                     ),
                 }
             )
-            wa_templates = _create_whatsapp_template_for_campaign(payload.client_id, normalized_payload)
-            template_id = wa_templates["message_template"].get("id")
-            meta_template_id = wa_templates["meta"].get("id")
-            meta_template_name = wa_templates.get("meta_template_name")
+            wa_templates = _create_whatsapp_template_for_campaign(
+                payload.client_id,
+                normalized_payload,
+                campaign_id=campaign_id,
+            )
+            template_updates["template_id"] = wa_templates["message_template"].get("id")
+            template_updates["meta_template_id"] = wa_templates["meta"].get("id")
+            template_updates["meta_template_name"] = wa_templates.get("meta_template_name")
 
-        insert_payload = {
-            "client_id": payload.client_id,
-            "name": payload.name,
-            "channel": payload.channel,
-            "status": payload.status or "draft",
-            "subject": payload.subject,
-            "body": payload.body,
-            "image_url": payload.image_url,
-            "cta_mode": normalized_cta_mode,
-            "cta_label": normalized_cta_label,
-            "cta_url": normalized_cta_url,
-            "language_family": payload.language_family or "es",
-            "template_id": template_id,
-            "meta_template_id": meta_template_id,
-            "meta_template_name": meta_template_name,
-            "created_by_user_id": auth_user_id,
-            "created_at": _now_iso(),
-            "updated_at": _now_iso(),
-            "is_active": True,
-        }
-
-        result = supabase.table("marketing_campaigns").insert(insert_payload).execute()
-        row = (result.data or [None])[0]
-        if not row:
-            raise HTTPException(status_code=500, detail="Could not create campaign")
+        if template_updates:
+            template_updates["updated_at"] = _now_iso()
+            update_res = (
+                supabase.table("marketing_campaigns")
+                .update(template_updates)
+                .eq("id", campaign_id)
+                .eq("client_id", payload.client_id)
+                .execute()
+            )
+            updated_row = (update_res.data or [None])[0]
+            if updated_row:
+                row = updated_row
 
         return {"campaign": _enrich_campaign_for_ui(row)}
     except HTTPException:
@@ -1550,7 +1609,11 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
                 whatsapp_opt_out_enabled=merged_opt_out_enabled,
                 whatsapp_opt_out_label=merged_opt_out_label,
             )
-            wa_templates = _create_whatsapp_template_for_campaign(payload.client_id, merged)
+            wa_templates = _create_whatsapp_template_for_campaign(
+                payload.client_id,
+                merged,
+                campaign_id=campaign_id,
+            )
             updates["template_id"] = wa_templates["message_template"].get("id")
             updates["meta_template_id"] = wa_templates["meta"].get("id")
             updates["meta_template_name"] = wa_templates.get("meta_template_name")
@@ -1778,6 +1841,15 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     continue
 
                 unsubscribe_url = _build_unsubscribe_url(payload.unsubscribe_base_url, recipient_email, payload.client_id)
+                tracking_cta_url = (
+                    _build_campaign_interest_tracking_url(
+                        campaign_id=campaign_id,
+                        channel="email",
+                        recipient_key=recipient_key,
+                    )
+                    if _normalize_redirect_url(campaign.get("cta_url"))
+                    else None
+                )
 
                 # Lazy import to avoid optional-module import failures during startup.
                 from api.modules.email_integration.gmail_oauth import send_reply as gmail_send_reply
@@ -1786,7 +1858,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     "client_id": payload.client_id,
                     "to_email": recipient_email,
                     "subject": campaign.get("subject") or campaign.get("name") or "Marketing campaign",
-                    "html": _render_campaign_html(campaign, target),
+                    "html": _render_campaign_html(campaign, target, cta_url_override=tracking_cta_url),
                     "purpose": "marketing",
                     "campaign_id": campaign_id,
                     "campaign_owner_email": owner_email,
@@ -1874,6 +1946,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                 language_code = _format_locale(campaign.get("language_family"))
                 template_has_header = bool(campaign.get("whatsapp_has_image_header"))
                 header_image_url = campaign_image_url if template_has_header else None
+                button_url_parameters = [quote_plus(recipient_key)] if _normalize_redirect_url(campaign.get("cta_url")) else None
                 if campaign_image_url and not template_has_header:
                     summary["image_skipped_no_header_template"] += 1
                 send_result = await send_whatsapp_template_for_client(
@@ -1881,6 +1954,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     to_number=recipient_phone,
                     template_name=template_name,
                     parameters=[campaign_whatsapp_param],
+                    button_url_parameters=button_url_parameters,
                     header_image_url=header_image_url,
                     language_code=language_code,
                     purpose="marketing",
@@ -1901,6 +1975,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                             to_number=recipient_phone,
                             template_name=template_name,
                             parameters=[campaign_whatsapp_param],
+                            button_url_parameters=button_url_parameters,
                             header_image_url=None,
                             language_code=language_code,
                             purpose="marketing",
