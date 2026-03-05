@@ -148,8 +148,8 @@ export default function Terms() {
       <h2 className="legal-subtitle">17. Contact Information</h2>
       <p className="legal-paragraph">
         For legal inquiries, please contact us at{" "}
-        <a href="mailto:support@evolvianai.com" className="legal-link">
-          support@evolvianai.com
+        <a href="mailto:sales@evolvianai.com" className="legal-link">
+          sales@evolvianai.com
         </a>
         .
       </p>

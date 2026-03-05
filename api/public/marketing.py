@@ -237,14 +237,31 @@ def _upsert_campaign_interest_handoff(
     try:
         existing_alert_res = (
             supabase.table("conversation_alerts")
-            .select("id")
+            .select("id,status")
             .eq("client_id", client_id)
             .eq("source_handoff_request_id", handoff_id)
-            .in_("status", ["open", "acknowledged"])
+            .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
-        if existing_alert_res and existing_alert_res.data:
+        existing_alert = (existing_alert_res.data or [None])[0] if existing_alert_res else None
+        if existing_alert:
+            (
+                supabase.table("conversation_alerts")
+                .update(
+                    {
+                        "conversation_id": conversation_id,
+                        "status": "open",
+                        "resolved_at": None,
+                        "priority": "high",
+                        "title": "Prospect interested in campaign",
+                        "body": f"Interest URL click on campaign: {campaign_name}"[:500],
+                    }
+                )
+                .eq("id", existing_alert.get("id"))
+                .eq("client_id", client_id)
+                .execute()
+            )
             return handoff_id
 
         (

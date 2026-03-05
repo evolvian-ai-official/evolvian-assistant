@@ -83,7 +83,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       features: [
         t("plan_feature_unlimited_messages_docs"),
         t("plan_feature_dedicated_support")],
-      contact: "support@evolvianai.com",
+      contact: "sales@evolvianai.com",
     },
   ];
 

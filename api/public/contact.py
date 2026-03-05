@@ -60,7 +60,7 @@ def create_public_contact(payload: PublicContactPayload, request: Request):
                 detail={
                     "code": "DUPLICATE_EMAIL",
                     "message": (
-                        "Ya tenemos tu email registrado. Mandanos un email a support@evolvianai.com "
+                        "Ya tenemos tu email registrado. Mandanos un email a sales@evolvianai.com "
                         "o chatea con Evolvian Assistant abriendo el icono a tu derecha."
                     ),
                 },

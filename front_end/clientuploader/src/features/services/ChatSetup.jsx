@@ -265,7 +265,7 @@ export default function ChatSetup() {
                 title={t("step5_title") || "Step 5 — Troubleshooting"}
                 text={
                   t("step5_text") ||
-                  "If the widget doesn’t appear, check that your public_client_id is correct, no CSP block is active, and you reloaded your site. Contact support@evolvianai.com if it persists."
+                  "If the widget doesn’t appear, check that your public_client_id is correct, no CSP block is active, and you reloaded your site. Contact sales@evolvianai.com if it persists."
                 }
                 img="/widgetstep5.png"
                 isMobile={isMobile}

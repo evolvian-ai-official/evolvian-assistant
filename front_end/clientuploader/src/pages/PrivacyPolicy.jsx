@@ -82,8 +82,8 @@ export default function PrivacyPolicy() {
       <p className="legal-paragraph">
         Data is retained as needed for service or legal compliance. You may request deletion
         anytime via{" "}
-        <a href="mailto:support@evolvianai.com" className="legal-link">
-          support@evolvianai.com
+        <a href="mailto:sales@evolvianai.com" className="legal-link">
+          sales@evolvianai.com
         </a>
         .
       </p>
@@ -97,8 +97,8 @@ export default function PrivacyPolicy() {
       <h2 className="legal-subtitle">9. User Rights (GDPR &amp; CCPA)</h2>
       <p className="legal-paragraph">
         Depending on your location, you may access, correct, or delete your data by contacting{" "}
-        <a href="mailto:support@evolvianai.com" className="legal-link">
-          support@evolvianai.com
+        <a href="mailto:sales@evolvianai.com" className="legal-link">
+          sales@evolvianai.com
         </a>
         .
       </p>
@@ -122,8 +122,8 @@ export default function PrivacyPolicy() {
       <h2 className="legal-subtitle">12. Contact Us</h2>
       <p className="legal-paragraph">
         For privacy inquiries or compliance matters, contact our Data Protection Officer at{" "}
-        <a href="mailto:support@evolvianai.com" className="legal-link">
-          support@evolvianai.com
+        <a href="mailto:sales@evolvianai.com" className="legal-link">
+          sales@evolvianai.com
         </a>
         .
       </p>

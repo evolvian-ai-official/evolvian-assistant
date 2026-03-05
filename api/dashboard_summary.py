@@ -579,7 +579,7 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
                 elif plan_info["id"] == "starter":
                     upgrade_suggestion = {"action": "upgrade", "to": "premium"}
                 elif plan_info["id"] == "premium":
-                    upgrade_suggestion = {"action": "contact_support", "email": "support@evolvianai.com"}
+                    upgrade_suggestion = {"action": "contact_support", "email": "sales@evolvianai.com"}
 
         # ✅ Respuesta final (todo igual, solo agrega el nuevo campo)
         total_ms = round((time.perf_counter() - request_started) * 1000, 1)

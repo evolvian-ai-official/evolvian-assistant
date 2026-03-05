@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import re
+import hashlib
 import uuid
 import unicodedata
 from datetime import datetime, timezone
@@ -68,6 +69,20 @@ INTEREST_KEYWORDS = (
     "tell me more",
     "more info",
 )
+
+
+def _safe_hash(value: Any, *, length: int = 12) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "na"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
+
+
+def _safe_tail(value: Any, *, size: int = 8) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "na"
+    return raw[-size:]
 
 
 def _normalize_text_key(value: Any) -> str:
@@ -667,10 +682,16 @@ async def _cancel_appointment_from_whatsapp(client_id: str, from_number: str) ->
         )
 
     logger.info(
-        "✅ WhatsApp appointment cancelled | client_id=%s | appointment_id=%s | user_phone=%s",
-        client_id,
-        appointment_id,
-        appointment.get("user_phone"),
+        "✅ WhatsApp appointment cancelled | client_ref=%s | appointment_ref=%s | user_phone_fp=%s",
+        _safe_tail(client_id),
+        _safe_tail(appointment_id),
+        _safe_hash(appointment.get("user_phone")),
+    )
+
+    logger.info(
+        "WhatsApp cancellation persisted | client_ref=%s | appointment_ref=%s",
+        _safe_tail(client_id),
+        _safe_tail(appointment_id),
     )
 
     notification_sent = False
@@ -741,12 +762,16 @@ async def incoming_message(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    logger.info("Incoming WhatsApp webhook")
-
     try:
         raw_body = await request.body()
         verify_meta_signature(request, raw_body)
         payload = json.loads(raw_body.decode("utf-8") or "{}")
+        entry_count = len(payload.get("entry") or []) if isinstance(payload, dict) else 0
+        logger.info(
+            "Incoming WhatsApp webhook accepted | body_bytes=%s | entry_count=%s",
+            len(raw_body or b""),
+            entry_count,
+        )
 
         # 🔴 CRÍTICO
         # Respondemos 200 INMEDIATO a Meta para evitar retries
@@ -771,6 +796,12 @@ async def process_whatsapp_payload(payload: dict):
         entry = payload.get("entry", [{}])[0]
         change = entry.get("changes", [{}])[0]
         value = change.get("value", {})
+        logger.info(
+            "Meta payload parsed | has_statuses=%s | has_messages=%s | metadata_phone_id_fp=%s",
+            bool(value.get("statuses")),
+            bool(value.get("messages")),
+            _safe_hash((value.get("metadata") or {}).get("phone_number_id")),
+        )
 
         # -------------------------------------------------------------
         # 🛑 Ignorar callbacks de estado (sent, delivered, read)
@@ -785,10 +816,10 @@ async def process_whatsapp_payload(payload: dict):
                 recipient_id = str(status_item.get("recipient_id") or "").strip() or "unknown"
                 error_text = _compact_meta_status_error(status_item)
                 logger.info(
-                    "WhatsApp status callback | message_id=%s | status=%s | recipient=%s | error=%s",
-                    provider_message_id,
+                    "WhatsApp status callback | message_fp=%s | status=%s | recipient_fp=%s | error=%s",
+                    _safe_hash(provider_message_id),
                     callback_status,
-                    recipient_id,
+                    _safe_hash(recipient_id),
                     error_text or "none",
                 )
                 _sync_marketing_status_from_meta_callback(status_item)
@@ -828,19 +859,19 @@ async def process_whatsapp_payload(payload: dict):
             # ---------------------------------------------------------
             channel = get_channel_by_wa_phone_id(phone_number_id)
             if not channel:
-                logger.warning("Unknown WhatsApp channel for phone_number_id=%s", phone_number_id)
+                logger.warning("Unknown WhatsApp channel for phone_number_id_fp=%s", _safe_hash(phone_number_id))
                 continue
 
             client_id = channel.get("client_id")
             if not client_id:
-                print("⚠️ Channel without client_id")
+                logger.warning("WhatsApp channel without client_id | phone_number_id_fp=%s", _safe_hash(phone_number_id))
                 continue
 
             # ---------------------------------------------------------
             # 🛑 DEDUPE CRÍTICO (idempotency por wamid)
             # ---------------------------------------------------------
             if is_duplicate_wa_message(wa_message_id):
-                print("🔁 Duplicate message ignored:", wa_message_id)
+                logger.info("Duplicate WhatsApp message ignored | message_fp=%s", _safe_hash(wa_message_id))
                 continue
 
             # Registrar inmediatamente para bloquear retries
@@ -852,11 +883,26 @@ async def process_whatsapp_payload(payload: dict):
 
             session_id = f"whatsapp-{from_number}"
             context_message_id = _extract_context_message_id(message)
+            logger.info(
+                "Meta inbound message | type=%s | message_fp=%s | from_fp=%s | session_fp=%s | context_fp=%s | text_len=%s",
+                message_type,
+                _safe_hash(wa_message_id),
+                _safe_hash(from_number),
+                _safe_hash(session_id),
+                _safe_hash(context_message_id),
+                len(str(user_text or "")),
+            )
 
             recent_marketing_row = _load_recent_marketing_recipient(
                 client_id=client_id,
                 from_number=from_number,
                 context_message_id=context_message_id,
+            )
+            logger.info(
+                "Meta marketing context resolved | message_fp=%s | has_recent_campaign=%s | campaign_ref=%s",
+                _safe_hash(wa_message_id),
+                bool(recent_marketing_row),
+                _safe_tail((recent_marketing_row or {}).get("campaign_id")),
             )
             known_opt_out_labels = _load_campaign_opt_out_labels(
                 client_id=client_id,
@@ -889,12 +935,23 @@ async def process_whatsapp_payload(payload: dict):
                         recipient_key=(recent_marketing_row or {}).get("recipient_key"),
                         provider_message_id=context_message_id or (recent_marketing_row or {}).get("provider_message_id"),
                     )
+                    logger.info(
+                        "Meta opt-out processed | message_fp=%s | campaign_ref=%s | email_fp=%s",
+                        _safe_hash(wa_message_id),
+                        _safe_tail((recent_marketing_row or {}).get("campaign_id")),
+                        _safe_hash(recipient_email),
+                    )
                     await send_whatsapp_message(
                         to_number=from_number,
                         text="Listo. Dejaste de recibir campañas de marketing.",
                         channel=channel,
                     )
                 else:
+                    logger.info(
+                        "Meta opt-out missing email | message_fp=%s | campaign_ref=%s",
+                        _safe_hash(wa_message_id),
+                        _safe_tail((recent_marketing_row or {}).get("campaign_id")),
+                    )
                     await send_whatsapp_message(
                         to_number=from_number,
                         text="No pude completar la baja automática. Escríbenos para ayudarte.",
@@ -929,11 +986,20 @@ async def process_whatsapp_payload(payload: dict):
                         alert_priority="high",
                         alert_title="Prospect interested in campaign",
                     )
+                    logger.info(
+                        "Meta campaign-interest handoff result | message_fp=%s | campaign_ref=%s | handoff_ref=%s | reused=%s | alert_created=%s | feature_enabled=%s",
+                        _safe_hash(wa_message_id),
+                        _safe_tail((recent_marketing_row or {}).get("campaign_id")),
+                        _safe_tail((handoff_info or {}).get("handoff_id")),
+                        bool((handoff_info or {}).get("reused")),
+                        bool((handoff_info or {}).get("alert_created")),
+                        bool((handoff_info or {}).get("feature_enabled")),
+                    )
                 except Exception as handoff_error:
                     logger.exception(
-                        "❌ Failed creating campaign-interest handoff | client_id=%s | session_id=%s | err=%s",
-                        client_id,
-                        session_id,
+                        "❌ Failed creating campaign-interest handoff | client_ref=%s | session_fp=%s | err=%s",
+                        _safe_tail(client_id),
+                        _safe_hash(session_id),
                         handoff_error,
                     )
 
@@ -975,16 +1041,16 @@ async def process_whatsapp_payload(payload: dict):
                         from_number=from_number,
                     )
                     logger.info(
-                        "🧾 WhatsApp cancel action | client_id=%s | from=%s | cancelled=%s",
-                        client_id,
-                        from_number,
+                        "🧾 WhatsApp cancel action | client_ref=%s | from_fp=%s | cancelled=%s",
+                        _safe_tail(client_id),
+                        _safe_hash(from_number),
                         cancelled,
                     )
                 except Exception:
                     logger.exception(
-                        "❌ WhatsApp cancel action failed | client_id=%s | from=%s",
-                        client_id,
-                        from_number,
+                        "❌ WhatsApp cancel action failed | client_ref=%s | from_fp=%s",
+                        _safe_tail(client_id),
+                        _safe_hash(from_number),
                     )
                     cancel_msg = "⚠️ No pude cancelar tu cita en este momento. Intenta de nuevo."
 
@@ -1016,9 +1082,9 @@ async def process_whatsapp_payload(payload: dict):
                 channel=channel,
             )
 
-            print("✅ WhatsApp message processed:", wa_message_id)
+            logger.info("WhatsApp message processed | message_fp=%s", _safe_hash(wa_message_id))
 
     except Exception as e:
         # ⚠️ Nunca levantar excepción aquí
         # Meta YA recibió 200 OK
-        print("❌ WhatsApp background error:", str(e))
+        logger.exception("❌ WhatsApp background error: %s", str(e))

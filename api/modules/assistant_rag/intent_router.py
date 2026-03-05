@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import re
@@ -54,6 +55,20 @@ AGENDA_KEYWORDS = {
     "agendar", "agenda", "cita", "sesión", "sesion", "reservar",
     "horario", "book", "schedule", "appointment", "slot", "slots"
 }
+
+
+def _safe_hash(value: Any, *, length: int = 12) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "na"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
+
+
+def _safe_tail(value: Any, *, size: int = 8) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "na"
+    return raw[-size:]
 
 # ============================================================
 # 🌍 Detección de idioma
@@ -359,6 +374,13 @@ def _upsert_whatsapp_handoff(
         "reused": False,
     }
     if not _client_has_handoff_feature(client_id):
+        logger.info(
+            "WhatsApp handoff skipped (feature disabled) | client_ref=%s | session_fp=%s | trigger=%s | reason=%s",
+            _safe_tail(client_id),
+            _safe_hash(session_id),
+            str(trigger or ""),
+            str(reason or ""),
+        )
         return result
 
     result["feature_enabled"] = True
@@ -421,6 +443,12 @@ def _upsert_whatsapp_handoff(
         logger.warning("Could not upsert conversation for WhatsApp handoff: %s", e)
 
     result["conversation_id"] = conversation_id
+    logger.info(
+        "WhatsApp handoff conversation upserted | client_ref=%s | session_fp=%s | conversation_ref=%s",
+        _safe_tail(client_id),
+        _safe_hash(session_id),
+        _safe_tail(conversation_id),
+    )
 
     handoff_id = None
     try:
@@ -448,6 +476,8 @@ def _upsert_whatsapp_handoff(
                         "contact_phone": phone,
                         "trigger": trigger,
                         "reason": reason,
+                        "status": "open",
+                        "resolved_at": None,
                         "last_user_message": (user_message or "").strip() or None,
                         "last_ai_message": (ai_message or "").strip() or None,
                         "updated_at": now_iso,
@@ -456,6 +486,12 @@ def _upsert_whatsapp_handoff(
                 .eq("id", handoff_id)
                 .eq("client_id", client_id)
                 .execute()
+            )
+            logger.info(
+                "WhatsApp handoff reused | client_ref=%s | session_fp=%s | handoff_ref=%s",
+                _safe_tail(client_id),
+                _safe_hash(session_id),
+                _safe_tail(handoff_id),
             )
         else:
             metadata = {
@@ -490,6 +526,12 @@ def _upsert_whatsapp_handoff(
             )
             if insert_res and insert_res.data:
                 handoff_id = insert_res.data[0].get("id")
+                logger.info(
+                    "WhatsApp handoff created | client_ref=%s | session_fp=%s | handoff_ref=%s",
+                    _safe_tail(client_id),
+                    _safe_hash(session_id),
+                    _safe_tail(handoff_id),
+                )
     except Exception as e:
         logger.warning("Could not create/update WhatsApp handoff request: %s", e)
 
@@ -500,14 +542,38 @@ def _upsert_whatsapp_handoff(
     try:
         existing_alert_res = (
             supabase.table("conversation_alerts")
-            .select("id")
+            .select("id,status")
             .eq("client_id", client_id)
             .eq("source_handoff_request_id", handoff_id)
-            .in_("status", ["open", "acknowledged"])
+            .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
-        if existing_alert_res and existing_alert_res.data:
+        existing_alert = (existing_alert_res.data or [None])[0] if existing_alert_res else None
+        if existing_alert:
+            (
+                supabase.table("conversation_alerts")
+                .update(
+                    {
+                        "conversation_id": conversation_id,
+                        "status": "open",
+                        "resolved_at": None,
+                        "priority": str(alert_priority or "normal"),
+                        "title": str(alert_title or "Human intervention requested"),
+                        "body": (user_message or ai_message or "WhatsApp escalation request")[:500],
+                    }
+                )
+                .eq("id", existing_alert.get("id"))
+                .eq("client_id", client_id)
+                .execute()
+            )
+            result["alert_created"] = True
+            logger.info(
+                "WhatsApp handoff alert reopened | client_ref=%s | handoff_ref=%s | alert_ref=%s",
+                _safe_tail(client_id),
+                _safe_tail(handoff_id),
+                _safe_tail(existing_alert.get("id")),
+            )
             return result
 
         alert_res = (
@@ -527,6 +593,18 @@ def _upsert_whatsapp_handoff(
             .execute()
         )
         result["alert_created"] = bool(alert_res and getattr(alert_res, "data", None))
+        created_alert_id = None
+        if alert_res and getattr(alert_res, "data", None):
+            first_row = (alert_res.data or [None])[0]
+            if isinstance(first_row, dict):
+                created_alert_id = first_row.get("id")
+        logger.info(
+            "WhatsApp handoff alert created | client_ref=%s | handoff_ref=%s | alert_ref=%s | created=%s",
+            _safe_tail(client_id),
+            _safe_tail(handoff_id),
+            _safe_tail(created_alert_id),
+            bool(result["alert_created"]),
+        )
     except Exception as e:
         logger.warning("Could not upsert WhatsApp alert for handoff=%s: %s", handoff_id, e)
 
