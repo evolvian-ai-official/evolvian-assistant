@@ -11,7 +11,6 @@ import json
 import os
 import re
 import requests
-from babel.dates import format_datetime
 
 from api.config.config import supabase
 from api.modules.whatsapp.whatsapp_sender import (
@@ -31,6 +30,7 @@ from api.appointments.template_language_resolution import (
     resolve_locale_for_rendering,
     resolve_template_for_appointment,
 )
+from api.utils.babel_compat import format_datetime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

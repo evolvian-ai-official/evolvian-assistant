@@ -6,7 +6,6 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, time as dtime
-from babel.dates import format_datetime
 from api.modules.assistant_rag.prompts.calendar_prompt import get_calendar_prompt
 from api.modules.assistant_rag.llm import openai_chat
 from api.modules.assistant_rag.supabase_client import supabase
@@ -16,6 +15,7 @@ from api.appointments.create_appointment import (
     CreateAppointmentPayload,
     create_appointment as create_appointment_route,
 )
+from api.utils.babel_compat import format_datetime
 
 
 

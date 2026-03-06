@@ -210,67 +210,13 @@ export default function ChatSetup() {
               </div>
             </div>
 
-            {/* 📘 Step-by-Step Installation Guide */}
-            <div style={guideContainer}>
-              <h2 style={guideTitle}>{t("step_by_step_guide") || "Step-by-Step Installation Guide"}</h2>
-
-              {/* STEP 1 */}
-              <GuideStep
-                title={t("step1_title") || "Step 1 — Get Your Public Client ID"}
-                text={
-                  t("step1_text") ||
-                  "Go to your Evolvian Dashboard → Settings. Copy your public_client_id. You’ll use it in both widget and iframe integrations."
-                }
-                img="/widgetstep1.png"
-                isMobile={isMobile}
-              />
-
-              {/* STEP 2 */}
-              <GuideStep
-                title={t("step2_title") || "Step 2 — Add the Script to Your Site"}
-                text={
-                  t("step2_text") ||
-                  "Insert the script snippet just before the closing </body> tag on your website. This will automatically display the Evolvian floating chat button."
-                }
-                code={scriptCode}
-                img="/widgetstep2.png"
-                isMobile={isMobile}
-              />
-
-              {/* STEP 3 */}
-              <GuideStep
-                title={t("step3_title") || "Step 3 — (Alternative) Use Iframe Mode"}
-                text={
-                  t("step3_text") ||
-                  "If you prefer a fixed chat window (e.g., on a Contact page), use the iframe version instead. You can control its position and design freely."
-                }
-                code={iframeCode}
-                img="/widgetstep3.png"
-                isMobile={isMobile}
-              />
-
-              {/* STEP 4 */}
-              <GuideStep
-                title={t("step4_title") || "Step 4 — Test and Verify"}
-                text={
-                  t("step4_text") ||
-                  "Once embedded, verify that the chat icon appears, opens correctly, and messages sync with your dashboard."
-                }
-                img="/widgetstep4.png"
-                isMobile={isMobile}
-              />
-
-              {/* STEP 5 */}
-              <GuideStep
-                title={t("step5_title") || "Step 5 — Troubleshooting"}
-                text={
-                  t("step5_text") ||
-                  "If the widget doesn’t appear, check that your public_client_id is correct, no CSP block is active, and you reloaded your site. Contact sales@evolvianai.com if it persists."
-                }
-                img="/widgetstep5.png"
-                isMobile={isMobile}
-              />
-            </div>
+            <WidgetInstallPlaybook
+              publicClientId={publicClientId}
+              scriptCode={scriptCode}
+              iframeCode={iframeCode}
+              isMobile={isMobile}
+              onCopy={handleCopy}
+            />
           </>
         ) : (
           <WidgetCustomizer /> // 🎨 muestra el otro JSX
@@ -280,25 +226,452 @@ export default function ChatSetup() {
   );
 }
 
-/* 🧩 Reusable guide step component */
-function GuideStep({ title, text, img, code, isMobile }) {
+function WidgetInstallPlaybook({ publicClientId, scriptCode, iframeCode, isMobile, onCopy }) {
+  const { t } = useLanguage();
+  const [currentStep, setCurrentStep] = useState(0);
+  const [selectedOption, setSelectedOption] = useState("floating");
+  const [selectedPlatform, setSelectedPlatform] = useState("wordpress");
+  const [checkedItems, setCheckedItems] = useState({
+    visible: false,
+    open: false,
+    reply: false,
+    history: false,
+  });
+  const [openTrouble, setOpenTrouble] = useState(null);
+  const [copiedState, setCopiedState] = useState({
+    id: false,
+    codeFloating: false,
+    codeIframe: false,
+  });
+
+  const ui = {
+    placeholderId: t("playbook_placeholder_id"),
+    title: t("playbook_title"),
+    subtitle: t("playbook_subtitle"),
+    progress: [
+      t("playbook_progress_1"),
+      t("playbook_progress_2"),
+      t("playbook_progress_3"),
+      t("playbook_progress_4"),
+      t("playbook_progress_5"),
+    ],
+    step1Title: t("playbook_step1_title"),
+    step1Desc: t("playbook_step1_desc"),
+    idLabel: t("playbook_id_label"),
+    copyId: t("playbook_copy_id"),
+    copied: t("playbook_copied"),
+    step1Hint: t("playbook_step1_hint"),
+    step1Alt: t("playbook_step1_alt"),
+    chooseTypeCta: t("playbook_choose_type_cta"),
+    step2Title: t("playbook_step2_title"),
+    step2Desc: t("playbook_step2_desc"),
+    recommended: t("playbook_recommended"),
+    advanced: t("playbook_advanced"),
+    floatingTitle: t("playbook_floating_title"),
+    floatingDesc: t("playbook_floating_desc"),
+    embeddedTitle: t("playbook_embedded_title"),
+    embeddedDesc: t("playbook_embedded_desc"),
+    floatingHint: t("playbook_floating_hint"),
+    iframeHint: t("playbook_iframe_hint"),
+    back: t("playbook_back"),
+    getCode: t("playbook_get_code"),
+    step3Title: t("playbook_step3_title"),
+    step3Desc: t("playbook_step3_desc"),
+    codeLabelFloating: t("playbook_code_label_floating"),
+    codeLabelIframe: t("playbook_code_label_iframe"),
+    copyCode: t("playbook_copy_code"),
+    keepIdHint: t("playbook_keep_id_hint"),
+    platformTitle: t("playbook_platform_title"),
+    platforms: {
+      wordpress: t("playbook_platform_wordpress"),
+      shopify: t("playbook_platform_shopify"),
+      wix: t("playbook_platform_wix"),
+      squarespace: t("playbook_platform_squarespace"),
+      webflow: t("playbook_platform_webflow"),
+      html: t("playbook_platform_html"),
+    },
+    platformInstructions: {
+      wordpress: [
+        t("playbook_platform_wordpress_step_1"),
+        t("playbook_platform_wordpress_step_2"),
+        t("playbook_platform_wordpress_step_3"),
+        t("playbook_platform_wordpress_step_4"),
+      ],
+      shopify: [
+        t("playbook_platform_shopify_step_1"),
+        t("playbook_platform_shopify_step_2"),
+        t("playbook_platform_shopify_step_3"),
+        t("playbook_platform_shopify_step_4"),
+      ],
+      wix: [
+        t("playbook_platform_wix_step_1"),
+        t("playbook_platform_wix_step_2"),
+        t("playbook_platform_wix_step_3"),
+        t("playbook_platform_wix_step_4"),
+      ],
+      squarespace: [
+        t("playbook_platform_squarespace_step_1"),
+        t("playbook_platform_squarespace_step_2"),
+        t("playbook_platform_squarespace_step_3"),
+      ],
+      webflow: [
+        t("playbook_platform_webflow_step_1"),
+        t("playbook_platform_webflow_step_2"),
+        t("playbook_platform_webflow_step_3"),
+        t("playbook_platform_webflow_step_4"),
+      ],
+      html: [
+        t("playbook_platform_html_step_1"),
+        t("playbook_platform_html_step_2"),
+        t("playbook_platform_html_step_3"),
+        t("playbook_platform_html_step_4"),
+      ],
+    },
+    step2Alt: t("playbook_step2_alt"),
+    step3Alt: t("playbook_step3_alt"),
+    pastedCta: t("playbook_pasted_cta"),
+    step4Title: t("playbook_step4_title"),
+    step4Desc: t("playbook_step4_desc"),
+    checks: [
+      ["visible", t("playbook_check_visible")],
+      ["open", t("playbook_check_open")],
+      ["reply", t("playbook_check_reply")],
+      ["history", t("playbook_check_history")],
+    ],
+    liveTitle: t("playbook_live_title"),
+    liveDesc: t("playbook_live_desc"),
+    step4Alt: t("playbook_step4_alt"),
+    needHelpCta: t("playbook_need_help_cta"),
+    step5Title: t("playbook_step5_title"),
+    step5Desc: t("playbook_step5_desc"),
+    troubles: [
+      {
+        key: "not-visible",
+        q: t("playbook_trouble_not_visible_q"),
+        a: t("playbook_trouble_not_visible_a"),
+      },
+      {
+        key: "no-reply",
+        q: t("playbook_trouble_no_reply_q"),
+        a: t("playbook_trouble_no_reply_a"),
+      },
+      {
+        key: "platform-limits",
+        q: t("playbook_trouble_platform_limits_q"),
+        a: t("playbook_trouble_platform_limits_a"),
+      },
+      {
+        key: "browser-error",
+        q: t("playbook_trouble_browser_error_q"),
+        a: t("playbook_trouble_browser_error_a"),
+      },
+    ],
+    step5Alt: t("playbook_step5_alt"),
+    supportTitle: t("playbook_support_title"),
+    supportText: t("playbook_support_text"),
+    contactSupport: t("playbook_contact_support"),
+    backToVerify: t("playbook_back_to_verify"),
+    restartGuide: t("playbook_restart_guide"),
+  };
+
+  const safeClientId = String(publicClientId || ui.placeholderId);
+  const allChecksDone = Object.values(checkedItems).every(Boolean);
+
+  const copyWithFeedback = (value, installType, key) => {
+    onCopy(value, installType);
+    setCopiedState((prev) => ({ ...prev, [key]: true }));
+    setTimeout(() => {
+      setCopiedState((prev) => ({ ...prev, [key]: false }));
+    }, 1800);
+  };
+
+  const goToStep = (step) => {
+    const normalized = Math.max(0, Math.min(4, step));
+    setCurrentStep(normalized);
+  };
+
+  const toggleCheck = (key) => {
+    setCheckedItems((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleTrouble = (key) => {
+    setOpenTrouble((prev) => (prev === key ? null : key));
+  };
+
+  const selectedCode = selectedOption === "floating" ? scriptCode : iframeCode;
+  const selectedInstallType = selectedOption === "floating" ? "script" : "iframe";
+  const currentCodeLabel = selectedOption === "floating" ? ui.codeLabelFloating : ui.codeLabelIframe;
+  const codeCopied = selectedOption === "floating" ? copiedState.codeFloating : copiedState.codeIframe;
+  const platformEntries = Object.entries(ui.platforms);
+
   return (
-    <div style={{ ...guideRow, flexDirection: isMobile ? "column" : "row" }}>
-      <div style={guideLeft}>
-        <h3 style={guideStepTitle}>{title}</h3>
-        <p style={guideText}>{text}</p>
-        {code && <pre style={codeStyle}>{code}</pre>}
+    <div style={playbookContainer}>
+      <h2 style={playbookTitle}>{ui.title}</h2>
+      <p style={playbookSubtitle}>{ui.subtitle}</p>
+
+      <div style={{ ...playbookProgressBar, gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)" }}>
+        {ui.progress.map((label, index) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => goToStep(index)}
+            style={{
+              ...playbookProgressStep,
+              ...(currentStep === index ? playbookProgressActive : {}),
+              ...(index < currentStep ? playbookProgressDone : {}),
+            }}
+          >
+            {index < currentStep ? `✓ ${label}` : label}
+          </button>
+        ))}
       </div>
-      <div style={guideRight}>
-        <img
-          src={img}
-          alt={title}
-          style={{
-            ...gifStyle,
-            maxHeight: isMobile ? "340px" : gifStyle.maxHeight,
-          }}
-        />
-      </div>
+
+      {currentStep === 0 && (
+        <div style={playbookPanel}>
+          <div style={playbookCard}>
+            <h3 style={playbookCardTitle}>{ui.step1Title}</h3>
+            <p style={playbookText}>{ui.step1Desc}</p>
+            <div
+              style={{
+                ...playbookIdBox,
+                flexDirection: isMobile ? "column" : "row",
+                alignItems: isMobile ? "stretch" : "center",
+              }}
+            >
+              <div>
+                <p style={playbookIdLabel}>{ui.idLabel}</p>
+                <p style={playbookIdValue}>{safeClientId}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => copyWithFeedback(safeClientId, null, "id")}
+                style={playbookCopyButton}
+              >
+                {copiedState.id ? ui.copied : ui.copyId}
+              </button>
+            </div>
+            <div style={playbookHint}>{ui.step1Hint}</div>
+          </div>
+
+          <div style={playbookImageCard}>
+            <img src="/widgetstep1.png" alt={ui.step1Alt} style={playbookImage} />
+          </div>
+
+          <div style={playbookNavRow}>
+            <span />
+            <button type="button" onClick={() => goToStep(1)} style={playbookPrimaryButton}>
+              {ui.chooseTypeCta}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {currentStep === 1 && (
+        <div style={playbookPanel}>
+          <div style={playbookCard}>
+            <h3 style={playbookCardTitle}>{ui.step2Title}</h3>
+            <p style={playbookText}>{ui.step2Desc}</p>
+            <div style={{ ...playbookOptionGrid, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
+              <button
+                type="button"
+                onClick={() => setSelectedOption("floating")}
+                style={{
+                  ...playbookOptionCard,
+                  ...(selectedOption === "floating" ? playbookOptionSelected : {}),
+                }}
+              >
+                <span style={playbookOptionTag}>{ui.recommended}</span>
+                <strong>{ui.floatingTitle}</strong>
+                <p style={playbookOptionText}>{ui.floatingDesc}</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedOption("iframe")}
+                style={{
+                  ...playbookOptionCard,
+                  ...(selectedOption === "iframe" ? playbookOptionSelected : {}),
+                }}
+              >
+                <span style={{ ...playbookOptionTag, backgroundColor: "rgba(74,144,226,0.14)", color: "#4A90E2" }}>
+                  {ui.advanced}
+                </span>
+                <strong>{ui.embeddedTitle}</strong>
+                <p style={playbookOptionText}>{ui.embeddedDesc}</p>
+              </button>
+            </div>
+            <div style={playbookHint}>{selectedOption === "floating" ? ui.floatingHint : ui.iframeHint}</div>
+          </div>
+
+          <div style={playbookNavRow}>
+            <button type="button" onClick={() => goToStep(0)} style={playbookGhostButton}>
+              {ui.back}
+            </button>
+            <button type="button" onClick={() => goToStep(2)} style={playbookPrimaryButton}>
+              {ui.getCode}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {currentStep === 2 && (
+        <div style={playbookPanel}>
+          <div style={playbookCard}>
+            <h3 style={playbookCardTitle}>{ui.step3Title}</h3>
+            <p style={playbookText}>{ui.step3Desc}</p>
+            <div style={playbookCodeBlock}>
+              <div style={playbookCodeHeader}>
+                <span>{currentCodeLabel}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyWithFeedback(
+                      selectedCode,
+                      selectedInstallType,
+                      selectedOption === "floating" ? "codeFloating" : "codeIframe"
+                    )
+                  }
+                  style={playbookCopyButtonSmall}
+                >
+                  {codeCopied ? ui.copied : ui.copyCode}
+                </button>
+              </div>
+              <pre style={playbookCodePre}>{selectedCode}</pre>
+            </div>
+            <div style={playbookHint}>{ui.keepIdHint}</div>
+          </div>
+
+          <div style={playbookCard}>
+            <h4 style={playbookMiniTitle}>{ui.platformTitle}</h4>
+            <div style={{ ...playbookTabs, justifyContent: isMobile ? "flex-start" : "space-between" }}>
+              {platformEntries.map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setSelectedPlatform(key)}
+                  style={{
+                    ...playbookTabButton,
+                    ...(selectedPlatform === key ? playbookTabButtonActive : {}),
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <ol style={playbookOrderedList}>
+              {(ui.platformInstructions[selectedPlatform] || []).map((line) => (
+                <li key={line} style={playbookText}>{line}</li>
+              ))}
+            </ol>
+          </div>
+
+          <div style={{ ...playbookImageGrid, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
+            <div style={playbookImageCard}>
+              <img src="/widgetstep2.png" alt={ui.step2Alt} style={playbookImage} />
+            </div>
+            <div style={playbookImageCard}>
+              <img src="/widgetstep3.png" alt={ui.step3Alt} style={playbookImage} />
+            </div>
+          </div>
+
+          <div style={playbookNavRow}>
+            <button type="button" onClick={() => goToStep(1)} style={playbookGhostButton}>
+              {ui.back}
+            </button>
+            <button type="button" onClick={() => goToStep(3)} style={playbookPrimaryButton}>
+              {ui.pastedCta}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {currentStep === 3 && (
+        <div style={playbookPanel}>
+          <div style={playbookCard}>
+            <h3 style={playbookCardTitle}>{ui.step4Title}</h3>
+            <p style={playbookText}>{ui.step4Desc}</p>
+            <div style={playbookChecklist}>
+              {ui.checks.map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => toggleCheck(key)}
+                  style={{
+                    ...playbookCheckItem,
+                    ...(checkedItems[key] ? playbookCheckItemActive : {}),
+                  }}
+                >
+                  <span style={playbookCheckBox}>{checkedItems[key] ? "✓" : ""}</span>
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+
+            {allChecksDone && (
+              <div style={playbookSuccess}>
+                <strong>{ui.liveTitle}</strong>
+                <p style={{ margin: "0.3rem 0 0", color: "#2E7D6A" }}>{ui.liveDesc}</p>
+              </div>
+            )}
+          </div>
+
+          <div style={playbookImageCard}>
+            <img src="/widgetstep5.png" alt={ui.step4Alt} style={playbookImage} />
+          </div>
+
+          <div style={playbookNavRow}>
+            <button type="button" onClick={() => goToStep(2)} style={playbookGhostButton}>
+              {ui.back}
+            </button>
+            <button type="button" onClick={() => goToStep(4)} style={playbookPrimaryButton}>
+              {ui.needHelpCta}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {currentStep === 4 && (
+        <div style={playbookPanel}>
+          <div style={playbookCard}>
+            <h3 style={playbookCardTitle}>{ui.step5Title}</h3>
+            <p style={playbookText}>{ui.step5Desc}</p>
+
+            {ui.troubles.map((item) => (
+              <div key={item.key} style={playbookTroubleItem}>
+                <button
+                  type="button"
+                  onClick={() => toggleTrouble(item.key)}
+                  style={playbookTroubleQuestion}
+                >
+                  <span>{item.q}</span>
+                  <span style={{ color: "#4A90E2" }}>{openTrouble === item.key ? "▲" : "▼"}</span>
+                </button>
+                {openTrouble === item.key && <p style={playbookTroubleAnswer}>{item.a}</p>}
+              </div>
+            ))}
+          </div>
+
+          <div style={playbookImageCard}>
+            <img src="/widgetstep4.png" alt={ui.step5Alt} style={playbookImage} />
+          </div>
+
+          <div style={playbookHelpStrip}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 700, color: "#274472" }}>{ui.supportTitle}</p>
+              <p style={{ margin: "0.2rem 0 0", color: "#4A90E2" }}>{ui.supportText}</p>
+            </div>
+            <a href="mailto:sales@evolvianai.com" style={playbookHelpLink}>{ui.contactSupport}</a>
+          </div>
+
+          <div style={playbookNavRow}>
+            <button type="button" onClick={() => goToStep(3)} style={playbookGhostButton}>
+              {ui.backToVerify}
+            </button>
+            <button type="button" onClick={() => goToStep(0)} style={playbookPrimaryButton}>
+              {ui.restartGuide}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -462,81 +835,390 @@ const actionButtonStyle = {
   alignSelf: "flex-start",
 };
 
-
-
-/* 📘 Guía — versión estable y alineada */
-const guideContainer = {
+/* 📘 Full HTML Playbook */
+const playbookContainer = {
   marginTop: "2rem",
-  backgroundColor: "#FFFFFF",
-  border: "1px solid #EDEDED",
+  background: "linear-gradient(180deg, #F8FAFF 0%, #FFFFFF 100%)",
+  border: "1px solid #DCE7F7",
   borderRadius: "16px",
-  padding: "clamp(0.9rem, 0.8rem + 1vw, 1.6rem)",
-  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+  padding: "clamp(0.9rem, 0.9rem + 1vw, 1.8rem)",
+  boxShadow: "0 6px 22px rgba(39, 68, 114, 0.08)",
 };
 
-const guideTitle = {
-  color: "#A3D9B1",
-  fontSize: "1.6rem",
+const playbookTitle = {
+  color: "#274472",
+  fontSize: "1.5rem",
   fontWeight: "bold",
-  marginBottom: "2rem",
+  marginBottom: "0.35rem",
   textAlign: "center",
 };
 
-/* 🔹 Grid más equilibrado y robusto */
-const guideRow = {
-  display: "flex",
-  flexWrap: "wrap",
-  alignItems: "stretch",
-  gap: "1rem",
-  marginBottom: "1.3rem",
+const playbookSubtitle = {
+  color: "#4A90E2",
+  fontSize: "0.92rem",
+  textAlign: "center",
+  margin: "0 auto 1rem",
+  maxWidth: "760px",
 };
 
-const guideLeft = {
-  flex: "1 1 40%", // 40% texto
+const playbookProgressBar = {
+  display: "grid",
+  gap: "0.5rem",
+  marginBottom: "1.2rem",
+};
+
+const playbookProgressStep = {
+  border: "1px solid #DCE7F7",
   backgroundColor: "#FFFFFF",
-  border: "1px solid #EDEDED",
-  borderRadius: "14px",
-  padding: "1.8rem",
-  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+  color: "#4A90E2",
+  borderRadius: "999px",
+  fontSize: "0.77rem",
+  fontWeight: 600,
+  padding: "0.44rem 0.5rem",
+  cursor: "pointer",
+  textAlign: "center",
+};
+
+const playbookProgressActive = {
+  backgroundColor: "#F5A623",
+  color: "#FFFFFF",
+  borderColor: "#F5A623",
+};
+
+const playbookProgressDone = {
+  color: "#2EB39A",
+};
+
+const playbookPanel = {
   display: "flex",
   flexDirection: "column",
-  justifyContent: "center",
-  minWidth: 0,
+  gap: "1rem",
 };
 
-const guideRight = {
-  flex: "1 1 55%", // 55% imagen
+const playbookCard = {
+  border: "1px solid #DCE7F7",
   backgroundColor: "#FFFFFF",
-  border: "1px solid #EDEDED",
   borderRadius: "14px",
   padding: "1rem",
-  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  minWidth: 0,
+  boxShadow: "0 2px 12px rgba(39,68,114,0.06)",
 };
 
-const guideStepTitle = {
-  color: "#F5A623",
-  fontSize: "1.1rem",
-  fontWeight: "bold",
-  marginBottom: "0.6rem",
-};
-
-const guideText = {
+const playbookCardTitle = {
   color: "#274472",
-  fontSize: "0.95rem",
-  marginBottom: "1rem",
-  lineHeight: "1.6",
+  margin: 0,
+  fontSize: "1.08rem",
+  fontWeight: 700,
 };
 
-const gifStyle = {
+const playbookText = {
+  color: "#274472",
+  fontSize: "0.93rem",
+  lineHeight: 1.6,
+  margin: "0.55rem 0",
+};
+
+const playbookIdBox = {
+  backgroundColor: "#F8FAFF",
+  border: "1px solid #DCE7F7",
+  borderRadius: "10px",
+  padding: "0.9rem",
+  display: "flex",
+  justifyContent: "space-between",
+  gap: "0.8rem",
+};
+
+const playbookIdLabel = {
+  margin: 0,
+  color: "#4A90E2",
+  fontSize: "0.76rem",
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+};
+
+const playbookIdValue = {
+  margin: "0.2rem 0 0",
+  color: "#F5A623",
+  fontWeight: 700,
+  fontFamily: "monospace",
+};
+
+const playbookCopyButton = {
+  backgroundColor: "#F5A623",
+  color: "#FFFFFF",
+  border: "none",
+  borderRadius: "9px",
+  padding: "0.52rem 0.95rem",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const playbookCopyButtonSmall = {
+  backgroundColor: "#F5A623",
+  color: "#FFFFFF",
+  border: "none",
+  borderRadius: "8px",
+  padding: "0.36rem 0.7rem",
+  fontSize: "0.75rem",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const playbookHint = {
+  marginTop: "0.8rem",
+  backgroundColor: "rgba(74, 144, 226, 0.08)",
+  border: "1px solid rgba(74, 144, 226, 0.2)",
+  color: "#274472",
+  borderRadius: "8px",
+  padding: "0.7rem 0.8rem",
+  fontSize: "0.84rem",
+};
+
+const playbookImageCard = {
+  backgroundColor: "#FFFFFF",
+  border: "1px solid #DCE7F7",
+  borderRadius: "14px",
+  padding: "0.8rem",
+  boxShadow: "0 2px 12px rgba(39,68,114,0.05)",
+};
+
+const playbookImage = {
   width: "100%",
   height: "auto",
-  borderRadius: "14px",
-  border: "1px solid #EDEDED",
-  boxShadow: "0 3px 12px rgba(0,0,0,0.06)",
-  objectFit: "contain",
-  maxHeight: "500px",
+  borderRadius: "12px",
+  border: "1px solid #E5ECF8",
+};
+
+const playbookNavRow = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.6rem",
+  flexWrap: "wrap",
+};
+
+const playbookPrimaryButton = {
+  backgroundColor: "#F5A623",
+  color: "#FFFFFF",
+  border: "none",
+  borderRadius: "9px",
+  padding: "0.6rem 1rem",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const playbookGhostButton = {
+  backgroundColor: "transparent",
+  color: "#274472",
+  border: "1px solid #DCE7F7",
+  borderRadius: "9px",
+  padding: "0.56rem 0.95rem",
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const playbookOptionGrid = {
+  display: "grid",
+  gap: "0.85rem",
+  marginTop: "0.65rem",
+};
+
+const playbookOptionCard = {
+  textAlign: "left",
+  border: "1px solid #DCE7F7",
+  borderRadius: "12px",
+  backgroundColor: "#FFFFFF",
+  padding: "0.9rem",
+  cursor: "pointer",
+};
+
+const playbookOptionSelected = {
+  borderColor: "#F5A623",
+  boxShadow: "0 0 0 2px rgba(245,166,35,0.18) inset",
+};
+
+const playbookOptionTag = {
+  display: "inline-block",
+  backgroundColor: "rgba(245,166,35,0.14)",
+  color: "#F5A623",
+  borderRadius: "6px",
+  fontSize: "0.66rem",
+  padding: "0.18rem 0.45rem",
+  marginBottom: "0.4rem",
+  fontWeight: 700,
+  textTransform: "uppercase",
+};
+
+const playbookOptionText = {
+  color: "#4A90E2",
+  fontSize: "0.84rem",
+  margin: "0.35rem 0 0",
+};
+
+const playbookCodeBlock = {
+  border: "1px solid #DCE7F7",
+  borderRadius: "10px",
+  overflow: "hidden",
+  marginTop: "0.65rem",
+};
+
+const playbookCodeHeader = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.6rem",
+  backgroundColor: "#F8FAFF",
+  padding: "0.55rem 0.7rem",
+  color: "#4A90E2",
+  fontSize: "0.78rem",
+  fontWeight: 700,
+};
+
+const playbookCodePre = {
+  margin: 0,
+  padding: "0.85rem",
+  backgroundColor: "#FFFFFF",
+  color: "#274472",
+  overflowX: "auto",
+  fontSize: "0.75rem",
+  lineHeight: 1.55,
+};
+
+const playbookMiniTitle = {
+  color: "#274472",
+  margin: 0,
+  fontSize: "0.96rem",
+  fontWeight: "bold",
+};
+
+const playbookTabs = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "0.45rem",
+  margin: "0.8rem 0",
+};
+
+const playbookTabButton = {
+  border: "1px solid #DCE7F7",
+  backgroundColor: "#FFFFFF",
+  color: "#4A90E2",
+  borderRadius: "8px",
+  padding: "0.33rem 0.62rem",
+  fontSize: "0.77rem",
+  cursor: "pointer",
+};
+
+const playbookTabButtonActive = {
+  borderColor: "#F5A623",
+  color: "#F5A623",
+  backgroundColor: "rgba(245,166,35,0.08)",
+};
+
+const playbookOrderedList = {
+  margin: 0,
+  paddingLeft: "1.1rem",
+  display: "grid",
+  gap: "0.35rem",
+};
+
+const playbookImageGrid = {
+  display: "grid",
+  gap: "1rem",
+};
+
+const playbookChecklist = {
+  display: "grid",
+  gap: "0.55rem",
+  marginTop: "0.7rem",
+};
+
+const playbookCheckItem = {
+  border: "1px solid #DCE7F7",
+  borderRadius: "10px",
+  backgroundColor: "#FFFFFF",
+  padding: "0.62rem 0.72rem",
+  display: "flex",
+  alignItems: "center",
+  gap: "0.55rem",
+  color: "#274472",
+  cursor: "pointer",
+  textAlign: "left",
+};
+
+const playbookCheckItemActive = {
+  borderColor: "#2EB39A",
+  backgroundColor: "rgba(46,179,154,0.08)",
+};
+
+const playbookCheckBox = {
+  width: "19px",
+  height: "19px",
+  borderRadius: "6px",
+  border: "1px solid #DCE7F7",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#2EB39A",
+  fontWeight: 800,
+};
+
+const playbookSuccess = {
+  marginTop: "0.75rem",
+  border: "1px solid rgba(46,179,154,0.3)",
+  backgroundColor: "rgba(46,179,154,0.1)",
+  borderRadius: "10px",
+  padding: "0.7rem 0.8rem",
+  color: "#274472",
+};
+
+const playbookTroubleItem = {
+  border: "1px solid #DCE7F7",
+  borderRadius: "10px",
+  marginBottom: "0.55rem",
+  overflow: "hidden",
+};
+
+const playbookTroubleQuestion = {
+  width: "100%",
+  border: "none",
+  backgroundColor: "#FFFFFF",
+  color: "#274472",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  textAlign: "left",
+  padding: "0.62rem 0.72rem",
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const playbookTroubleAnswer = {
+  margin: 0,
+  backgroundColor: "#F8FAFF",
+  borderTop: "1px solid #E5ECF8",
+  color: "#274472",
+  fontSize: "0.86rem",
+  lineHeight: 1.55,
+  padding: "0.7rem 0.72rem",
+};
+
+const playbookHelpStrip = {
+  border: "1px solid #DCE7F7",
+  borderRadius: "12px",
+  backgroundColor: "#FFFFFF",
+  padding: "0.8rem",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.7rem",
+  flexWrap: "wrap",
+};
+
+const playbookHelpLink = {
+  display: "inline-block",
+  textDecoration: "none",
+  color: "#F5A623",
+  border: "1px solid rgba(245,166,35,0.42)",
+  borderRadius: "8px",
+  padding: "0.48rem 0.8rem",
+  fontWeight: 700,
 };

@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 
 VERIFY_TOKEN = (os.getenv("META_WHATSAPP_VERIFY_TOKEN") or "").strip()
 if not VERIFY_TOKEN:
-    logger.error("META_WHATSAPP_VERIFY_TOKEN is not configured.")
+    if os.getenv("ENV") == "prod":
+        logger.error("META_WHATSAPP_VERIFY_TOKEN is not configured.")
+    else:
+        logger.warning("META_WHATSAPP_VERIFY_TOKEN is not configured (dev mode).")
 
 
 def _extract_message_text(msg: dict) -> str | None:

@@ -38,7 +38,10 @@ VERIFY_TOKEN = os.getenv("META_WHATSAPP_VERIFY_TOKEN", "evolvian2025")
 if VERIFY_TOKEN == "evolvian2025":
     VERIFY_TOKEN = ""
 if not VERIFY_TOKEN:
-    logger.error("META_WHATSAPP_VERIFY_TOKEN is not configured.")
+    if os.getenv("ENV") == "prod":
+        logger.error("META_WHATSAPP_VERIFY_TOKEN is not configured.")
+    else:
+        logger.warning("META_WHATSAPP_VERIFY_TOKEN is not configured (dev mode).")
 
 CANCEL_KEYWORDS = ("cancelar", "cancel", "anular", "cancelacion", "cancelación")
 TERMINAL_OPT_OUT_STATUSES = {"withdrawn", "denied"}

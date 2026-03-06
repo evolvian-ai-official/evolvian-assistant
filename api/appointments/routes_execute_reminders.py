@@ -2,7 +2,6 @@ from fastapi import APIRouter, Request
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import logging
-from babel.dates import format_datetime
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
@@ -12,6 +11,7 @@ from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.appointments.cancel_link_tokens import build_cancel_link, generate_cancel_token
 from api.appointments.template_language_resolution import resolve_locale_for_rendering
 from api.internal_auth import require_internal_request
+from api.utils.babel_compat import format_datetime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
