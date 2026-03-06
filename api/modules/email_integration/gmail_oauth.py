@@ -3,6 +3,7 @@ import os
 import base64
 import time
 import socket
+import hashlib
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 from email.mime.text import MIMEText
@@ -147,6 +148,16 @@ def _oauth_redirect(request: Request, **query):
     return RedirectResponse(url=_ui_email_setup_url(request, query), status_code=302)
 
 
+def _generate_code_verifier() -> str:
+    # RFC7636-compliant verifier (base64url chars, no padding).
+    return base64.urlsafe_b64encode(os.urandom(64)).decode("ascii").rstrip("=")
+
+
+def _build_code_challenge(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
 # ---------------------------------------------------------
 # 1️⃣ Generar URL de autorización
 #   - Guardamos 'state' vinculado al client_id (en channels como fila temporal)
@@ -171,14 +182,19 @@ async def authorize(request: Request, client_id: str):
         redirect_uri=redirect_uri,
     )
 
+    code_verifier = _generate_code_verifier()
+    code_challenge = _build_code_challenge(code_verifier)
+
     authorization_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes=False,
         prompt="consent",
+        code_challenge=code_challenge,
+        code_challenge_method="S256",
     )
 
     # Guardamos el state atando client_id; usamos una fila temporal en channels
-    # (reutilizamos columna gmail_access_token para almacenar el 'state')
+    # (gmail_access_token=state, gmail_refresh_token=pkce_code_verifier temporal)
     try:
         _insert_channel_resilient({
             "client_id": client_id,
@@ -186,6 +202,7 @@ async def authorize(request: Request, client_id: str):
             "provider": "gmail",
             "value": f"oauth_state:{client_id}",
             "gmail_access_token": state,  # aquí guardamos el state
+            "gmail_refresh_token": code_verifier,  # code_verifier temporal para PKCE
             "token_uri": "https://oauth2.googleapis.com/token",  # ← nuevo
             "scope": " ".join(SCOPES),                           # ← nuevo
         })
@@ -221,6 +238,23 @@ async def oauth_callback(request: Request):
         return _oauth_redirect(request, gmail_error="oauth_failed")
 
     try:
+        # [1] Resuelve client_id usando 'state' guardado (incluye PKCE code_verifier temporal)
+        state_row = (
+            supabase.table("channels")
+            .select("client_id, id, gmail_refresh_token")
+            .eq("type", "oauth_state")
+            .eq("provider", "gmail")
+            .eq("gmail_access_token", state)
+            .maybe_single()
+            .execute()
+        )
+        if not state_row or not getattr(state_row, "data", None) or not state_row.data.get("client_id"):
+            return _oauth_redirect(request, gmail_error="state_expired")
+
+        client_id = state_row.data["client_id"]
+        oauth_state_row_id = state_row.data.get("id")
+        code_verifier = str(state_row.data.get("gmail_refresh_token") or "").strip()
+
         print("⏱️ [1] Intercambiando código por tokens...")
         t1 = time.time()
         flow = Flow.from_client_config(
@@ -235,25 +269,12 @@ async def oauth_callback(request: Request):
             scopes=SCOPES,
             redirect_uri=redirect_uri,
         )
-        flow.fetch_token(code=code)
+        flow.fetch_token(
+            code=code,
+            code_verifier=code_verifier or None,
+        )
         credentials = flow.credentials
         print(f"✅ Tokens obtenidos en {time.time() - t1:.2f}s")
-
-        # [2] Resuelve client_id usando 'state' guardado
-        state_row = (
-            supabase.table("channels")
-            .select("client_id, id")
-            .eq("type", "oauth_state")
-            .eq("provider", "gmail")
-            .eq("gmail_access_token", state)
-            .maybe_single()
-            .execute()
-        )
-        if not state_row or not getattr(state_row, "data", None) or not state_row.data.get("client_id"):
-            return _oauth_redirect(request, gmail_error="state_expired")
-
-        client_id = state_row.data["client_id"]
-        oauth_state_row_id = state_row.data.get("id")
 
         # [3] Con los tokens, construimos el servicio y traemos el email del perfil
         service = build("gmail", "v1", credentials=credentials, cache_discovery=False)

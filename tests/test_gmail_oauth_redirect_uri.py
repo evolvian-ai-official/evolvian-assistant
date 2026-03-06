@@ -1,6 +1,10 @@
 from starlette.requests import Request
 
-from api.modules.email_integration.gmail_oauth import _resolve_gmail_redirect_uri
+from api.modules.email_integration.gmail_oauth import (
+    _build_code_challenge,
+    _generate_code_verifier,
+    _resolve_gmail_redirect_uri,
+)
 
 
 def _make_request(host: str, scheme: str = "https") -> Request:
@@ -44,3 +48,14 @@ def test_gmail_redirect_uri_ignores_mismatched_legacy_env(monkeypatch):
 
     assert resolved == "https://evolvianai.com/gmail_oauth/callback"
 
+
+def test_gmail_pkce_challenge_matches_rfc7636_vector():
+    verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    challenge = _build_code_challenge(verifier)
+    assert challenge == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+
+def test_gmail_pkce_verifier_length_and_charset():
+    verifier = _generate_code_verifier()
+    assert 43 <= len(verifier) <= 128
+    assert "=" not in verifier
