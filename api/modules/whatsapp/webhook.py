@@ -210,14 +210,30 @@ def _load_campaign_opt_out_labels(client_id: str, campaign_id: Optional[str]) ->
             return set()
 
         labels: set[str] = set()
+        has_explicit_button_purpose = False
+        quick_reply_labels: list[str] = []
         for button in buttons:
             if not isinstance(button, dict):
                 continue
             if str(button.get("type") or "").strip().upper() != "QUICK_REPLY":
                 continue
             label = _normalize_text_key(button.get("text"))
-            if label:
+            if not label:
+                continue
+            quick_reply_labels.append(label)
+            purpose = _normalize_text_key(button.get("purpose"))
+            if purpose:
+                has_explicit_button_purpose = True
+            if purpose == "opt_out":
                 labels.add(label)
+                continue
+            if not purpose and any(keyword in label for keyword in OPT_OUT_KEYWORDS):
+                labels.add(label)
+        if labels:
+            return labels
+        if len(quick_reply_labels) == 1 and not has_explicit_button_purpose:
+            # Legacy campaigns used one quick reply and it represented opt-out.
+            return {quick_reply_labels[0]}
         return labels
     except Exception:
         return set()

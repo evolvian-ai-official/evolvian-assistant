@@ -117,8 +117,8 @@ export default function MarketingCampaigns() {
       ? "Texto de plantilla con variable {{1}} (contenido completo de la campaña)."
       : "Template body text with {{1}} variable (full campaign content).",
     whatsappFormatLine2: isEs
-      ? "Botón opcional de URL (https://...) usando el CTA."
-      : "Optional URL button (https://...) using the CTA fields.",
+      ? "Botón de interés configurable (quick reply) para abrir seguimiento humano."
+      : "Configurable interest button (quick reply) to open human follow-up.",
     whatsappFormatLine3: isEs
       ? "Imagen opcional como header (solo URL pública https://...)."
       : "Optional image header (public https://... URL only).",
@@ -134,6 +134,12 @@ export default function MarketingCampaigns() {
       ? "Si el contacto hace click, se registra opt-out y ya no podrá seleccionarse para campañas."
       : "If a contact clicks it, an opt-out is recorded and it will no longer be selectable for campaigns.",
     whatsappOptOutPlaceholder: isEs ? "No recibir más información" : "Stop receiving updates",
+    whatsappInterestToggle: isEs ? "Agregar botón de interés" : "Add interest button",
+    whatsappInterestLabel: isEs ? "Texto botón de interés" : "Interest button text",
+    whatsappInterestHelp: isEs
+      ? "Si el contacto hace click, se registra interés y se crea ticket de seguimiento."
+      : "If the contact clicks it, interest is recorded and a follow-up ticket is created.",
+    whatsappInterestPlaceholder: isEs ? "Me interesa" : "I'm interested",
     formRulesTitle: isEs ? "Reglas antes de guardar" : "Rules before saving",
     formRuleName: isEs ? "Nombre de campaña obligatorio (mínimo 3 caracteres)." : "Campaign name is required (minimum 3 characters).",
     formRuleBody: isEs ? "Contenido obligatorio." : "Content is required.",
@@ -207,6 +213,8 @@ export default function MarketingCampaigns() {
     cta_label: "",
     cta_url: "",
     language_family: isEs ? "es" : "en",
+    whatsapp_interest_enabled: true,
+    whatsapp_interest_label: "",
     whatsapp_opt_out_enabled: true,
     whatsapp_opt_out_label: "",
   });
@@ -529,6 +537,8 @@ export default function MarketingCampaigns() {
       cta_label: "",
       cta_url: "",
       language_family: isEs ? "es" : "en",
+      whatsapp_interest_enabled: true,
+      whatsapp_interest_label: "",
       whatsapp_opt_out_enabled: true,
       whatsapp_opt_out_label: "",
     });
@@ -633,6 +643,8 @@ export default function MarketingCampaigns() {
       cta_label: selectedCampaign.cta_label || "",
       cta_url: selectedCampaign.cta_url || "",
       language_family: selectedCampaign.language_family || (isEs ? "es" : "en"),
+      whatsapp_interest_enabled: selectedCampaign.whatsapp_interest_enabled ?? true,
+      whatsapp_interest_label: selectedCampaign.whatsapp_interest_label || "",
       whatsapp_opt_out_enabled: selectedCampaign.whatsapp_opt_out_enabled ?? true,
       whatsapp_opt_out_label: selectedCampaign.whatsapp_opt_out_label || "",
     }));
@@ -703,6 +715,10 @@ export default function MarketingCampaigns() {
         cta_label: normalizedCtaUrl ? (form.cta_label.trim() || null) : null,
         cta_url: normalizedCtaUrl,
         language_family: form.language_family,
+        whatsapp_interest_enabled: form.channel === "whatsapp" ? Boolean(form.whatsapp_interest_enabled) : null,
+        whatsapp_interest_label: form.channel === "whatsapp"
+          ? (form.whatsapp_interest_enabled ? (form.whatsapp_interest_label.trim() || null) : null)
+          : null,
         whatsapp_opt_out_enabled: form.channel === "whatsapp" ? Boolean(form.whatsapp_opt_out_enabled) : null,
         whatsapp_opt_out_label: form.channel === "whatsapp"
           ? (form.whatsapp_opt_out_enabled ? (form.whatsapp_opt_out_label.trim() || null) : null)
@@ -1093,6 +1109,11 @@ export default function MarketingCampaigns() {
                   {selectedCampaign.channel === "whatsapp" ? (
                     <div style={{ marginTop: "0.32rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
                       <span style={badgeStyle}>
+                        {selectedCampaign.whatsapp_interest_enabled
+                          ? `${text.whatsappInterestToggle}: ${selectedCampaign.whatsapp_interest_label || text.whatsappInterestPlaceholder}`
+                          : text.whatsappInterestToggle}
+                      </span>
+                      <span style={badgeStyle}>
                         {selectedCampaign.whatsapp_opt_out_enabled
                           ? `${text.whatsappOptOutToggle}: ${selectedCampaign.whatsapp_opt_out_label || text.whatsappOptOutPlaceholder}`
                           : text.whatsappOptOutToggle}
@@ -1349,6 +1370,35 @@ export default function MarketingCampaigns() {
                         <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.45rem" }}>
                           <input
                             type="checkbox"
+                            checked={Boolean(form.whatsapp_interest_enabled)}
+                            onChange={(e) => setForm((prev) => ({ ...prev, whatsapp_interest_enabled: e.target.checked }))}
+                          />
+                          <strong style={{ ...smallStyle, color: "#0f172a" }}>{text.whatsappInterestToggle}</strong>
+                        </label>
+                        {form.whatsapp_interest_enabled ? (
+                          <>
+                            <small style={{ ...smallStyle, display: "block", marginBottom: "0.25rem", color: "#334155" }}>
+                              {text.whatsappInterestLabel}
+                            </small>
+                            <input
+                              className="ia-form-input"
+                              placeholder={text.whatsappInterestPlaceholder}
+                              value={form.whatsapp_interest_label}
+                              onChange={(e) => setForm((prev) => ({ ...prev, whatsapp_interest_label: e.target.value }))}
+                            />
+                          </>
+                        ) : null}
+                        <small style={{ ...smallStyle, display: "block", marginTop: "0.35rem" }}>
+                          {text.whatsappInterestHelp}
+                        </small>
+                      </div>
+                    ) : null}
+
+                    {form.channel === "whatsapp" ? (
+                      <div style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.45rem" }}>
+                          <input
+                            type="checkbox"
                             checked={Boolean(form.whatsapp_opt_out_enabled)}
                             onChange={(e) => setForm((prev) => ({ ...prev, whatsapp_opt_out_enabled: e.target.checked }))}
                           />
@@ -1527,6 +1577,23 @@ export default function MarketingCampaigns() {
                       {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
                     </a>
                   ) : null}
+                  {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_interest_enabled ? (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        marginTop: "0.45rem",
+                        marginLeft: selectedCampaignCtaUrl ? "0.45rem" : 0,
+                        padding: "0.38rem 0.62rem",
+                        borderRadius: 8,
+                        border: "1px solid #bfdbfe",
+                        background: "#eff6ff",
+                        color: "#1d4ed8",
+                        fontSize: "0.8rem",
+                      }}
+                    >
+                      {selectedCampaign.whatsapp_interest_label || text.whatsappInterestPlaceholder}
+                    </span>
+                  ) : null}
                   {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_opt_out_enabled ? (
                     <span
                       style={{
@@ -1594,6 +1661,23 @@ export default function MarketingCampaigns() {
                         >
                           {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
                         </a>
+                      ) : null}
+                      {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_interest_enabled ? (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            marginTop: "0.45rem",
+                            marginLeft: selectedCampaignCtaUrl ? "0.45rem" : 0,
+                            padding: "0.38rem 0.62rem",
+                            borderRadius: 8,
+                            border: "1px solid #bfdbfe",
+                            background: "#eff6ff",
+                            color: "#1d4ed8",
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          {selectedCampaign.whatsapp_interest_label || text.whatsappInterestPlaceholder}
+                        </span>
                       ) : null}
                       {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_opt_out_enabled ? (
                         <span
