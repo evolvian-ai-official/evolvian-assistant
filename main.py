@@ -1,5 +1,6 @@
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -11,6 +12,7 @@ import subprocess
 from api.security.log_redaction import (
     install_logging_redaction,
     install_print_redaction,
+    sanitize_for_logging,
 )
 
 # ======================================
@@ -247,6 +249,43 @@ print("🚀 Imports completed successfully")
 # ======================================
 app = FastAPI(title="Evolvian Assistant API", version="1.0")
 
+
+def _sanitize_error_detail(detail):
+    """Redact sensitive tokens from error payloads before they reach clients."""
+    try:
+        return sanitize_for_logging(detail)
+    except Exception:
+        return "Internal server error"
+
+
+@app.exception_handler(HTTPException)
+async def secure_http_exception_handler(request: Request, exc: HTTPException):
+    safe_detail = _sanitize_error_detail(exc.detail)
+    payload = {"detail": safe_detail}
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=payload,
+        headers=exc.headers or None,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def secure_validation_exception_handler(request: Request, exc: RequestValidationError):
+    safe_detail = _sanitize_error_detail(exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content={"detail": safe_detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def secure_unhandled_exception_handler(request: Request, exc: Exception):
+    print("❌ Unhandled exception", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
 # ✅ CORS
 app.add_middleware(
     CORSMiddleware,
@@ -456,9 +495,6 @@ try:
     print("✅ init_calendar_auth mounted under /api")
 except Exception as e:
     print(f"⚠️ init_calendar_auth import failed: {e}")
-
-# CORS preflight handler
-from fastapi.responses import JSONResponse
 
 @app.options("/{rest_of_path:path}")
 async def options_handler(rest_of_path: str):

@@ -39,7 +39,7 @@ _PLAIN_KEY_VALUE_PATTERN = re.compile(
 _BEARER_PATTERN = re.compile(r"\b(Bearer)\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
 _GOOGLE_ACCESS_PATTERN = re.compile(r"\bya29\.[A-Za-z0-9._\-]+\b")
 _GOOGLE_REFRESH_PATTERN = re.compile(r"\b1//[A-Za-z0-9._\-]+\b")
-_META_TOKEN_PATTERN = re.compile(r"\bEAA[A-Za-z0-9._\-]+\b")
+_META_TOKEN_PATTERN = re.compile(r"\bEA[A-Za-z0-9._\-]{16,}\b")
 _JWT_PATTERN = re.compile(r"\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b")
 
 _LOG_FACTORY_INSTALLED = False

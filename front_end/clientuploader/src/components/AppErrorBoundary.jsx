@@ -3,7 +3,7 @@ import React from "react";
 export default class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, errorMessage: "" };
+    this.state = { hasError: false };
   }
 
   static getDerivedStateFromError() {
@@ -11,10 +11,7 @@ export default class AppErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    console.error("Unhandled UI error:", error, info);
-    this.setState({
-      errorMessage: error?.message || "Unknown UI error",
-    });
+    console.error("Unhandled UI error:", sanitizeErrorLog(error?.message), info?.componentStack);
   }
 
   render() {
@@ -26,11 +23,7 @@ export default class AppErrorBoundary extends React.Component {
             <p style={textStyle}>
               Please refresh this page. If it persists, sign in again.
             </p>
-            {this.state.errorMessage ? (
-              <p style={detailStyle}>
-                Technical detail: {this.state.errorMessage}
-              </p>
-            ) : null}
+            <p style={detailStyle}>Technical details are hidden for security reasons.</p>
             <button
               type="button"
               style={buttonStyle}
@@ -88,6 +81,18 @@ const detailStyle = {
   fontSize: "0.86rem",
   overflowWrap: "anywhere",
 };
+
+const JWT_PATTERN = /\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g;
+const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._-]+\b/gi;
+const META_TOKEN_PATTERN = /\bEA[A-Za-z0-9._-]{16,}\b/g;
+
+function sanitizeErrorLog(message) {
+  const raw = String(message || "Unknown UI error");
+  return raw
+    .replace(BEARER_PATTERN, "Bearer ***redacted***")
+    .replace(META_TOKEN_PATTERN, "***redacted***")
+    .replace(JWT_PATTERN, "***redacted***");
+}
 
 const buttonStyle = {
   border: "none",
