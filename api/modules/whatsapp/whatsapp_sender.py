@@ -27,6 +27,32 @@ def _sanitize_meta_template_param(value: str) -> str:
     return text.strip()
 
 
+def _compact_meta_error_response(res: httpx.Response) -> str:
+    raw_text = str(res.text or "").strip()
+    if not raw_text:
+        return f"HTTP {res.status_code}"
+
+    detail = raw_text
+    try:
+        decoded = res.json()
+        if isinstance(decoded, dict):
+            err = decoded.get("error")
+            if isinstance(err, dict):
+                message = str(err.get("message") or "").strip()
+                code = str(err.get("code") or "").strip()
+                subcode = str(err.get("error_subcode") or "").strip()
+                err_type = str(err.get("type") or "").strip()
+                parts = [p for p in [message, f"code={code}" if code else "", f"subcode={subcode}" if subcode else "", err_type] if p]
+                if parts:
+                    detail = " | ".join(parts)
+    except Exception:
+        detail = raw_text
+
+    if len(detail) > 700:
+        detail = f"{detail[:700]}..."
+    return detail
+
+
 # =====================================================
 # 1️⃣ TEXTO LIBRE — CHAT RAG / WIDGET / CONVERSACIÓN ACTIVA
 # =====================================================
@@ -327,16 +353,24 @@ async def send_meta_template(
         status_code = res.status_code
 
         if status_code >= 400:
+            error_text = _compact_meta_error_response(res)
             logger.error(
-                "❌ META TEMPLATE failed | template=%s | status=%s",
+                (
+                    "❌ META TEMPLATE failed | template=%s | status=%s | language=%s "
+                    "| body_params=%s | button_params=%s | error=%s"
+                ),
                 template_name,
                 status_code,
+                language_code,
+                len(normalized_parameters),
+                len(normalized_button_url_parameters),
+                error_text,
             )
             return {
                 "success": False,
                 "meta_message_id": None,
                 "status_code": status_code,
-                "error": res.text,
+                "error": error_text,
                 "raw": None,
             }
 
