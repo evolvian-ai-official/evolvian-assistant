@@ -944,6 +944,77 @@ def _build_template_components(
     return components
 
 
+def _components_has_type(components: list[dict], component_type: str) -> bool:
+    probe = str(component_type or "").strip().upper()
+    if not probe:
+        return False
+    return any(str((component or {}).get("type") or "").strip().upper() == probe for component in components)
+
+
+def _components_has_image_header(components: list[dict]) -> bool:
+    return any(
+        str((component or {}).get("type") or "").strip().upper() == "HEADER"
+        and str((component or {}).get("format") or "").strip().upper() == "IMAGE"
+        for component in components
+    )
+
+
+def _components_without_url_buttons(components: list[dict]) -> list[dict]:
+    changed = False
+    normalized: list[dict] = []
+    for component in components:
+        if str((component or {}).get("type") or "").strip().upper() != "BUTTONS":
+            normalized.append(component)
+            continue
+        buttons = (component or {}).get("buttons")
+        if not isinstance(buttons, list):
+            normalized.append(component)
+            continue
+        kept_buttons = [
+            button
+            for button in buttons
+            if str((button or {}).get("type") or "").strip().upper() != "URL"
+        ]
+        if len(kept_buttons) != len(buttons):
+            changed = True
+        if kept_buttons:
+            updated = dict(component or {})
+            updated["buttons"] = kept_buttons
+            normalized.append(updated)
+        else:
+            changed = True
+    return normalized if changed else components
+
+
+def _components_without_buttons(components: list[dict]) -> list[dict]:
+    filtered = [
+        component
+        for component in components
+        if str((component or {}).get("type") or "").strip().upper() != "BUTTONS"
+    ]
+    return filtered if len(filtered) != len(components) else components
+
+
+def _components_without_image_header(components: list[dict]) -> list[dict]:
+    filtered = [
+        component
+        for component in components
+        if not (
+            str((component or {}).get("type") or "").strip().upper() == "HEADER"
+            and str((component or {}).get("format") or "").strip().upper() == "IMAGE"
+        )
+    ]
+    return filtered if len(filtered) != len(components) else components
+
+
+def _components_body_only(components: list[dict]) -> list[dict]:
+    return [
+        component
+        for component in components
+        if str((component or {}).get("type") or "").strip().upper() == "BODY"
+    ]
+
+
 def _load_rate_card() -> dict[str, dict[str, float]]:
     raw = os.getenv("META_TEMPLATE_RATE_CARD_USD_JSON", "").strip()
     if not raw:
@@ -1790,53 +1861,60 @@ def sync_canonical_templates_for_client(
                 category=category,
                 components=components,
             )
+            candidate_components = components
             if (
                 not created["success"]
                 and _is_meta_invalid_parameter_error(created.get("error"))
-                and any(str((component or {}).get("type") or "").upper() == "HEADER" for component in components)
-                and any(str((component or {}).get("type") or "").upper() == "BUTTONS" for component in components)
+                and _components_has_type(candidate_components, "BUTTONS")
             ):
-                # Prefer preserving IMAGE header: first retry without BUTTONS.
-                header_preferred_components = [
-                    component
-                    for component in components
-                    if str((component or {}).get("type") or "").upper() != "BUTTONS"
-                ]
-                if header_preferred_components != components:
+                # First compatibility fallback: keep quick replies, drop URL buttons.
+                # This preserves "interest/opt-out" buttons even if CTA URL params are rejected.
+                no_url_button_components = _components_without_url_buttons(candidate_components)
+                if no_url_button_components != candidate_components:
                     created = _create_meta_template(
                         waba_id=waba_id,
                         wa_token=wa_token,
                         template_name=client_template_name,
                         language=language,
                         category=category,
-                        components=header_preferred_components,
+                        components=no_url_button_components,
                     )
+                    candidate_components = no_url_button_components
             if (
                 not created["success"]
                 and _is_meta_invalid_parameter_error(created.get("error"))
-                and any(
-                    str((component or {}).get("type") or "").upper() == "HEADER"
-                    and str((component or {}).get("format") or "").upper() == "IMAGE"
-                    for component in components
-                )
+                and _components_has_image_header(candidate_components)
+                and _components_has_type(candidate_components, "BUTTONS")
             ):
-                fallback_components = [
-                    component
-                    for component in components
-                    if not (
-                        str((component or {}).get("type") or "").upper() == "HEADER"
-                        and str((component or {}).get("format") or "").upper() == "IMAGE"
-                    )
-                ]
-                if fallback_components != components:
+                # Prefer preserving buttons over image header.
+                no_header_components = _components_without_image_header(candidate_components)
+                if no_header_components != candidate_components:
                     created = _create_meta_template(
                         waba_id=waba_id,
                         wa_token=wa_token,
                         template_name=client_template_name,
                         language=language,
                         category=category,
-                        components=fallback_components,
+                        components=no_header_components,
                     )
+                    candidate_components = no_header_components
+            if (
+                not created["success"]
+                and _is_meta_invalid_parameter_error(created.get("error"))
+                and _components_has_type(candidate_components, "BUTTONS")
+            ):
+                # If account still rejects buttons, continue with header/body.
+                no_buttons_components = _components_without_buttons(candidate_components)
+                if no_buttons_components != candidate_components:
+                    created = _create_meta_template(
+                        waba_id=waba_id,
+                        wa_token=wa_token,
+                        template_name=client_template_name,
+                        language=language,
+                        category=category,
+                        components=no_buttons_components,
+                    )
+                    candidate_components = no_buttons_components
             if (
                 not created["success"]
                 and _is_meta_invalid_parameter_error(created.get("error"))
@@ -1844,11 +1922,7 @@ def sync_canonical_templates_for_client(
                 # Last-resort compatibility fallback:
                 # some accounts reject certain button/header combinations.
                 # Retry with BODY-only components to keep sync healthy.
-                body_only_components = [
-                    component
-                    for component in components
-                    if str((component or {}).get("type") or "").upper() == "BODY"
-                ]
+                body_only_components = _components_body_only(candidate_components)
                 if body_only_components:
                     created = _create_meta_template(
                         waba_id=waba_id,

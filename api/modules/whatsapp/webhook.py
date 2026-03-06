@@ -203,6 +203,8 @@ def _load_campaign_opt_out_labels(client_id: str, campaign_id: Optional[str]) ->
                 raw = json.loads(raw)
             except Exception:
                 raw = None
+        if isinstance(raw, list):
+            raw = {"buttons": raw}
         if not isinstance(raw, dict):
             return set()
         buttons = raw.get("buttons")

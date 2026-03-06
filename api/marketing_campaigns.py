@@ -358,6 +358,8 @@ def _decode_buttons_json(value: Any) -> dict[str, Any]:
             raw = json.loads(raw)
         except Exception:
             raw = None
+    if isinstance(raw, list):
+        return {"buttons": raw}
     return raw if isinstance(raw, dict) else {}
 
 
@@ -1994,6 +1996,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
             "button_fallback_no_url_param": 0,
         }
         campaign_image_url = str(campaign.get("image_url") or "").strip() or None
+        campaign_has_url_button = bool(campaign.get("whatsapp_has_url_button"))
         campaign_whatsapp_param = str(campaign.get("body") or "").strip() or (
             "We have updates for you." if str(campaign.get("language_family") or "").lower().startswith("en") else "Tenemos novedades para ti."
         )
@@ -2137,10 +2140,9 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                 language_code = _format_locale(campaign.get("language_family"))
                 template_has_header = bool(campaign.get("whatsapp_has_image_header"))
                 header_image_url = campaign_image_url if template_has_header else None
-                has_url_button = bool(campaign.get("whatsapp_has_url_button"))
                 button_url_parameters = (
                     [quote_plus(recipient_key)]
-                    if (_normalize_redirect_url(campaign.get("cta_url")) and has_url_button)
+                    if (_normalize_redirect_url(campaign.get("cta_url")) and campaign_has_url_button)
                     else None
                 )
                 if campaign_image_url and not template_has_header:
@@ -2181,6 +2183,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
                     button_fallback_no_url_param = bool(send_result.get("success"))
                     if button_fallback_no_url_param:
                         summary["button_fallback_no_url_param"] += 1
+                        campaign_has_url_button = False
                         _disable_meta_template_url_buttons(campaign.get("meta_template_id"))
                 if not send_result.get("success") and header_image_url:
                     raw_error_probe = str(send_result.get("error") or "").lower()
