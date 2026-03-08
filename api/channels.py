@@ -1,10 +1,17 @@
 # api/channels.py
 from datetime import datetime, timezone
+import re
+import uuid
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.security.whatsapp_token_crypto import (
+    encrypt_whatsapp_token,
+    is_encrypted_whatsapp_token,
+)
 
 router = APIRouter(prefix="/channels", tags=["Email Automation"])
 SAFE_CHANNEL_FIELDS = {
@@ -31,12 +38,55 @@ class EmailSenderStatusPayload(BaseModel):
     provider: str = "gmail"
 
 
+class MetaAppChannelUpsertPayload(BaseModel):
+    client_id: str
+    channel_type: Literal["messenger", "instagram"]
+    recipient_id: str
+    access_token: str | None = None
+    provider: str = "meta"
+
+
+class MetaAppChannelDisconnectPayload(BaseModel):
+    client_id: str
+    channel_type: Literal["messenger", "instagram"]
+    provider: str = "meta"
+
+
 def _sanitize_channels(rows):
     clean_rows = []
     for row in rows or []:
         if isinstance(row, dict):
             clean_rows.append({k: v for k, v in row.items() if k in SAFE_CHANNEL_FIELDS})
     return clean_rows
+
+
+_RECIPIENT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{5,100}$")
+
+
+def _validate_meta_recipient_id(value: str) -> str:
+    candidate = str(value or "").strip()
+    if not _RECIPIENT_ID_RE.match(candidate):
+        raise HTTPException(
+            status_code=422,
+            detail="recipient_id must be 5-100 chars [A-Za-z0-9_.:-]",
+        )
+    return candidate
+
+
+def _normalize_provider(value: str | None) -> str:
+    return str(value or "meta").strip().lower() or "meta"
+
+
+def _encrypt_or_passthrough_token(raw: str) -> str:
+    token = str(raw or "").strip()
+    if not token:
+        return ""
+    if is_encrypted_whatsapp_token(token):
+        return token
+    try:
+        return encrypt_whatsapp_token(token)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"token_encryption_failed: {e}")
 
 
 @router.get("")
@@ -188,3 +238,134 @@ async def set_email_sender_status(payload: EmailSenderStatusPayload, request: Re
     except Exception as e:
         print(f"🔥 Error actualizando email sender status: {e}")
         raise HTTPException(status_code=500, detail=f"Failed updating email sender status: {e}")
+
+
+@router.post("/meta_app_channel")
+async def upsert_meta_app_channel(payload: MetaAppChannelUpsertPayload, request: Request):
+    """
+    Upsert Messenger/Instagram channel credentials using existing `channels` schema.
+    - `type` = messenger | instagram
+    - `value` = recipient/page/business id
+    - `wa_token` = encrypted access token (reused secure column)
+    """
+    client_id = payload.client_id
+    channel_type = payload.channel_type
+    provider = _normalize_provider(payload.provider)
+    recipient_id = _validate_meta_recipient_id(payload.recipient_id)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        authorize_client_request(request, client_id)
+        if provider != "meta":
+            raise HTTPException(status_code=400, detail="provider must be meta")
+
+        existing_res = (
+            supabase.table("channels")
+            .select("*")
+            .eq("client_id", client_id)
+            .eq("type", channel_type)
+            .eq("provider", provider)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        existing = (existing_res.data or [None])[0]
+
+        incoming_token = str(payload.access_token or "").strip()
+        token_to_store = _encrypt_or_passthrough_token(incoming_token) if incoming_token else ""
+        if not token_to_store and existing and str(existing.get("wa_token") or "").strip():
+            token_to_store = str(existing.get("wa_token") or "").strip()
+        if not token_to_store:
+            raise HTTPException(status_code=422, detail="access_token is required for first connection")
+
+        base_update = {
+            "value": recipient_id,
+            "wa_token": token_to_store,
+            "provider": provider,
+            "is_active": True,
+            "active": True,
+            "updated_at": now_iso,
+            "archived_at": None,
+            "archived_reason": None,
+            "last_connected_at": now_iso,
+            "last_disconnected_at": None,
+        }
+
+        row_id = None
+        if existing and existing.get("id"):
+            row_id = str(existing["id"])
+            (
+                supabase.table("channels")
+                .update(base_update)
+                .eq("id", row_id)
+                .eq("client_id", client_id)
+                .execute()
+            )
+        else:
+            row_id = str(uuid.uuid4())
+            insert_payload = {
+                "id": row_id,
+                "client_id": client_id,
+                "type": channel_type,
+                **base_update,
+                "created_at": now_iso,
+            }
+            supabase.table("channels").insert(insert_payload).execute()
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "channel_type": channel_type,
+            "provider": provider,
+            "connected": True,
+            "recipient_id": recipient_id,
+            "channel_id": row_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"meta_app_channel_upsert_failed: {e}")
+
+
+@router.post("/meta_app_channel/disconnect")
+async def disconnect_meta_app_channel(payload: MetaAppChannelDisconnectPayload, request: Request):
+    client_id = payload.client_id
+    channel_type = payload.channel_type
+    provider = _normalize_provider(payload.provider)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        authorize_client_request(request, client_id)
+        if provider != "meta":
+            raise HTTPException(status_code=400, detail="provider must be meta")
+
+        (
+            supabase.table("channels")
+            .update(
+                {
+                    "is_active": False,
+                    "active": False,
+                    "updated_at": now_iso,
+                    "archived_at": now_iso,
+                    "archived_reason": "manual_disconnect",
+                    "last_disconnected_at": now_iso,
+                }
+            )
+            .eq("client_id", client_id)
+            .eq("type", channel_type)
+            .eq("provider", provider)
+            .execute()
+        )
+
+        return {
+            "success": True,
+            "client_id": client_id,
+            "channel_type": channel_type,
+            "provider": provider,
+            "connected": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"meta_app_channel_disconnect_failed: {e}")

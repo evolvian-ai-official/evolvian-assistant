@@ -417,7 +417,7 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
             ),
         )
         active_channels = [c["type"] for c in channels_res.data or []]
-        all_channels = ["chat", "whatsapp", "email"]
+        all_channels = ["chat", "whatsapp", "email", "messenger", "instagram"]
         channels = {c: c in active_channels for c in all_channels}
 
         external_channel_upgrade_plan = None

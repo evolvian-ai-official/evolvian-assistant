@@ -95,9 +95,12 @@ export default function History() {
     const ch = (channel || "chat").toLowerCase();
     const map = {
       chat: { emoji: "💬", text: "Chat" },
+      widget: { emoji: "💬", text: "Widget" },
       email: { emoji: "✉️", text: "Email" },
       gmail: { emoji: "✉️", text: "Email" },
       whatsapp: { emoji: "🟢", text: "WhatsApp" },
+      messenger: { emoji: "🔵", text: "Messenger" },
+      instagram: { emoji: "📷", text: "Instagram DM" },
     };
     const item = map[ch] || map.chat;
     return `${item.emoji} ${item.text}`;

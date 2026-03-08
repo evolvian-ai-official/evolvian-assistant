@@ -139,6 +139,17 @@ export default function AppRouter() {
       />
 
       <Route
+        path="/services/meta-apps"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <WhatsAppSetup />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      <Route
         path="/services/calendar"
         element={
           <PrivateRoutes>

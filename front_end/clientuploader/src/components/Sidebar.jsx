@@ -42,9 +42,9 @@ const marketingCopyById = (id, isEs, requiredPlanLabel) => {
     "inbox-handoff": isEs
       ? `Convierte conversaciones perdidas en ventas y soporte resuelto: IA + agente humano, alertas, notas y seguimiento desde un solo inbox. Disponible en ${tier}.`
       : `Turn unresolved chats into resolved support and revenue: AI + human agent handoff, alerts, notes, and follow-up in one inbox. Available on ${tier}.`,
-    "/services/whatsapp": isEs
-      ? `Responde clientes donde realmente te escriben. WhatsApp centraliza atención y acelera cierre de ventas. Disponible en ${tier}.`
-      : `Reply where customers actually message you. WhatsApp support centralizes conversations and speeds up conversions. Available on ${tier}.`,
+    "/services/meta-apps": isEs
+      ? `Conecta WhatsApp, Messenger e Instagram desde una sola integración de Meta Apps. Disponible en ${tier}.`
+      : `Connect WhatsApp, Messenger, and Instagram from one Meta Apps integration. Available on ${tier}.`,
     "/services/email": isEs
       ? `Haz seguimiento profesional por email con historial y automatización. Ideal para tickets y leads de mayor intención. Disponible en ${tier}.`
       : `Deliver professional email follow-up with history and automation. Ideal for tickets and high-intent leads. Available on ${tier}.`,
@@ -159,9 +159,9 @@ export default function Sidebar({ mobile = false, onNavigate }) {
     },
     { id: "/services/chat", label: `${t("chat_assistant")}`, path: "/services/chat", feature: "chat_widget" },
     {
-      id: "/services/whatsapp",
-      label: `${t("whatsapp")}`,
-      path: "/services/whatsapp",
+      id: "/services/meta-apps",
+      label: `${t("meta_apps_nav") || "Meta Apps"}`,
+      path: "/services/meta-apps",
       feature: "whatsapp_integration",
       fallbackRequiredPlan: "premium",
     },

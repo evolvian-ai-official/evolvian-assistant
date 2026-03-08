@@ -14,7 +14,7 @@ export default function ServicesDashboard() {
           <div className="ia-services-grid">
             <div className="ia-service-item">🧠 {t("chat_assistant")}</div>
             <div className="ia-service-item">✉️ {t("email")}</div>
-            <div className="ia-service-item">💬 {t("whatsapp")}</div>
+            <div className="ia-service-item">🧩 {t("meta_apps_nav") || "Meta Apps"}</div>
             <div className="ia-service-item">🗓️ {t("appointments_nav")}</div>
             <div className="ia-service-item">📣 Marketing Campaigns</div>
             <div className="ia-service-item">👥 Clients</div>
