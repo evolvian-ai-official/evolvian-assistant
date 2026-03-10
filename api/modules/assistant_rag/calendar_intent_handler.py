@@ -148,6 +148,62 @@ def _format_slot_list_for_lang(slots: list[dict], tz_name: str, lang: str, limit
     return "\n".join(out)
 
 
+def _pick_earliest_slots(slots: list[dict], tz_name: str, *, limit: int = 5) -> list[dict]:
+    if limit <= 0:
+        return []
+    tz = ZoneInfo(tz_name or "UTC")
+    parsed: list[tuple[dict, datetime]] = []
+    for slot in slots or []:
+        iso = str((slot or {}).get("start_iso") or "").strip()
+        if not iso:
+            continue
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            parsed.append((slot, dt.astimezone(tz)))
+        except Exception:
+            continue
+    parsed.sort(key=lambda item: item[1])
+    return [slot for slot, _dt in parsed[:limit]]
+
+
+def _compact_slot_text_if_needed(
+    slot_text: str,
+    slots: list[dict],
+    tz_name: str,
+    lang: str,
+    *,
+    max_chars: int = 1200,
+    max_lines: int = 18,
+) -> str:
+    text = str(slot_text or "").strip()
+    if not text:
+        return text
+    line_count = len([ln for ln in text.splitlines() if ln.strip()])
+    if len(text) <= max_chars and line_count <= max_lines:
+        return text
+
+    compact_slots = _pick_earliest_slots(slots or [], tz_name, limit=5)
+    compact_text = _format_slot_list_for_lang(compact_slots, tz_name, lang, limit=5)
+    return compact_text or text
+
+
+def _slot_display_limit_for_settings(settings: dict | None) -> int:
+    base_limit = 9
+    per_day = 3
+    hard_cap = 120
+    max_days = 3
+    try:
+        raw = (settings or {}).get("max_days_ahead")
+        if raw is not None:
+            max_days = int(raw)
+    except Exception:
+        max_days = 3
+    max_days = max(1, min(max_days, 60))
+    return max(base_limit, min(max_days * per_day, hard_cap))
+
+
 def _filter_slots_for_date(slots: list[dict], tz_name: str, date_iso: str) -> list[dict]:
     target_date = str(date_iso or "").strip()
     if not target_date:
@@ -1292,13 +1348,17 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     # ============================================================
 
     raw_msg = message.strip()
+    raw_msg_lower = raw_msg.lower()
+    email_like_token_without_at = bool(
+        re.fullmatch(r"[a-z0-9._%+-]+\.[a-z0-9.-]+", raw_msg_lower)
+    )
 
     # 1️⃣ Detecta que el usuario INTENTÓ dar un email, pero no tiene '@'
     looks_like_email_attempt = (
         "@" in raw_msg or
-        "." in raw_msg or
-        "email" in raw_msg.lower() or
-        "correo" in raw_msg.lower()
+        "email" in raw_msg_lower or
+        "correo" in raw_msg_lower or
+        email_like_token_without_at
     )
 
     # 2️⃣ Si extract_fields detectó un email (bueno o malo)
@@ -1323,7 +1383,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             return reply
 
     # 3️⃣ User typed something email-like but extractor did NOT detect (e.g. “aldo.benitez.cort”)
-    elif looks_like_email_attempt and "@" not in raw_msg and "." in raw_msg:
+    elif looks_like_email_attempt and "@" not in raw_msg and email_like_token_without_at:
 
         reply = (
             "⚠️ Parece que intentaste escribir un correo, pero no es válido. Inténtalo de nuevo."
@@ -1488,6 +1548,12 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         tz_name,
                         lang,
                     )
+                    slot_text = _compact_slot_text_if_needed(
+                        slot_text,
+                        state.get("proposed_slots") or [],
+                        tz_name,
+                        lang,
+                    )
                     if not slot_text:
                         return (
                             f"⚠️ Ese horario no cumple reglas: {reason}. No encontré horarios válidos por ahora."
@@ -1600,6 +1666,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     # ============================================================
     if state.get("status") == "collecting":
         tz_name = (settings or {}).get("timezone") or "UTC"
+        display_limit = _slot_display_limit_for_settings(settings)
 
         if not collected.get("scheduled_time"):
             proposed_slots = state.get("proposed_slots") or []
@@ -1607,14 +1674,26 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             if requested_date:
                 day_slots = _filter_slots_for_date(proposed_slots, tz_name, requested_date)
                 if day_slots:
-                    slot_text = _format_slot_list_for_lang(day_slots, tz_name, lang)
+                    slot_text = _format_slot_list_for_lang(day_slots, tz_name, lang, limit=display_limit)
+                    slot_text = _compact_slot_text_if_needed(
+                        slot_text,
+                        day_slots,
+                        tz_name,
+                        lang,
+                    )
                     return (
                         f"Para {requested_date} tengo estos horarios disponibles:\n{slot_text}\n\nIndícame cuál prefieres."
                         if lang == "es"
                         else f"For {requested_date}, I have these available times:\n{slot_text}\n\nTell me which one you prefer."
                     )
 
-                fallback_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang)
+                fallback_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang, limit=display_limit)
+                fallback_text = _compact_slot_text_if_needed(
+                    fallback_text,
+                    proposed_slots,
+                    tz_name,
+                    lang,
+                )
                 if fallback_text:
                     return (
                         f"No encontré horarios disponibles para {requested_date}. Estos son los próximos disponibles:\n{fallback_text}\n\nSi quieres otro día, dímelo."
@@ -1622,7 +1701,13 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         else f"I couldn't find available times for {requested_date}. Here are the next available slots:\n{fallback_text}\n\nIf you want another day, tell me."
                     )
 
-            slot_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang)
+            slot_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang, limit=display_limit)
+            slot_text = _compact_slot_text_if_needed(
+                slot_text,
+                proposed_slots,
+                tz_name,
+                lang,
+            )
             if not slot_text:
                 return (
                     "No encontré horarios disponibles por ahora. ¿Quieres intentar otra fecha?"

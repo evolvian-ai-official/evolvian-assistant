@@ -484,3 +484,95 @@ def test_collecting_with_requested_date_shows_slots_for_that_day(monkeypatch):
     )
 
     assert f"Para {tomorrow_date.isoformat()} tengo estos horarios disponibles" in answer
+
+
+def test_non_email_sentence_with_period_does_not_trigger_invalid_email_warning(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 10)]
+    data_source = _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "collecting",
+        "lang": "es",
+        "collected": {
+            "scheduled_time": "2026-03-11T17:00:00-06:00",
+            "user_name": "Aldo Benitez",
+        },
+    }
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="No quiero agendar. Te pedi instalar Instagram",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "intentaste escribir un correo" not in answer
+    assert "¿Cuál es tu correo electrónico?" in answer
+
+
+def test_slot_display_limit_uses_client_max_days_ahead():
+    assert module._slot_display_limit_for_settings({"max_days_ahead": 15}) == 45
+    assert module._slot_display_limit_for_settings({"max_days_ahead": 1}) == 9
+    assert module._slot_display_limit_for_settings({}) == 9
+
+
+def test_collecting_shows_slots_beyond_three_days_when_client_window_is_15(monkeypatch):
+    history_rows = [_history_row("user", "hola me gustaria agendar", 10)]
+    _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    monkeypatch.setattr(module, "_load_settings", lambda _client_id: {**COMMON_SETTINGS, "max_days_ahead": 15})
+
+    mx_now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Mexico_City"))
+    first_date = (mx_now + timedelta(days=1)).date()
+    slots = []
+    for day_offset in range(15):
+        current_day = first_date + timedelta(days=day_offset)
+        slots.append(
+            {
+                "start_iso": f"{current_day.isoformat()}T10:00:00-06:00",
+                "readable": f"{current_day.isoformat()} 10:00",
+            }
+        )
+
+    monkeypatch.setattr(module, "_generate_available_slots", lambda *_a, **_k: slots)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="hola me gustaria agendar",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    bullet_count = sum(1 for line in answer.splitlines() if line.strip().startswith("- "))
+    assert bullet_count >= 15
+
+
+def test_compact_slot_text_if_needed_limits_to_five_earliest_slots():
+    tz_name = "America/Mexico_City"
+    slots = []
+    for day in range(1, 11):
+        slots.append({"start_iso": f"2026-03-{day:02d}T10:00:00-06:00"})
+    slots = list(reversed(slots))
+
+    full_text = module._format_slot_list_for_lang(slots, tz_name, "es", limit=30)
+    compact_text = module._compact_slot_text_if_needed(
+        full_text,
+        slots,
+        tz_name,
+        "es",
+        max_chars=10,
+        max_lines=1,
+    )
+
+    compact_lines = [line for line in compact_text.splitlines() if line.strip().startswith("- ")]
+    first_expected = module._format_slot_for_lang("2026-03-01T10:00:00-06:00", tz_name, "es")
+    sixth_expected = module._format_slot_for_lang("2026-03-06T10:00:00-06:00", tz_name, "es")
+
+    assert len(compact_lines) == 5
+    assert first_expected in compact_text
+    assert sixth_expected not in compact_text

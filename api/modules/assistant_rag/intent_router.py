@@ -114,6 +114,48 @@ CALENDAR_FOLLOWUP_KEYWORDS = {
 }
 DATE_LIKE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b", re.I)
 TIME_LIKE_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)?\b", re.I)
+CALENDAR_NAME_STOPWORDS = {
+    "instalar",
+    "instalo",
+    "instagram",
+    "como",
+    "cómo",
+    "puedo",
+    "quiero",
+    "necesito",
+    "ayuda",
+    "help",
+    "install",
+    "setup",
+    "configurar",
+    "agendar",
+    "agenda",
+    "cita",
+    "horario",
+    "disponible",
+    "precio",
+    "precios",
+    "plan",
+    "planes",
+}
+CALENDAR_COMPLETION_MARKERS = (
+    "tu cita ha sido registrada",
+    "your appointment has been registered",
+    "le escribe evolvian",
+    "si necesita cancelar",
+    "if you need to cancel",
+)
+CALENDAR_PROGRESS_MARKERS = (
+    "cual es tu nombre completo",
+    "gracias. cual es tu correo electronico",
+    "cual es tu numero de telefono",
+    "confirmas la cita",
+    "indicame cual prefieres",
+    "which one you prefer",
+    "what is your full name",
+    "what is your email",
+    "whatsapp phone number",
+)
 
 
 def _safe_hash(value: Any, *, length: int = 12) -> str:
@@ -193,6 +235,24 @@ def contains_schedule_keywords(message: str) -> bool:
     return any(k in t for k in AGENDA_KEYWORDS)
 
 
+def _looks_like_person_name_for_calendar(message: str) -> bool:
+    raw = str(message or "").strip()
+    if not raw:
+        return False
+    if EMAIL_RE.search(raw) or PHONE_RE.search(raw):
+        return False
+    if any(ch.isdigit() for ch in raw):
+        return False
+
+    normalized = _normalize_text(raw)
+    tokens = [tok for tok in re.split(r"\s+", normalized) if tok]
+    if len(tokens) < 2 or len(tokens) > 5:
+        return False
+    if any(tok in CALENDAR_NAME_STOPWORDS for tok in tokens):
+        return False
+    return bool(NAME_LINE_RE.match(raw))
+
+
 def _looks_like_calendar_followup(message: str) -> bool:
     """Detecta respuestas típicas de 2º/3º turno en flujo de agenda."""
     if not message:
@@ -201,7 +261,7 @@ def _looks_like_calendar_followup(message: str) -> bool:
         return True
     # Permite recuperar flujo cuando el usuario responde solo su nombre completo.
     # Ejemplo real: "Aldo Nicolas Benitez".
-    if NAME_LINE_RE.match(str(message).strip()):
+    if _looks_like_person_name_for_calendar(message):
         return True
 
     normalized = _normalize_text(message)
@@ -259,6 +319,7 @@ def _has_recent_appointment_history(
 
     now_utc = datetime.now(timezone.utc)
     normalized_channel = _normalize_channel_name(channel)
+    saw_recent_progress = False
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -273,13 +334,20 @@ def _has_recent_appointment_history(
         if row_channel and row_channel != normalized_channel:
             continue
 
-        if str(row.get("source_type") or "").strip().lower() == "appointment":
-            return True
-
         content = _normalize_text(str(row.get("content") or ""))
-        if "horarios disponibles" in content or "available slots" in content:
-            return True
-    return False
+        if any(marker in content for marker in CALENDAR_COMPLETION_MARKERS):
+            return False
+
+        if str(row.get("source_type") or "").strip().lower() == "appointment":
+            saw_recent_progress = True
+
+        if (
+            "horarios disponibles" in content
+            or "available slots" in content
+            or any(marker in content for marker in CALENDAR_PROGRESS_MARKERS)
+        ):
+            saw_recent_progress = True
+    return saw_recent_progress
 
 
 def detect_intent_to_schedule(message: str) -> bool:
