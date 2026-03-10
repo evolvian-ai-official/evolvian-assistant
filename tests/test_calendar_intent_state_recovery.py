@@ -529,6 +529,26 @@ def test_slot_display_overflow_target_min_is_none_for_large_windows():
     assert module._slot_display_overflow_target_min_for_settings({"max_days_ahead": 7}) is None
 
 
+def test_other_day_prompt_uses_selected_days_from_settings_in_spanish():
+    prompt = module._other_day_prompt(
+        {"selected_days": ["mon", "wed", "fri"]},
+        [],
+        "America/Mexico_City",
+        "es",
+    )
+    assert "lunes, miércoles y viernes" in prompt
+
+
+def test_other_day_prompt_uses_selected_days_from_settings_in_english():
+    prompt = module._other_day_prompt(
+        {"selected_days": ["tue", "thu"]},
+        [],
+        "America/Mexico_City",
+        "en",
+    )
+    assert "Tuesday and Thursday" in prompt
+
+
 def test_collecting_shows_slots_beyond_three_days_when_client_window_is_15(monkeypatch):
     history_rows = [_history_row("user", "hola me gustaria agendar", 10)]
     _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)

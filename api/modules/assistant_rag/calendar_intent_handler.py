@@ -30,6 +30,43 @@ WEEKDAYS_ES = {"lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2, "jueves
 WEEKDAYS_EN = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
 MONTHS_ES = {"enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6, "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12}
 MONTHS_EN = {"january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6, "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12}
+WEEKDAY_LABELS_ES = {"mon": "lunes", "tue": "martes", "wed": "miércoles", "thu": "jueves", "fri": "viernes", "sat": "sábado", "sun": "domingo"}
+WEEKDAY_LABELS_EN = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday", "fri": "Friday", "sat": "Saturday", "sun": "Sunday"}
+WEEKDAY_ORDER = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+WEEKDAY_ALIASES = {
+    "mon": "mon",
+    "monday": "mon",
+    "lun": "mon",
+    "lunes": "mon",
+    "tue": "tue",
+    "tues": "tue",
+    "tuesday": "tue",
+    "mar": "tue",
+    "martes": "tue",
+    "wed": "wed",
+    "wednesday": "wed",
+    "mie": "wed",
+    "mier": "wed",
+    "miercoles": "wed",
+    "thu": "thu",
+    "thur": "thu",
+    "thurdsay": "thu",
+    "thursday": "thu",
+    "jue": "thu",
+    "jueves": "thu",
+    "fri": "fri",
+    "friday": "fri",
+    "vie": "fri",
+    "viernes": "fri",
+    "sat": "sat",
+    "saturday": "sat",
+    "sab": "sat",
+    "sabado": "sat",
+    "sun": "sun",
+    "sunday": "sun",
+    "dom": "sun",
+    "domingo": "sun",
+}
 
 ENUM_PREFIX_RE = re.compile(r"^\s*\d+\s*[\.\)]\s*")
 TIME_RE = re.compile(r"(?<!\d\.)\b(?!\d+\s*\.)" r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b", re.I)
@@ -92,6 +129,110 @@ def _format_slot_for_lang(iso_str: str, tz_name: str, lang: str) -> str:
         local_dt,
         "EEEE dd 'de' MMMM yyyy, HH:mm" if lang == "es" else "EEEE, MMMM dd yyyy, HH:mm",
         locale="es_MX" if lang == "es" else "en_US",
+    )
+
+
+def _normalize_weekday_code(value: str | None) -> str | None:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    ascii_raw = unicodedata.normalize("NFKD", raw)
+    ascii_raw = "".join(ch for ch in ascii_raw if not unicodedata.combining(ch))
+    ascii_raw = re.sub(r"[^a-z]", "", ascii_raw)
+    if not ascii_raw:
+        return None
+    if ascii_raw in WEEKDAY_ALIASES:
+        return WEEKDAY_ALIASES[ascii_raw]
+    for alias, code in WEEKDAY_ALIASES.items():
+        if ascii_raw.startswith(alias):
+            return code
+    return None
+
+
+def _weekday_codes_from_settings(settings: dict | None) -> list[str]:
+    selected_days = (settings or {}).get("selected_days") or []
+    if not isinstance(selected_days, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw_day in selected_days:
+        code = _normalize_weekday_code(str(raw_day))
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(code)
+    if out:
+        return out
+    return []
+
+
+def _weekday_codes_from_slots(slots: list[dict], tz_name: str) -> list[str]:
+    tz = ZoneInfo(tz_name or "UTC")
+    parsed: list[tuple[datetime, str]] = []
+    for slot in slots or []:
+        iso = str((slot or {}).get("start_iso") or "").strip()
+        if not iso:
+            continue
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            local_dt = dt.astimezone(tz)
+            parsed.append((local_dt, local_dt.strftime("%a").lower()[:3]))
+        except Exception:
+            continue
+    parsed.sort(key=lambda item: item[0])
+    out: list[str] = []
+    seen: set[str] = set()
+    for _dt, code in parsed:
+        if code in seen:
+            continue
+        seen.add(code)
+        out.append(code)
+    return out
+
+
+def _join_with_conjunction(items: list[str], lang: str) -> str:
+    parts = [str(item or "").strip() for item in (items or []) if str(item or "").strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} y {parts[1]}" if lang == "es" else f"{parts[0]} and {parts[1]}"
+    sep = ", "
+    tail = "y" if lang == "es" else "and"
+    return f"{sep.join(parts[:-1])} {tail} {parts[-1]}"
+
+
+def _other_day_prompt(settings: dict | None, slots: list[dict], tz_name: str, lang: str) -> str:
+    weekday_codes = _weekday_codes_from_settings(settings)
+    if not weekday_codes:
+        weekday_codes = _weekday_codes_from_slots(slots or [], tz_name)
+    if not weekday_codes:
+        return (
+            "Si necesitas agendar en otro día, indícame cuál."
+            if lang == "es"
+            else "If you need another day, tell me which one."
+        )
+
+    # Keep deterministic weekday order for better readability.
+    ordered_codes = sorted(set(weekday_codes), key=lambda code: WEEKDAY_ORDER.get(code, 99))
+    labels = [
+        (WEEKDAY_LABELS_ES if lang == "es" else WEEKDAY_LABELS_EN).get(code, code)
+        for code in ordered_codes
+    ]
+    joined_days = _join_with_conjunction(labels, lang)
+    if not joined_days:
+        return (
+            "Si necesitas agendar en otro día, indícame cuál."
+            if lang == "es"
+            else "If you need another day, tell me which one."
+        )
+    return (
+        f"Si necesitas agendar en otro día (por ejemplo: {joined_days}), indícame cuál."
+        if lang == "es"
+        else f"If you need another day (for example: {joined_days}), tell me which one."
     )
 
 
@@ -1787,9 +1928,19 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         lang,
                     )
                     return (
-                        f"Para {requested_date} tengo estos horarios disponibles:\n{slot_text}\n\nIndícame cuál prefieres."
+                        (
+                            f"Para {requested_date} tengo estos horarios disponibles:\n"
+                            f"{slot_text}\n\n"
+                            "Indícame cuál prefieres.\n"
+                            f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
+                        )
                         if lang == "es"
-                        else f"For {requested_date}, I have these available times:\n{slot_text}\n\nTell me which one you prefer."
+                        else (
+                            f"For {requested_date}, I have these available times:\n"
+                            f"{slot_text}\n\n"
+                            "Tell me which one you prefer.\n"
+                            f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
+                        )
                     )
 
                 fallback_text = _format_slot_list_for_lang(
@@ -1809,9 +1960,17 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 )
                 if fallback_text:
                     return (
-                        f"No encontré horarios disponibles para {requested_date}. Estos son los próximos disponibles:\n{fallback_text}\n\nSi quieres otro día, dímelo."
+                        (
+                            f"No encontré horarios disponibles para {requested_date}. "
+                            f"Estos son los próximos disponibles:\n{fallback_text}\n\n"
+                            f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
+                        )
                         if lang == "es"
-                        else f"I couldn't find available times for {requested_date}. Here are the next available slots:\n{fallback_text}\n\nIf you want another day, tell me."
+                        else (
+                            f"I couldn't find available times for {requested_date}. "
+                            f"Here are the next available slots:\n{fallback_text}\n\n"
+                            f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
+                        )
                     )
 
             slot_text = _format_slot_list_for_lang(
@@ -1839,13 +1998,15 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 "Con gusto te ayudo a agendar tu cita.\n\n"
                 "Estos son los próximos horarios disponibles:\n"
                 f"{slot_text}\n\n"
-                "Indícame cuál prefieres."
+                "Indícame cuál prefieres.\n"
+                f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
                 if lang == "es"
                 else (
                     "I can help you book your appointment.\n\n"
                     "Here are the next available slots:\n"
                     f"{slot_text}\n\n"
-                    "Tell me which one you prefer."
+                    "Tell me which one you prefer.\n"
+                    f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
                 )
             )
 
