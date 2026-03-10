@@ -363,6 +363,84 @@ def test_explicit_restart_ignores_stale_history_and_starts_from_slots(monkeypatc
     assert "Thanks." not in answer
 
 
+def test_explicit_restart_detects_english_schedule_call_message():
+    assert module._is_explicit_schedule_restart_message("I want to schedule a call")
+
+
+def test_explicit_restart_detects_multiple_user_text_variants():
+    true_cases = [
+        "I want to schedule a call",
+        "Can I schedule an appointment?",
+        "book a session for tomorrow",
+        "please reschedule my appointment",
+        "schedule call",
+        "quiero agendar una cita",
+        "me ayudas a reservar una llamada",
+        "podemos programar una sesión",
+        "quiero reagendar mi cita",
+        "agendar cita por favor",
+    ]
+    false_cases = [
+        "yes",
+        "no",
+        "ok",
+        "hola",
+        "aldo@example.com",
+        "+525525277660",
+        "instalar instagram",
+    ]
+
+    for case in true_cases:
+        assert module._is_explicit_schedule_restart_message(case), case
+
+    for case in false_cases:
+        assert not module._is_explicit_schedule_restart_message(case), case
+
+
+def test_yes_no_detection_uses_whole_words_and_avoids_false_positives():
+    assert module._is_yes("yes")
+    assert module._is_no("no")
+    assert not module._is_yes("I want to schedule a session")
+    assert not module._is_no("notebook")
+
+
+def test_explicit_restart_in_english_resets_stale_state_and_keeps_english(monkeypatch):
+    stale_history = [
+        {
+            "role": "assistant",
+            "content": "Perfecto, Aldo Nicolas Benitez Cortes. Tengo todo listo.",
+            "source_type": "appointment",
+            "channel": "whatsapp",
+            "created_at": "2026-03-09T16:10:00Z",
+        }
+    ]
+    data_source = _setup_calendar_handler(monkeypatch, stale_history, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "pending_confirmation",
+        "lang": "es",
+        "collected": {
+            "user_name": "Aldo Nicolas Benitez Cortes",
+            "user_email": "aldo.benitez.cortes@gmail.com",
+            "user_phone": "+525525277660",
+            "scheduled_time": "2026-03-20T16:00:00-06:00",
+        },
+    }
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="I want to schedule a call",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="en",
+        )
+    )
+
+    assert "I can help you book your appointment" in answer
+    assert "Perfecto, Aldo Nicolas Benitez Cortes" not in answer
+
+
 def test_recovery_keeps_spanish_and_does_not_loop_back_to_email_after_phone(monkeypatch):
     history_rows = [
         _history_row("user", "quiero agendar", 30),

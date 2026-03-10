@@ -109,7 +109,8 @@ def _detect_lang_signal(text: str) -> str | None:
     }
     en_signals = {
         "hello", "book", "appointment", "email", "phone", "tomorrow",
-        "friday", "monday", "tuesday", "wednesday", "thursday", "confirm"
+        "friday", "monday", "tuesday", "wednesday", "thursday", "confirm",
+        "schedule", "call"
     }
     if any(c in t for c in "áéíóúñ¿¡") or any(w in t for w in es_signals):
         return "es"
@@ -560,33 +561,47 @@ def _persist_conversation_state(
 
 
 def _is_yes(msg: str) -> bool:
-    s = msg.strip().lower()
+    s = str(msg or "").strip().lower()
+    if not s:
+        return False
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s).strip()
 
-    # Palabras muy claras de confirmación
     strong_yes = [
-        "si", "sí", "yes", "yep", "sure", "ok", "okay", "vale",
-        "confirmo", "confirmar", "confirmada", "confirmada", 
-        "proceed", "procede"
+        "si", "yes", "yep", "sure", "ok", "okay", "vale",
+        "confirmo", "confirmar", "confirmada",
+        "proceed", "procede",
     ]
-
-    for kw in strong_yes:
-        if kw in s:
-            return True
-
-    # Evitar palabras de intent como "agendar", "book", "schedule"
-    intent_words = ["agendar", "book", "schedule", "reservar"]
-    if any(w in s for w in intent_words):
+    has_yes = any(re.search(rf"(?<!\w){re.escape(kw)}(?!\w)", s) for kw in strong_yes)
+    if not has_yes:
         return False
 
-    return False
+    # Si además contiene intención explícita de nueva agenda, no tratar como simple "sí".
+    intent_words = ["agendar", "book", "schedule", "reservar", "programar", "reagendar", "reschedule"]
+    has_intent_word = any(re.search(rf"(?<!\w){re.escape(w)}(?!\w)", s) for w in intent_words)
+    simple_yes_only = bool(
+        re.fullmatch(
+            r"(si|yes|yep|sure|ok|okay|vale|confirmo|confirmar|confirmada|proceed|procede)",
+            s,
+        )
+    )
+    if has_intent_word and not simple_yes_only:
+        return False
+    return True
 
 
 
 
 def _is_no(msg: str) -> bool:
-    s = msg.strip().lower()
+    s = str(msg or "").strip().lower()
+    if not s:
+        return False
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s).strip()
     no_keywords = ["no", "nop", "nope", "cancel", "cancelar", "stop", "rechazar"]
-    return any(kw in s for kw in no_keywords)
+    return any(re.search(rf"(?<!\w){re.escape(kw)}(?!\w)", s) for kw in no_keywords)
 
 
 
@@ -1442,16 +1457,41 @@ def _is_explicit_schedule_restart_message(message: str) -> bool:
         return False
     if re.search(r"\+?\d[\d\s\-().]{7,}", message or ""):
         return False
-    restart_markers = (
+
+    def _has_word(token: str) -> bool:
+        return bool(re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text))
+
+    restart_verbs = {
+        "agendar", "reservar", "programar", "reagendar",
+        "schedule", "book", "reschedule",
+    }
+    restart_objects = {
+        "cita", "llamada", "sesion", "appointment", "call", "session", "consultation",
+    }
+    has_verb = any(_has_word(v) for v in restart_verbs)
+    has_object = any(_has_word(o) for o in restart_objects)
+    if has_verb and has_object:
+        return True
+
+    restart_phrases = (
         "quiero agendar",
-        "agendar",
         "necesito una cita",
         "quiero una cita",
+        "quiero agendar una llamada",
+        "agendar una llamada",
+        "programar una llamada",
         "reservar una cita",
+        "i want to schedule",
+        "i need to schedule",
+        "can i schedule",
+        "schedule a call",
+        "schedule call",
+        "book a call",
+        "book a session",
         "book appointment",
         "schedule appointment",
     )
-    return any(marker in text for marker in restart_markers)
+    return any(phrase in text for phrase in restart_phrases)
 
 
 
