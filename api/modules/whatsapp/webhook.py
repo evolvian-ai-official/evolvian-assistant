@@ -151,8 +151,10 @@ def _load_recent_marketing_recipient(
             row = (scoped.data or [None])[0]
             if row:
                 return row
+            # If Meta sent an explicit context id, avoid stale phone-based fallback.
+            return None
         except Exception:
-            pass
+            return None
 
     phone_candidates = _phone_candidates(from_number)
     if not phone_candidates:
@@ -271,6 +273,9 @@ def _is_marketing_interest_action(
 
     # Any marketing button click should open a human handoff unless it is an opt-out label.
     if message_type in {"interactive", "button"}:
+        # Reservation cancellation buttons must go through appointment cancellation flow.
+        if normalized_text and any(keyword in normalized_text for keyword in CANCEL_KEYWORDS):
+            return False
         if normalized_text and normalized_text in known_opt_out_labels:
             return False
         return True

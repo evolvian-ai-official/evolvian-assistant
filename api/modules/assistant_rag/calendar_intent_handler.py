@@ -6,7 +6,7 @@ import logging
 import re
 import uuid
 import unicodedata
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta, time as dtime, timezone
 from api.modules.assistant_rag.prompts.calendar_prompt import get_calendar_prompt
 from api.modules.assistant_rag.llm import openai_chat
 from api.modules.assistant_rag.supabase_client import supabase
@@ -829,6 +829,8 @@ def _recover_calendar_state_from_history(
     channel: str,
     settings: dict | None,
     fallback_lang: str,
+    *,
+    max_age_minutes: int = 180,
 ) -> dict:
     """
     Recupera estado mínimo del flujo de agenda desde history cuando
@@ -855,6 +857,7 @@ def _recover_calendar_state_from_history(
     normalized_channel = (channel or "").strip().lower()
     if normalized_channel == "widget":
         normalized_channel = "chat"
+    now_utc = datetime.now(timezone.utc)
 
     recovered = {
         "intent": "calendar",
@@ -863,6 +866,8 @@ def _recover_calendar_state_from_history(
         "lang": fallback_lang,
     }
     has_appointment_context = False
+    user_lang_signal = None
+    assistant_lang_signal = None
 
     for row in rows:
         source_type = str(row.get("source_type") or "").strip().lower()
@@ -875,13 +880,27 @@ def _recover_calendar_state_from_history(
         if normalized_channel and row_channel and row_channel != normalized_channel:
             continue
 
+        created_at_raw = str(row.get("created_at") or "").strip()
+        if created_at_raw:
+            try:
+                created_at = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                age_minutes = (now_utc - created_at.astimezone(timezone.utc)).total_seconds() / 60.0
+                if age_minutes > max_age_minutes:
+                    continue
+            except Exception:
+                continue
+
         has_appointment_context = True
         role = str(row.get("role") or "").strip().lower()
         content = str(row.get("content") or "")
 
         signal_lang = _detect_lang_signal(content)
-        if signal_lang:
-            recovered["lang"] = signal_lang
+        if role == "user" and signal_lang:
+            user_lang_signal = signal_lang
+        if role == "assistant" and signal_lang:
+            assistant_lang_signal = signal_lang
 
         if role == "user":
             extracted = _extract_fields(content, recovered, settings or {})
@@ -898,6 +917,11 @@ def _recover_calendar_state_from_history(
     if not has_appointment_context:
         return {}
 
+    if user_lang_signal:
+        recovered["lang"] = user_lang_signal
+    elif assistant_lang_signal:
+        recovered["lang"] = assistant_lang_signal
+
     collected = recovered.get("collected") or {}
     if (
         collected.get("scheduled_time")
@@ -910,6 +934,28 @@ def _recover_calendar_state_from_history(
         recovered["status"] = "collecting"
 
     return recovered
+
+
+def _is_explicit_schedule_restart_message(message: str) -> bool:
+    text = _normalize_for_match(message)
+    if not text:
+        return False
+    if _is_yes(text) or _is_no(text):
+        return False
+    if "@" in text:
+        return False
+    if re.search(r"\+?\d[\d\s\-().]{7,}", message or ""):
+        return False
+    restart_markers = (
+        "quiero agendar",
+        "agendar",
+        "necesito una cita",
+        "quiero una cita",
+        "reservar una cita",
+        "book appointment",
+        "schedule appointment",
+    )
+    return any(marker in text for marker in restart_markers)
 
 
 
@@ -946,6 +992,16 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     except Exception as e:
         logger.warning(f"⚠️ Could not load conversation state: {e}")
         state = {}
+
+    # ✅ Reinicio explícito del flujo cuando el usuario vuelve a pedir agenda.
+    # Evita arrastrar datos viejos (email/teléfono/idioma) en sesiones largas.
+    if _is_explicit_schedule_restart_message(message):
+        state = {
+            "intent": "calendar",
+            "status": "collecting",
+            "collected": {},
+            "lang": lang,
+        }
 
     # ✅ Resiliencia: recuperar estado desde history cuando state no existe
     # o viene incompleto para un mensaje que parece nombre.

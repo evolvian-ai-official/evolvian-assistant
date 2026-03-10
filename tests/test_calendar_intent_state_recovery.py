@@ -2,6 +2,7 @@ import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -25,12 +26,13 @@ COMMON_SETTINGS = {
 
 
 def _history_row(role: str, content: str, idx: int) -> dict:
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=(100 - idx))
     return {
         "role": role,
         "content": content,
         "source_type": "appointment",
         "channel": "whatsapp",
-        "created_at": f"2026-03-09T19:{idx:02d}:00Z",
+        "created_at": created_at.isoformat(),
     }
 
 
@@ -85,18 +87,28 @@ class _FakeSupabase:
         return _FakeQuery(name, self.data_source)
 
 
-def _setup_calendar_handler(monkeypatch, history_rows):
+def _setup_calendar_handler(monkeypatch, history_rows, *, allow_slot_generation=False):
     data_source = {
         "conversation_state": {},
         "history_rows": history_rows,
     }
     monkeypatch.setattr(module, "supabase", _FakeSupabase(data_source))
     monkeypatch.setattr(module, "_load_settings", lambda _client_id: dict(COMMON_SETTINGS))
-    monkeypatch.setattr(
-        module,
-        "_generate_available_slots",
-        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("slot generation should not run after recovery")),
-    )
+    if allow_slot_generation:
+        monkeypatch.setattr(
+            module,
+            "_generate_available_slots",
+            lambda *_a, **_k: [
+                {"start_iso": "2026-03-10T15:00:00-06:00", "readable": "2026-03-10 15:00"},
+                {"start_iso": "2026-03-10T15:45:00-06:00", "readable": "2026-03-10 15:45"},
+            ],
+        )
+    else:
+        monkeypatch.setattr(
+            module,
+            "_generate_available_slots",
+            lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("slot generation should not run after recovery")),
+        )
     monkeypatch.setattr(
         module,
         "openai_chat",
@@ -254,3 +266,63 @@ def test_state_recovery_confirmation_step_closes_booking(monkeypatch):
     assert "Tu cita ha sido registrada" in answer
     assert booking_calls, "booking flow should close on confirmation"
 
+
+def test_explicit_restart_ignores_stale_history_and_starts_from_slots(monkeypatch):
+    stale_history = [
+        {
+            "role": "user",
+            "content": "I want to book an appointment",
+            "source_type": "appointment",
+            "channel": "whatsapp",
+            "created_at": "2026-03-06T19:10:00Z",
+        },
+        {
+            "role": "assistant",
+            "content": "Thanks. What is your email address?",
+            "source_type": "appointment",
+            "channel": "whatsapp",
+            "created_at": "2026-03-06T19:11:00Z",
+        },
+    ]
+    _setup_calendar_handler(monkeypatch, stale_history, allow_slot_generation=True)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="quiero agendar",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "Con gusto te ayudo a agendar tu cita" in answer
+    assert "Indícame cuál prefieres" in answer
+    assert "Thanks." not in answer
+
+
+def test_recovery_keeps_spanish_and_does_not_loop_back_to_email_after_phone(monkeypatch):
+    history_rows = [
+        _history_row("user", "quiero agendar", 30),
+        _history_row("assistant", "Con gusto te ayudo a agendar tu cita. Indícame cuál prefieres.", 31),
+        _history_row("user", "mañana a las 3PM", 32),
+        _history_row("assistant", "Perfecto. ¿Cuál es tu nombre completo?", 33),
+        _history_row("user", "Aldo Benitez", 34),
+        _history_row("assistant", "Gracias. ¿Cuál es tu correo electrónico?", 35),
+        _history_row("user", "aldo.benitez.cortes@gmail.com", 36),
+        _history_row("assistant", "Gracias. ¿Cuál es tu número de teléfono con WhatsApp?", 37),
+    ]
+    _setup_calendar_handler(monkeypatch, history_rows)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="+52552527760",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="en",
+        )
+    )
+
+    assert "¿Confirmas la cita?" in answer
+    assert "What is your email address?" not in answer
