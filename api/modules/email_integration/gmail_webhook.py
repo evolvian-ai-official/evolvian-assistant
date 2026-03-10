@@ -218,54 +218,62 @@ async def process_gmail_message(email_address: str, history_id: str | None):
                 ),
                 timeout=30,
             )
-            answer = result.get("answer", "Gracias por tu mensaje. Pronto te responderemos.")
+            no_reply = bool(result.get("no_reply"))
+            answer = str(result.get("answer") or "").strip()
+            if no_reply:
+                print("🤫 Respuesta automática suprimida por política de autorespuesta institucional.")
         except asyncio.TimeoutError:
             print("⏱️ chat_email excedió 30s, respuesta por defecto.")
+            no_reply = False
             answer = "Gracias por tu mensaje. Pronto te responderemos."
         except Exception as e:
             print(f"⚠️ Error ejecutando chat_email: {e}")
+            no_reply = False
             answer = "Gracias por tu mensaje. Pronto te responderemos."
 
         # 8️⃣ Construir y enviar respuesta (MIMEText + headers de hilo)
-        reply = MIMEText(answer, _subtype="plain", _charset="utf-8")
-        reply["To"] = from_email
-        reply["From"] = assigned_email or email_address  # correo del canal
-        reply["Subject"] = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-        reply["In-Reply-To"] = message_id
-        reply["References"] = message_id
+        if not no_reply and answer:
+            reply = MIMEText(answer, _subtype="plain", _charset="utf-8")
+            reply["To"] = from_email
+            reply["From"] = assigned_email or email_address  # correo del canal
+            reply["Subject"] = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+            reply["In-Reply-To"] = message_id
+            reply["References"] = message_id
 
-        raw_b64 = base64.urlsafe_b64encode(reply.as_bytes()).decode("utf-8")
-        reply_body = {"raw": raw_b64, "threadId": target_thread_id}
+            raw_b64 = base64.urlsafe_b64encode(reply.as_bytes()).decode("utf-8")
+            reply_body = {"raw": raw_b64, "threadId": target_thread_id}
 
-        allowed, policy = begin_email_send_audit(
-            client_id=client_id,
-            to_email=from_email,
-            purpose="transactional",
-            source="gmail_webhook_auto_reply",
-            source_id=message_id,
-        )
-        if allowed:
-            try:
-                send_result = service.users().messages().send(userId="me", body=reply_body).execute()
-                complete_email_send_audit(
-                    client_id=client_id,
-                    policy_result=policy,
-                    success=True,
-                    provider_message_id=(send_result or {}).get("id")
-                    if isinstance(send_result, dict)
-                    else None,
-                )
-                print(f"✅ Respuesta enviada a {from_email} (hilo {target_thread_id})")
-            except Exception as e:
-                complete_email_send_audit(
-                    client_id=client_id,
-                    policy_result=policy,
-                    success=False,
-                    send_error="gmail_send_exception",
-                )
-                print(f"⚠️ Error enviando respuesta Gmail: {e}")
+            allowed, policy = begin_email_send_audit(
+                client_id=client_id,
+                to_email=from_email,
+                purpose="transactional",
+                source="gmail_webhook_auto_reply",
+                source_id=message_id,
+            )
+            if allowed:
+                try:
+                    send_result = service.users().messages().send(userId="me", body=reply_body).execute()
+                    complete_email_send_audit(
+                        client_id=client_id,
+                        policy_result=policy,
+                        success=True,
+                        provider_message_id=(send_result or {}).get("id")
+                        if isinstance(send_result, dict)
+                        else None,
+                    )
+                    print(f"✅ Respuesta enviada a {from_email} (hilo {target_thread_id})")
+                except Exception as e:
+                    complete_email_send_audit(
+                        client_id=client_id,
+                        policy_result=policy,
+                        success=False,
+                        send_error="gmail_send_exception",
+                    )
+                    print(f"⚠️ Error enviando respuesta Gmail: {e}")
+            else:
+                print(f"⛔ Respuesta bloqueada por política outbound. to={from_email} proof={policy.get('proof_id')}")
         else:
-            print(f"⛔ Respuesta bloqueada por política outbound. to={from_email} proof={policy.get('proof_id')}")
+            print("ℹ️ No se envía respuesta Gmail para este mensaje.")
 
         # 9️⃣ Marcar como leído (si correspondía)
         try:

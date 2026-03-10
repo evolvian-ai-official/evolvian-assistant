@@ -148,3 +148,51 @@ def test_whatsapp_campaign_interest_button_without_text_still_creates_handoff(mo
     assert handoff_calls[0]["reason"] == "campaign_interest"
     assert handoff_calls[0]["trigger"] == "campaign_interest_button"
     assert len(send_calls) == 1
+
+
+def test_whatsapp_no_reply_policy_skips_send(monkeypatch):
+    from api.modules.whatsapp import webhook as module
+
+    send_calls = []
+
+    monkeypatch.setattr(module, "get_channel_by_wa_phone_id", lambda *_args, **_kwargs: {"client_id": "client_1"})
+    monkeypatch.setattr(module, "is_duplicate_wa_message", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(module, "register_wa_message", lambda **_kwargs: None)
+    monkeypatch.setattr(module, "_load_recent_marketing_recipient", lambda **_kwargs: None)
+    monkeypatch.setattr(module, "_load_campaign_opt_out_labels", lambda *_args, **_kwargs: set())
+
+    async def _fake_send_whatsapp_message(*, to_number, text, channel):
+        send_calls.append({"to_number": to_number, "text": text, "channel": channel})
+        return True
+
+    async def _no_reply_handle_message(**_kwargs):
+        return None
+
+    monkeypatch.setattr(module, "send_whatsapp_message", _fake_send_whatsapp_message)
+    monkeypatch.setattr(module, "handle_message", _no_reply_handle_message)
+
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"phone_number_id": "wa_phone_1"},
+                            "messages": [
+                                {
+                                    "id": "wamid.inbound_nr_1",
+                                    "from": "5215512345678",
+                                    "type": "text",
+                                    "text": {"body": "Gracias por comunicarte con Dental Del Centro"},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    asyncio.run(module.process_whatsapp_payload(payload))
+
+    assert len(send_calls) == 0

@@ -749,7 +749,7 @@ async def handle_message(
     user_message: str,
     channel: str = "chat",
     provider: str = "internal",
-) -> str:
+) -> Optional[str]:
     from api.modules.assistant_rag.intent_router import process_user_message
 
     result = process_user_message(
@@ -762,5 +762,8 @@ async def handle_message(
 
     if hasattr(result, "__await__"):
         result = await result
+
+    if result is None:
+        return None
 
     return str(result)

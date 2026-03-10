@@ -55,6 +55,52 @@ AGENDA_KEYWORDS = {
     "agendar", "agenda", "cita", "sesión", "sesion", "reservar",
     "horario", "book", "schedule", "appointment", "slot", "slots"
 }
+CALENDAR_FOLLOWUP_KEYWORDS = {
+    "mañana",
+    "manana",
+    "tomorrow",
+    "hoy",
+    "today",
+    "lunes",
+    "martes",
+    "miercoles",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sabado",
+    "sábado",
+    "domingo",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "confirmo",
+    "confirmar",
+    "confirm",
+    "si",
+    "sí",
+    "yes",
+    "primer horario",
+    "first slot",
+    "de las nueve",
+    "de las 9",
+    "escoge",
+    "elige",
+    "choose for me",
+    "pick one",
+    "mi nombre",
+    "my name",
+    "mi correo",
+    "my email",
+    "mi telefono",
+    "mi teléfono",
+    "my phone",
+}
+DATE_LIKE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b", re.I)
+TIME_LIKE_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)?\b", re.I)
 
 
 def _safe_hash(value: Any, *, length: int = 12) -> str:
@@ -133,11 +179,100 @@ def contains_schedule_keywords(message: str) -> bool:
     t = (message or "").lower()
     return any(k in t for k in AGENDA_KEYWORDS)
 
+
+def _looks_like_calendar_followup(message: str) -> bool:
+    """Detecta respuestas típicas de 2º/3º turno en flujo de agenda."""
+    if not message:
+        return False
+    if EMAIL_RE.search(message) or PHONE_RE.search(message):
+        return True
+
+    normalized = _normalize_text(message)
+    if any(token in normalized for token in CALENDAR_FOLLOWUP_KEYWORDS):
+        return True
+
+    # Inputs como "mañana 9:00", "2026-03-10 09:00", "10/03/2026 9am".
+    if DATE_LIKE_RE.search(message) or TIME_LIKE_RE.search(message):
+        return True
+    return False
+
+
+def _parse_created_at(raw_value: Any) -> Optional[datetime]:
+    try:
+        raw = str(raw_value or "").strip()
+        if not raw:
+            return None
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _has_recent_appointment_history(
+    client_id: str,
+    session_id: str,
+    channel: str,
+    *,
+    max_age_minutes: int = 120,
+) -> bool:
+    """
+    Fallback de resiliencia:
+    si state falla en persistir/leer, usa history reciente para decidir
+    si el usuario sigue en flujo de agenda.
+    """
+    try:
+        res = (
+            supabase.table("history")
+            .select("source_type, channel, content, created_at")
+            .eq("client_id", client_id)
+            .eq("session_id", session_id)
+            .order("created_at", desc=True)
+            .limit(8)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        logger.warning("Could not load recent history context for fallback routing: %s", e)
+        return False
+
+    if not rows:
+        return False
+
+    now_utc = datetime.now(timezone.utc)
+    normalized_channel = _normalize_channel_name(channel)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        created_at = _parse_created_at(row.get("created_at"))
+        if not created_at:
+            continue
+        age_minutes = (now_utc - created_at).total_seconds() / 60.0
+        if age_minutes > max_age_minutes:
+            continue
+
+        row_channel = _normalize_channel_name(row.get("channel"))
+        if row_channel and row_channel != normalized_channel:
+            continue
+
+        if str(row.get("source_type") or "").strip().lower() == "appointment":
+            return True
+
+        content = _normalize_text(str(row.get("content") or ""))
+        if "horarios disponibles" in content or "available slots" in content:
+            return True
+    return False
+
+
 def detect_intent_to_schedule(message: str) -> bool:
     """Wrapper: detector avanzado o fallback local."""
     if _detect_intent_to_schedule:
         try:
-            return bool(_detect_intent_to_schedule(message))
+            # If advanced detector is uncertain/false, keep robust local fallback
+            # so obvious scheduling phrasing still routes to calendar.
+            if bool(_detect_intent_to_schedule(message)):
+                return True
         except Exception:
             pass
     return contains_schedule_keywords(message) or looks_like_contact_block(message)
@@ -209,6 +344,57 @@ def _normalize_channel_name(raw: str | None) -> str:
 def _normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value or "")
     return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
+
+
+def _detect_institutional_auto_reply(message: str, channel: str) -> dict[str, Any] | None:
+    normalized_channel = _normalize_channel_name(channel)
+    if normalized_channel not in {"whatsapp", "email", "messenger", "instagram"}:
+        return None
+
+    text = _normalize_text(message).strip()
+    if not text:
+        return None
+
+    strong_markers = (
+        "mensaje automatico",
+        "respuesta automatica",
+        "este es un mensaje automatico",
+        "auto reply",
+        "autoreply",
+        "out of office",
+        "away message",
+        "do not reply",
+        "noreply",
+        "no-reply",
+    )
+    institutional_markers = (
+        "gracias por comunicarte",
+        "gracias por contactarnos",
+        "thank you for contacting",
+        "thanks for contacting",
+        "thanks for reaching out",
+        "hemos recibido tu mensaje",
+        "recibimos tu mensaje",
+        "we received your message",
+        "en breve te atendemos",
+        "en breve lo atendemos",
+        "nuestro equipo te respondera",
+        "our team will reply",
+        "fuera de horario",
+        "horario de atencion",
+        "business hours",
+    )
+    strong_hits = [marker for marker in strong_markers if marker in text]
+    institutional_hits = [marker for marker in institutional_markers if marker in text]
+
+    if not strong_hits and len(institutional_hits) < 2:
+        return None
+
+    return {
+        "event": "institutional_auto_reply_detected",
+        "channel": normalized_channel,
+        "signals": (strong_hits + institutional_hits)[:4],
+    }
 
 
 def _is_whatsapp_handoff_request(message: str) -> bool:
@@ -743,6 +929,31 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
         print(f"{GREEN}🧠 Continuing calendar flow (status={status}){RESET}")
         return "calendar"
 
+    # 🔧 Resiliencia: recuperar flujo de agenda por historial reciente
+    # cuando conversation_state no esté disponible en producción.
+    if active_intent != "calendar" and _looks_like_calendar_followup(message):
+        recent_appointment_context = _has_recent_appointment_history(
+            client_id,
+            session_id,
+            channel,
+        )
+        if recent_appointment_context:
+            calendar_enabled, calendar_status = get_calendar_gate()
+            if calendar_enabled:
+                recovered_state = get_state(client_id, session_id)
+                recovered_state.setdefault("collected", {})
+                recovered_state.update(
+                    {
+                        "intent": "calendar",
+                        "status": "collecting",
+                        "calendar_status": calendar_status,
+                        "has_calendar_feature": True,
+                    }
+                )
+                upsert_state(client_id, session_id, recovered_state)
+                print(f"{GREEN}🛟 Recovered calendar flow from recent history{RESET}")
+                return "calendar"
+
     # 🕵️ Activar flujo calendario desde cero
     if detect_intent_to_schedule(message):
         try:
@@ -811,6 +1022,36 @@ async def process_user_message(
     print(f"🌍 Detected language: {lang}")
     normalized_channel = _normalize_channel_name(channel)
     is_whatsapp = normalized_channel == "whatsapp"
+    auto_reply_policy = _detect_institutional_auto_reply(message, normalized_channel)
+    if auto_reply_policy:
+        save_history(
+            client_id,
+            session_id,
+            "user",
+            message,
+            channel=channel,
+            provider=provider,
+            metadata={"message_policy": auto_reply_policy},
+        )
+        logger.info(
+            "Suppressed institutional auto-reply | channel=%s | client_ref=%s | session_fp=%s | signals=%s",
+            normalized_channel,
+            _safe_tail(client_id),
+            _safe_hash(session_id),
+            auto_reply_policy.get("signals"),
+        )
+        if return_metadata:
+            return {
+                "answer": "",
+                "confidence_score": 1.0,
+                "handoff_recommended": False,
+                "human_intervention_recommended": False,
+                "needs_human": False,
+                "handoff_reason": None,
+                "confidence_reason": "institutional_auto_reply_suppressed",
+                "no_reply": True,
+            }
+        return None
 
     if is_whatsapp:
         campaign_interest_handoff = _get_active_campaign_interest_handoff(client_id, session_id)

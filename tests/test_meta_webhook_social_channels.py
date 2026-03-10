@@ -180,6 +180,54 @@ def test_social_stale_event_respects_24h_window(monkeypatch):
     assert saved_rows[0]["channel"] == "messenger"
 
 
+def test_messenger_no_reply_skips_send(monkeypatch):
+    client, module = _build_client()
+
+    monkeypatch.setattr(module, "verify_meta_signature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "resolve_social_channel_credentials",
+        lambda **_kwargs: {
+            "client_id": "client_4",
+            "meta_entity_id": "page_777",
+            "access_token": "token_777",
+        },
+    )
+
+    async def _no_reply_process(**_kwargs):
+        return None
+
+    async def _unexpected_send(**_kwargs):
+        raise AssertionError("send should not run when no reply is returned")
+
+    monkeypatch.setattr(module, "process_user_message", _no_reply_process)
+    monkeypatch.setattr(module, "send_social_text_message", _unexpected_send)
+
+    payload = {
+        "object": "page",
+        "entry": [
+            {
+                "id": "page_777",
+                "messaging": [
+                    {
+                        "sender": {"id": "user_no_reply"},
+                        "recipient": {"id": "page_777"},
+                        "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                        "message": {"mid": "mid.in.nr.1", "text": "Gracias por comunicarte con nosotros"},
+                    }
+                ],
+            }
+        ],
+    }
+
+    res = client.post("/webhooks/meta", json=payload)
+    body = res.json()
+
+    assert res.status_code == 200
+    assert body["status"] == "ok"
+    assert body["by_status"]["no_reply"] == 1
+
+
 def test_meta_graph_api_version_enforces_v19(monkeypatch):
     from api.modules.meta.social_sender import get_meta_graph_api_version, is_within_messaging_window
 

@@ -1097,11 +1097,18 @@ async def process_whatsapp_payload(payload: dict):
             # ---------------------------------------------------------
             # Enviar respuesta SOLO una vez
             # ---------------------------------------------------------
-            await send_whatsapp_message(
-                to_number=from_number,
-                text=assistant_response,
-                channel=channel,
-            )
+            if assistant_response:
+                await send_whatsapp_message(
+                    to_number=from_number,
+                    text=assistant_response,
+                    channel=channel,
+                )
+            else:
+                logger.info(
+                    "WhatsApp auto-reply suppressed | message_fp=%s | from_fp=%s",
+                    _safe_hash(wa_message_id),
+                    _safe_hash(from_number),
+                )
 
             logger.info("WhatsApp message processed | message_fp=%s", _safe_hash(wa_message_id))
 

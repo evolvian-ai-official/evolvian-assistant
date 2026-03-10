@@ -135,10 +135,12 @@ async def process_chat_email_payload(body: dict) -> dict:
         provider=provider,
     )
     logging.info("✅ Respuesta generada correctamente desde el router de intents.")
+    no_reply = answer is None or not str(answer).strip()
 
     # Responder
     return {
-        "answer": answer,
+        "answer": "" if no_reply else str(answer),
+        "no_reply": no_reply,
         "session_id": session_id,
         "channel": channel,
         "subject": subject,
