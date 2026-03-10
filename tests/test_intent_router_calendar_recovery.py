@@ -83,3 +83,38 @@ def test_calendar_route_recovers_when_state_is_missing(monkeypatch):
     recovered_state = upserts[-1][2]
     assert recovered_state.get("intent") == "calendar"
     assert recovered_state.get("status") == "collecting"
+
+
+def test_route_keeps_calendar_sticky_for_pending_replace_existing(monkeypatch):
+    fake_plan_features = types.ModuleType("api.utils.plan_features_logic")
+    fake_plan_features.client_has_feature = lambda _client_id, feature_key: feature_key == "calendar_sync"
+    monkeypatch.setitem(sys.modules, "api.utils.plan_features_logic", fake_plan_features)
+
+    monkeypatch.setattr(intent_router, "supabase", _FakeSupabase())
+    monkeypatch.setattr(
+        intent_router,
+        "get_state",
+        lambda _client_id, _session_id: {
+            "intent": "calendar",
+            "status": "pending_replace_existing",
+            "collected": {"scheduled_time": "2026-03-11T09:00:00-06:00"},
+        },
+    )
+    monkeypatch.setattr(intent_router, "detect_intent_to_schedule", lambda _message: False)
+
+    upserts = []
+    monkeypatch.setattr(
+        intent_router,
+        "upsert_state",
+        lambda client_id, session_id, state: upserts.append((client_id, session_id, dict(state or {}))),
+    )
+
+    route = intent_router.route_message(
+        client_id="client-1",
+        session_id="session-1",
+        message="si",
+        channel="whatsapp",
+    )
+
+    assert route == "calendar"
+    assert upserts == []

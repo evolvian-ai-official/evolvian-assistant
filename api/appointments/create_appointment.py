@@ -14,6 +14,7 @@ import requests
 
 from api.config.config import supabase
 from api.modules.whatsapp.whatsapp_sender import (
+    send_whatsapp_message_for_client,
     send_whatsapp_template_for_client,
 )
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
@@ -569,7 +570,7 @@ def _capture_inline_contact_consent(payload: CreateAppointmentPayload) -> str | 
 # =========================
 # Internal helper
 # =========================
-async def send_appointment_confirmation(appointment: dict) -> None:
+async def send_appointment_confirmation(appointment: dict) -> bool:
     client_id = appointment.get("client_id")
     phone = appointment.get("user_phone")
 
@@ -577,7 +578,34 @@ async def send_appointment_confirmation(appointment: dict) -> None:
         logger.warning(
             "⚠️ Appointment confirmation skipped — missing client_id or phone"
         )
-        return
+        return False
+
+    fallback_lang = str(
+        appointment.get("recipient_language")
+        or appointment.get("language")
+        or "es"
+    ).strip().lower()
+    fallback_message = (
+        "✅ Tu cita fue agendada. En breve recibirás los detalles."
+        if not fallback_lang.startswith("en")
+        else "✅ Your appointment was scheduled. You will receive the details shortly."
+    )
+
+    async def _send_fallback_confirmation_text() -> bool:
+        sent = await send_whatsapp_message_for_client(
+            client_id=str(client_id),
+            to_number=phone,
+            message=fallback_message,
+            purpose="transactional",
+            recipient_email=appointment.get("user_email"),
+            policy_source="appointments_confirmation_fallback_text",
+            policy_source_id=str(appointment.get("id") or ""),
+        )
+        if sent:
+            logger.info("✅ Appointment confirmation fallback TEXT sent")
+        else:
+            logger.warning("⚠️ Appointment confirmation fallback TEXT failed")
+        return bool(sent)
 
     # 1️⃣ Resolve active confirmation template by recipient language
     template = resolve_template_for_appointment(
@@ -588,7 +616,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
     )
     if not template:
         logger.info("ℹ️ No active appointment_confirmation template found")
-        return
+        return await _send_fallback_confirmation_text()
 
     meta_template_id = template.get("meta_template_id")
     meta = template.get("_resolved_meta")
@@ -609,7 +637,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
             "⚠️ Meta template metadata not found | meta_template_id=%s",
             meta_template_id,
         )
-        return
+        return await _send_fallback_confirmation_text()
 
     template_name = meta.get("template_name")
     _, language_code = resolve_locale_for_rendering(
@@ -622,7 +650,7 @@ async def send_appointment_confirmation(appointment: dict) -> None:
 
     if not template_name:
         logger.warning("⚠️ Meta template missing template_name")
-        return
+        return await _send_fallback_confirmation_text()
 
     logger.info(f"📨 Using template: {template_name}")
 
@@ -677,14 +705,16 @@ async def send_appointment_confirmation(appointment: dict) -> None:
             client_id,
             result.get("error"),
         )
+        return await _send_fallback_confirmation_text()
     else:
         logger.info(
             "✅ Appointment confirmation sent | message_id=%s",
             result.get("meta_message_id"),
         )
+        return True
 
 
-def send_appointment_email_confirmation(appointment: dict) -> None:
+def send_appointment_email_confirmation(appointment: dict) -> bool:
     """
     Sends an immediate email confirmation using Resend when user_email exists.
     Independent from WhatsApp template flow.
@@ -693,7 +723,7 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
     raw_time = appointment.get("scheduled_time")
     if not email or not raw_time:
         logger.info("ℹ️ Email confirmation skipped — missing user_email or scheduled_time")
-        return
+        return False
 
     try:
         scheduled_utc = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
@@ -804,8 +834,10 @@ def send_appointment_email_confirmation(appointment: dict) -> None:
             logger.info("✅ Appointment email confirmation sent to %s", email)
         else:
             logger.warning("⚠️ Appointment email confirmation skipped/blocked for %s", email)
+        return bool(email_sent)
     except Exception as e:
         logger.error("❌ Failed sending appointment email confirmation: %s", e)
+        return False
 
 
 # =========================
@@ -1178,6 +1210,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
 
     if existing_id_to_replace:
         replacement_cancellation_whatsapp_sent = False
+        replacement_cancellation_email_sent = False
         now_iso_update = datetime.utcnow().isoformat()
 
         supabase.table("appointments").update({
@@ -1213,7 +1246,9 @@ async def create_appointment(payload: CreateAppointmentPayload):
                 )
 
             try:
-                send_appointment_cancellation_email_notification(cancellation_payload)
+                replacement_cancellation_email_sent = bool(
+                    send_appointment_cancellation_email_notification(cancellation_payload)
+                )
             except Exception:
                 logger.exception(
                     "❌ Replaced appointment cancellation email notification crashed | client_id=%s | appointment_id=%s",
@@ -1222,6 +1257,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
                 )
     else:
         replacement_cancellation_whatsapp_sent = False
+        replacement_cancellation_email_sent = False
 
     recipient_language, recipient_locale = _resolve_payload_recipient_language(payload)
     appointment_data = {
@@ -1284,12 +1320,14 @@ async def create_appointment(payload: CreateAppointmentPayload):
             # In reschedules, give Meta a brief head start so cancellation is delivered first.
             await asyncio.sleep(1.5)
 
-        await send_appointment_confirmation(appointment_for_confirmation)
-        send_appointment_email_confirmation(appointment_for_confirmation)
+        confirmation_whatsapp_sent = await send_appointment_confirmation(appointment_for_confirmation)
+        confirmation_email_sent = send_appointment_email_confirmation(appointment_for_confirmation)
     except Exception:
         logger.exception(
             "❌ Appointment confirmation crashed unexpectedly"
         )
+        confirmation_whatsapp_sent = False
+        confirmation_email_sent = False
 
     # 2️⃣ Track usage (NO cambiado)
     supabase.table("appointment_usage").insert({
@@ -1432,6 +1470,12 @@ async def create_appointment(payload: CreateAppointmentPayload):
         "status": appointment["status"],
         "reminders_created": reminders_created,
         "reminders_skipped_past_due": reminders_skipped_past_due,
+        "notifications": {
+            "old_cancellation_whatsapp_sent": bool(replacement_cancellation_whatsapp_sent),
+            "old_cancellation_email_sent": bool(replacement_cancellation_email_sent),
+            "new_confirmation_whatsapp_sent": bool(confirmation_whatsapp_sent),
+            "new_confirmation_email_sent": bool(confirmation_email_sent),
+        },
     }
 
 

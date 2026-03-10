@@ -150,7 +150,10 @@ def _render_email_template_text(template_text: str | None, replacements: dict[st
 
 
 async def send_appointment_cancellation_notification(appointment: dict) -> bool:
-    from api.modules.whatsapp.whatsapp_sender import send_whatsapp_template_for_client
+    from api.modules.whatsapp.whatsapp_sender import (
+        send_whatsapp_message_for_client,
+        send_whatsapp_template_for_client,
+    )
 
     client_id = str(appointment.get("client_id") or "").strip()
     to_phone = (appointment.get("user_phone") or "").strip()
@@ -160,6 +163,41 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         )
         return False
 
+    language_hint = str(
+        appointment.get("recipient_language")
+        or appointment.get("language")
+        or "es"
+    ).strip().lower()
+    fallback_message = (
+        "❌ Tu cita fue cancelada."
+        if not language_hint.startswith("en")
+        else "❌ Your appointment was cancelled."
+    )
+
+    async def _send_fallback_cancellation_text() -> bool:
+        sent = await send_whatsapp_message_for_client(
+            client_id=client_id,
+            to_number=to_phone,
+            message=fallback_message,
+            purpose="transactional",
+            recipient_email=appointment.get("user_email"),
+            policy_source="appointments_cancellation_fallback_text",
+            policy_source_id=str(appointment.get("id") or ""),
+        )
+        if sent:
+            logger.info(
+                "✅ Appointment cancellation fallback TEXT sent | client_id=%s | appointment_id=%s",
+                client_id,
+                appointment.get("id"),
+            )
+        else:
+            logger.warning(
+                "⚠️ Appointment cancellation fallback TEXT failed | client_id=%s | appointment_id=%s",
+                client_id,
+                appointment.get("id"),
+            )
+        return bool(sent)
+
     template = resolve_template_for_appointment(
         client_id=client_id,
         channel="whatsapp",
@@ -168,7 +206,7 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
     )
     if not template:
         logger.info("ℹ️ No active appointment_cancellation template found | client_id=%s", client_id)
-        return False
+        return await _send_fallback_cancellation_text()
 
     meta_template_id = template.get("meta_template_id")
     meta = template.get("_resolved_meta")
@@ -188,12 +226,12 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
             "⚠️ Meta template metadata not found for cancellation | meta_template_id=%s",
             meta_template_id,
         )
-        return False
+        return await _send_fallback_cancellation_text()
 
     template_name = (meta.get("template_name") or "").strip()
     if not template_name:
         logger.warning("⚠️ Cancellation meta template missing template_name")
-        return False
+        return await _send_fallback_cancellation_text()
 
     _, language_code = resolve_locale_for_rendering(
         client_id=client_id,
@@ -237,7 +275,7 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
             appointment.get("id"),
             send_result.get("error"),
         )
-        return False
+        return await _send_fallback_cancellation_text()
 
     logger.info(
         "✅ Appointment cancellation template sent | client_id=%s | appointment_id=%s | message_id=%s",

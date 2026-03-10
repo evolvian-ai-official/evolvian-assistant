@@ -95,7 +95,14 @@ def _format_slot_for_lang(iso_str: str, tz_name: str, lang: str) -> str:
     )
 
 
-def _pick_display_slots(slots: list[dict], tz_name: str, *, limit: int = 9, max_per_day: int = 3) -> list[dict]:
+def _pick_display_slots(
+    slots: list[dict],
+    tz_name: str,
+    *,
+    limit: int = 9,
+    max_per_day: int = 3,
+    fill_overflow: bool = True,
+) -> list[dict]:
     if limit <= 0:
         return []
     tz = ZoneInfo(tz_name or "UTC")
@@ -129,7 +136,7 @@ def _pick_display_slots(slots: list[dict], tz_name: str, *, limit: int = 9, max_
         else:
             overflow.append(slot)
 
-    if len(picked) < limit:
+    if fill_overflow and len(picked) < limit:
         for slot in overflow:
             if len(picked) >= limit:
                 break
@@ -138,9 +145,22 @@ def _pick_display_slots(slots: list[dict], tz_name: str, *, limit: int = 9, max_
     return picked
 
 
-def _format_slot_list_for_lang(slots: list[dict], tz_name: str, lang: str, limit: int = 9) -> str:
+def _format_slot_list_for_lang(
+    slots: list[dict],
+    tz_name: str,
+    lang: str,
+    limit: int = 9,
+    max_per_day: int = 3,
+    fill_overflow: bool = True,
+) -> str:
     out = []
-    for slot in _pick_display_slots(slots or [], tz_name, limit=limit):
+    for slot in _pick_display_slots(
+        slots or [],
+        tz_name,
+        limit=limit,
+        max_per_day=max_per_day,
+        fill_overflow=fill_overflow,
+    ):
         iso = slot.get("start_iso")
         if not iso:
             continue
@@ -185,7 +205,13 @@ def _compact_slot_text_if_needed(
         return text
 
     compact_slots = _pick_earliest_slots(slots or [], tz_name, limit=5)
-    compact_text = _format_slot_list_for_lang(compact_slots, tz_name, lang, limit=5)
+    compact_lines = []
+    for slot in compact_slots:
+        iso = str((slot or {}).get("start_iso") or "").strip()
+        if not iso:
+            continue
+        compact_lines.append(f"- {_format_slot_for_lang(iso, tz_name, lang)}")
+    compact_text = "\n".join(compact_lines)
     return compact_text or text
 
 
@@ -202,6 +228,20 @@ def _slot_display_limit_for_settings(settings: dict | None) -> int:
         max_days = 3
     max_days = max(1, min(max_days, 60))
     return max(base_limit, min(max_days * per_day, hard_cap))
+
+
+def _slot_display_max_per_day_for_settings(settings: dict | None) -> int:
+    max_days = 3
+    try:
+        raw = (settings or {}).get("max_days_ahead")
+        if raw is not None:
+            max_days = int(raw)
+    except Exception:
+        max_days = 3
+    # Para ventanas grandes priorizamos cobertura de días (un slot por día).
+    if max_days >= 10:
+        return 1
+    return 3
 
 
 def _filter_slots_for_date(slots: list[dict], tz_name: str, date_iso: str) -> list[dict]:
@@ -798,6 +838,7 @@ async def _book_appointment(client_id: str, session_id: str, collected: dict, ch
             "invalid_phone": invalid_phone,
             "invalid_time": bool((result or {}).get("invalid_time")),
             "overlap_conflict": bool((result or {}).get("overlap_conflict")),
+            "notifications": (result or {}).get("notifications") or {},
         }
     except Exception as e:
         logger.error(f"❌ Error creating appointment via appointments module: {e}")
@@ -1422,7 +1463,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         and collected.get("user_email")
         and collected.get("user_phone")
         and collected.get("scheduled_time")
-        and state.get("status") not in ["pending_confirmation", "confirmed"]
+        and state.get("status") not in ["pending_confirmation", "confirmed", "pending_replace_existing"]
     ):
         logger.info("🟦 Switching status to pending_confirmation (all data collected).")
         state["status"] = "pending_confirmation"
@@ -1475,10 +1516,37 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 state.pop("existing_appointment", None)
                 state["collected"] = collected
                 _persist_conversation_state(client_id, session_id, state, log_error=False)
+                notifications = booking_result.get("notifications") or {}
+                old_cancel_sent = bool(
+                    notifications.get("old_cancellation_whatsapp_sent")
+                    or notifications.get("old_cancellation_email_sent")
+                )
+                new_confirm_sent = bool(
+                    notifications.get("new_confirmation_whatsapp_sent")
+                    or notifications.get("new_confirmation_email_sent")
+                )
+                if old_cancel_sent and new_confirm_sent:
+                    return (
+                        "✅ Listo. Cancelé tu cita activa y registré la nueva. Te envié la cancelación de la cita anterior y la confirmación de la nueva."
+                        if lang == "es"
+                        else "✅ Done. I cancelled your active appointment and booked the new one. I sent the old cancellation and the new confirmation."
+                    )
+                if old_cancel_sent and not new_confirm_sent:
+                    return (
+                        "✅ Listo. Cancelé tu cita activa y registré la nueva. Envié la cancelación de la cita anterior, pero no pude enviar la confirmación de la nueva."
+                        if lang == "es"
+                        else "✅ Done. I cancelled your active appointment and booked the new one. I sent the old cancellation, but I couldn't send the new confirmation."
+                    )
+                if (not old_cancel_sent) and new_confirm_sent:
+                    return (
+                        "✅ Listo. Cancelé tu cita activa y registré la nueva. Envié la confirmación de la nueva, pero no pude enviar la cancelación de la anterior."
+                        if lang == "es"
+                        else "✅ Done. I cancelled your active appointment and booked the new one. I sent the new confirmation, but I couldn't send the old cancellation."
+                    )
                 return (
-                    "✅ Listo. Cancelé tu cita activa y registré la nueva."
+                    "✅ Listo. Cancelé tu cita activa y registré la nueva. No pude enviar las notificaciones de cancelación/confirmación."
                     if lang == "es"
-                    else "✅ Done. I cancelled your active appointment and booked the new one."
+                    else "✅ Done. I cancelled your active appointment and booked the new one. I couldn't send cancellation/confirmation notifications."
                 )
 
             return (
@@ -1547,6 +1615,8 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         state.get("proposed_slots") or [],
                         tz_name,
                         lang,
+                        max_per_day=_slot_display_max_per_day_for_settings(settings),
+                        fill_overflow=_slot_display_max_per_day_for_settings(settings) > 1,
                     )
                     slot_text = _compact_slot_text_if_needed(
                         slot_text,
@@ -1667,6 +1737,8 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     if state.get("status") == "collecting":
         tz_name = (settings or {}).get("timezone") or "UTC"
         display_limit = _slot_display_limit_for_settings(settings)
+        display_max_per_day = _slot_display_max_per_day_for_settings(settings)
+        display_fill_overflow = display_max_per_day > 1
 
         if not collected.get("scheduled_time"):
             proposed_slots = state.get("proposed_slots") or []
@@ -1674,7 +1746,14 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             if requested_date:
                 day_slots = _filter_slots_for_date(proposed_slots, tz_name, requested_date)
                 if day_slots:
-                    slot_text = _format_slot_list_for_lang(day_slots, tz_name, lang, limit=display_limit)
+                    slot_text = _format_slot_list_for_lang(
+                        day_slots,
+                        tz_name,
+                        lang,
+                        limit=display_limit,
+                        max_per_day=display_max_per_day,
+                        fill_overflow=display_fill_overflow,
+                    )
                     slot_text = _compact_slot_text_if_needed(
                         slot_text,
                         day_slots,
@@ -1687,7 +1766,14 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         else f"For {requested_date}, I have these available times:\n{slot_text}\n\nTell me which one you prefer."
                     )
 
-                fallback_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang, limit=display_limit)
+                fallback_text = _format_slot_list_for_lang(
+                    proposed_slots,
+                    tz_name,
+                    lang,
+                    limit=display_limit,
+                    max_per_day=display_max_per_day,
+                    fill_overflow=display_fill_overflow,
+                )
                 fallback_text = _compact_slot_text_if_needed(
                     fallback_text,
                     proposed_slots,
@@ -1701,7 +1787,14 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         else f"I couldn't find available times for {requested_date}. Here are the next available slots:\n{fallback_text}\n\nIf you want another day, tell me."
                     )
 
-            slot_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang, limit=display_limit)
+            slot_text = _format_slot_list_for_lang(
+                proposed_slots,
+                tz_name,
+                lang,
+                limit=display_limit,
+                max_per_day=display_max_per_day,
+                fill_overflow=display_fill_overflow,
+            )
             slot_text = _compact_slot_text_if_needed(
                 slot_text,
                 proposed_slots,

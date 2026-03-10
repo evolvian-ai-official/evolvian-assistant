@@ -519,6 +519,11 @@ def test_slot_display_limit_uses_client_max_days_ahead():
     assert module._slot_display_limit_for_settings({}) == 9
 
 
+def test_slot_display_max_per_day_uses_one_for_large_windows():
+    assert module._slot_display_max_per_day_for_settings({"max_days_ahead": 15}) == 1
+    assert module._slot_display_max_per_day_for_settings({"max_days_ahead": 7}) == 3
+
+
 def test_collecting_shows_slots_beyond_three_days_when_client_window_is_15(monkeypatch):
     history_rows = [_history_row("user", "hola me gustaria agendar", 10)]
     _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
@@ -552,6 +557,40 @@ def test_collecting_shows_slots_beyond_three_days_when_client_window_is_15(monke
     assert bullet_count >= 15
 
 
+def test_collecting_with_many_slots_per_day_still_covers_15_day_window(monkeypatch):
+    history_rows = [_history_row("user", "hola me gustaria agendar", 10)]
+    _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    monkeypatch.setattr(module, "_load_settings", lambda _client_id: {**COMMON_SETTINGS, "max_days_ahead": 15})
+
+    mx_now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Mexico_City"))
+    first_date = (mx_now + timedelta(days=1)).date()
+    slots = []
+    for day_offset in range(15):
+        current_day = first_date + timedelta(days=day_offset)
+        for hour in [9, 12, 15]:
+            slots.append(
+                {
+                    "start_iso": f"{current_day.isoformat()}T{hour:02d}:00:00-06:00",
+                    "readable": f"{current_day.isoformat()} {hour:02d}:00",
+                }
+            )
+
+    monkeypatch.setattr(module, "_generate_available_slots", lambda *_a, **_k: slots)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="hola me gustaria agendar",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    bullet_count = sum(1 for line in answer.splitlines() if line.strip().startswith("- "))
+    assert bullet_count == 15
+
+
 def test_compact_slot_text_if_needed_limits_to_five_earliest_slots():
     tz_name = "America/Mexico_City"
     slots = []
@@ -576,3 +615,123 @@ def test_compact_slot_text_if_needed_limits_to_five_earliest_slots():
     assert len(compact_lines) == 5
     assert first_expected in compact_text
     assert sixth_expected not in compact_text
+
+
+def test_compact_slot_text_preserves_strict_chronological_order():
+    tz_name = "America/Mexico_City"
+    slots = [
+        {"start_iso": "2026-03-10T11:00:00-06:00"},
+        {"start_iso": "2026-03-10T15:00:00-06:00"},
+        {"start_iso": "2026-03-10T16:00:00-06:00"},
+        {"start_iso": "2026-03-10T17:00:00-06:00"},
+        {"start_iso": "2026-03-11T09:00:00-06:00"},
+        {"start_iso": "2026-03-11T10:00:00-06:00"},
+    ]
+    full_text = module._format_slot_list_for_lang(slots, tz_name, "es", limit=30)
+    compact_text = module._compact_slot_text_if_needed(
+        full_text,
+        slots,
+        tz_name,
+        "es",
+        max_chars=10,
+        max_lines=1,
+    )
+    compact_lines = [line for line in compact_text.splitlines() if line.strip().startswith("- ")]
+    expected_lines = [
+        f"- {module._format_slot_for_lang('2026-03-10T11:00:00-06:00', tz_name, 'es')}",
+        f"- {module._format_slot_for_lang('2026-03-10T15:00:00-06:00', tz_name, 'es')}",
+        f"- {module._format_slot_for_lang('2026-03-10T16:00:00-06:00', tz_name, 'es')}",
+        f"- {module._format_slot_for_lang('2026-03-10T17:00:00-06:00', tz_name, 'es')}",
+        f"- {module._format_slot_for_lang('2026-03-11T09:00:00-06:00', tz_name, 'es')}",
+    ]
+    assert compact_lines == expected_lines
+
+
+def test_pending_replace_existing_success_reports_both_notifications_sent(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 10)]
+    data_source = _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "pending_replace_existing",
+        "lang": "es",
+        "collected": {
+            "scheduled_time": "2026-03-11T09:00:00-06:00",
+            "user_name": "Aldo Benitez",
+            "user_email": "aldo.benitez.cortes@gmail.com",
+            "user_phone": "+525525277660",
+        },
+        "existing_appointment": {
+            "scheduled_time": "2026-03-11T17:00:00-06:00",
+        },
+    }
+
+    async def _fake_book(_client_id, _session_id, _collected, _channel, replace_existing=False):
+        assert replace_existing is True
+        return {
+            "ok": True,
+            "notifications": {
+                "old_cancellation_whatsapp_sent": True,
+                "old_cancellation_email_sent": False,
+                "new_confirmation_whatsapp_sent": True,
+                "new_confirmation_email_sent": False,
+            },
+        }
+
+    monkeypatch.setattr(module, "_book_appointment", _fake_book)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="si",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "Te envié la cancelación" in answer
+
+
+def test_pending_replace_existing_success_reports_notification_failures(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 10)]
+    data_source = _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "pending_replace_existing",
+        "lang": "es",
+        "collected": {
+            "scheduled_time": "2026-03-11T09:00:00-06:00",
+            "user_name": "Aldo Benitez",
+            "user_email": "aldo.benitez.cortes@gmail.com",
+            "user_phone": "+525525277660",
+        },
+        "existing_appointment": {
+            "scheduled_time": "2026-03-11T17:00:00-06:00",
+        },
+    }
+
+    async def _fake_book(_client_id, _session_id, _collected, _channel, replace_existing=False):
+        assert replace_existing is True
+        return {
+            "ok": True,
+            "notifications": {
+                "old_cancellation_whatsapp_sent": False,
+                "old_cancellation_email_sent": False,
+                "new_confirmation_whatsapp_sent": False,
+                "new_confirmation_email_sent": False,
+            },
+        }
+
+    monkeypatch.setattr(module, "_book_appointment", _fake_book)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="si",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "No pude enviar las notificaciones" in answer

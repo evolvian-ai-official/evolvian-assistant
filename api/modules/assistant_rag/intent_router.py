@@ -1073,7 +1073,11 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
             return False, None
 
     # 📅 Mantener sticky intent (pero permitir salir si cambia de tema)
-    if active_intent == "calendar" and status in ["collecting", "pending_confirmation"]:
+    if active_intent == "calendar" and status in [
+        "collecting",
+        "pending_confirmation",
+        "pending_replace_existing",
+    ]:
         calendar_enabled, calendar_status = get_calendar_gate()
         if not calendar_enabled:
             print(f"{YELLOW}🧹 Calendar sticky cleared (status={calendar_status}){RESET}")
