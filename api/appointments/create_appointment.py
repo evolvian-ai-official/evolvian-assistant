@@ -883,6 +883,7 @@ async def create_appointment(payload: CreateAppointmentPayload):
             return {
                 "success": False,
                 "invalid_time": True,
+                "invalid_phone": True,
                 "message": "Phone must include country code and use international format (e.g. +525512345678).",
             }
         payload.user_phone = normalized_phone

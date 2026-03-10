@@ -36,6 +36,7 @@ RANGE_RE = re.compile(r"\b(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\b", re.I)
 
 YES_TOKENS = {"si", "sí", "yes", "yep", "sure", "ok", "okay", "vale", "confirmo", "confirm", "proceed"}
 NO_TOKENS = {"no", "nop", "nope", "cancel", "cancelar", "stop"}
+E164_PHONE_RE = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
 
@@ -93,14 +94,121 @@ def _format_slot_for_lang(iso_str: str, tz_name: str, lang: str) -> str:
     )
 
 
+def _pick_display_slots(slots: list[dict], tz_name: str, *, limit: int = 9, max_per_day: int = 3) -> list[dict]:
+    if limit <= 0:
+        return []
+    tz = ZoneInfo(tz_name or "UTC")
+    parsed: list[tuple[dict, datetime, str]] = []
+    for slot in slots or []:
+        iso = str((slot or {}).get("start_iso") or "").strip()
+        if not iso:
+            continue
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            local_dt = dt.astimezone(tz)
+            parsed.append((slot, local_dt, local_dt.strftime("%Y-%m-%d")))
+        except Exception:
+            continue
+
+    parsed.sort(key=lambda item: item[1])
+
+    picked: list[dict] = []
+    overflow: list[dict] = []
+    per_day_count: dict[str, int] = {}
+
+    for slot, _dt, day_key in parsed:
+        if len(picked) >= limit:
+            break
+        day_total = per_day_count.get(day_key, 0)
+        if day_total < max_per_day:
+            picked.append(slot)
+            per_day_count[day_key] = day_total + 1
+        else:
+            overflow.append(slot)
+
+    if len(picked) < limit:
+        for slot in overflow:
+            if len(picked) >= limit:
+                break
+            picked.append(slot)
+
+    return picked
+
+
 def _format_slot_list_for_lang(slots: list[dict], tz_name: str, lang: str, limit: int = 9) -> str:
     out = []
-    for slot in (slots or [])[:limit]:
+    for slot in _pick_display_slots(slots or [], tz_name, limit=limit):
         iso = slot.get("start_iso")
         if not iso:
             continue
         out.append(f"- {_format_slot_for_lang(iso, tz_name, lang)}")
     return "\n".join(out)
+
+
+def _filter_slots_for_date(slots: list[dict], tz_name: str, date_iso: str) -> list[dict]:
+    target_date = str(date_iso or "").strip()
+    if not target_date:
+        return slots or []
+    tz = ZoneInfo(tz_name or "UTC")
+    filtered: list[dict] = []
+    for slot in slots or []:
+        iso = str((slot or {}).get("start_iso") or "").strip()
+        if not iso:
+            continue
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            local_dt = dt.astimezone(tz)
+            if local_dt.strftime("%Y-%m-%d") == target_date:
+                filtered.append(slot)
+        except Exception:
+            continue
+    return filtered
+
+
+def _normalize_phone_for_booking(phone_value: str | None, session_id: str, channel: str) -> str | None:
+    raw = str(phone_value or "").strip()
+    if not raw:
+        return None
+
+    compact = re.sub(r"[^\d+]", "", raw)
+    if compact.startswith("00"):
+        compact = f"+{compact[2:]}"
+
+    if compact.startswith("+"):
+        digits = re.sub(r"\D", "", compact)
+        candidate = f"+{digits}"
+        return candidate if E164_PHONE_RE.fullmatch(candidate) else compact
+
+    digits = re.sub(r"\D", "", compact)
+    if not digits:
+        return raw
+
+    channel_name = (channel or "").lower()
+    session_digits = ""
+    if "whatsapp" in channel_name:
+        raw_session = str(session_id or "").strip()
+        if raw_session.startswith("whatsapp-"):
+            session_digits = re.sub(r"\D", "", raw_session[len("whatsapp-") :])
+            if session_digits and session_digits.endswith(digits):
+                candidate = f"+{session_digits}"
+                if E164_PHONE_RE.fullmatch(candidate):
+                    return candidate
+            if session_digits and len(digits) == 10 and len(session_digits) > 10:
+                country_prefix = session_digits[:-10]
+                candidate = f"+{country_prefix}{digits}"
+                if E164_PHONE_RE.fullmatch(candidate):
+                    return candidate
+
+    if len(digits) >= 11:
+        candidate = f"+{digits}"
+        if E164_PHONE_RE.fullmatch(candidate):
+            return candidate
+
+    return raw
 
 
 def _coerce_dict(val):
@@ -489,13 +597,15 @@ async def _book_appointment(client_id: str, session_id: str, collected: dict, ch
             str(collected.get("scheduled_time")).replace("Z", "+00:00")
         )
 
+        normalized_phone = _normalize_phone_for_booking(collected.get("user_phone"), session_id, channel)
+
         payload = CreateAppointmentPayload(
             client_id=uuid.UUID(client_id),
             session_id=_normalize_session_uuid(client_id, session_id),
             scheduled_time=scheduled_time,
             user_name=collected.get("user_name") or "Cliente",
             user_email=collected.get("user_email"),
-            user_phone=collected.get("user_phone"),
+            user_phone=normalized_phone,
             appointment_type=_appointment_label_for_channel(channel),
             channel=channel or "chat",
             send_reminders=False,
@@ -509,7 +619,18 @@ async def _book_appointment(client_id: str, session_id: str, collected: dict, ch
                 "duplicate_active": True,
                 "existing_appointment": result.get("existing_appointment") or {},
             }
-        return {"ok": bool(result and result.get("success"))}
+        booking_ok = bool(result and result.get("success"))
+        error_message = str((result or {}).get("message") or "").strip()
+        invalid_phone = bool((result or {}).get("invalid_phone"))
+        if (not invalid_phone) and error_message and "phone must include country code" in error_message.lower():
+            invalid_phone = True
+        return {
+            "ok": booking_ok,
+            "message": error_message,
+            "invalid_phone": invalid_phone,
+            "invalid_time": bool((result or {}).get("invalid_time")),
+            "overlap_conflict": bool((result or {}).get("overlap_conflict")),
+        }
     except Exception as e:
         logger.error(f"❌ Error creating appointment via appointments module: {e}")
         return {"ok": False, "error": str(e)}
@@ -1108,6 +1229,16 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         if v:
             collected[k] = v
 
+    # Normalize phone before confirmation/booking to reduce downstream validation failures.
+    if collected.get("user_phone"):
+        normalized_collected_phone = _normalize_phone_for_booking(
+            collected.get("user_phone"),
+            session_id,
+            channel,
+        )
+        if normalized_collected_phone:
+            collected["user_phone"] = normalized_collected_phone
+
 
     # ============================================================
     # 🔄 Cambiar a pending_confirmation cuando ya tengo todos los datos
@@ -1353,6 +1484,26 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                     else f"You already have an active appointment ({pretty_existing}). Do you want to cancel it and create the new one? (Yes/No)"
                 )
             else:
+                if booking_result.get("invalid_phone"):
+                    collected.pop("user_phone", None)
+                    state["status"] = "collecting"
+                    state["collected"] = collected
+                    try:
+                        supabase.table("conversation_state").upsert(
+                            {
+                                "client_id": client_id,
+                                "session_id": session_id,
+                                "state": state,
+                            },
+                            on_conflict="client_id,session_id",
+                        ).execute()
+                    except Exception:
+                        pass
+                    return (
+                        "⚠️ El número debe incluir código de país (ej. +525512345678). ¿Cuál es tu número de WhatsApp?"
+                        if lang == "es"
+                        else "⚠️ The phone number must include country code (e.g. +15551234567). What is your WhatsApp number?"
+                    )
                 return (
                     "❌ No pude registrar la cita. Intenta con otro horario."
                     if lang == "es"
@@ -1407,7 +1558,27 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         tz_name = (settings or {}).get("timezone") or "UTC"
 
         if not collected.get("scheduled_time"):
-            slot_text = _format_slot_list_for_lang(state.get("proposed_slots") or [], tz_name, lang)
+            proposed_slots = state.get("proposed_slots") or []
+            requested_date = str(collected.get("scheduled_date_hint") or state.get("last_date_hint") or "").strip()
+            if requested_date:
+                day_slots = _filter_slots_for_date(proposed_slots, tz_name, requested_date)
+                if day_slots:
+                    slot_text = _format_slot_list_for_lang(day_slots, tz_name, lang)
+                    return (
+                        f"Para {requested_date} tengo estos horarios disponibles:\n{slot_text}\n\nIndícame cuál prefieres."
+                        if lang == "es"
+                        else f"For {requested_date}, I have these available times:\n{slot_text}\n\nTell me which one you prefer."
+                    )
+
+                fallback_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang)
+                if fallback_text:
+                    return (
+                        f"No encontré horarios disponibles para {requested_date}. Estos son los próximos disponibles:\n{fallback_text}\n\nSi quieres otro día, dímelo."
+                        if lang == "es"
+                        else f"I couldn't find available times for {requested_date}. Here are the next available slots:\n{fallback_text}\n\nIf you want another day, tell me."
+                    )
+
+            slot_text = _format_slot_list_for_lang(proposed_slots, tz_name, lang)
             if not slot_text:
                 return (
                     "No encontré horarios disponibles por ahora. ¿Quieres intentar otra fecha?"

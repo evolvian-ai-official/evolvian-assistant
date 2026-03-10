@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -114,6 +115,7 @@ def _setup_calendar_handler(monkeypatch, history_rows, *, allow_slot_generation=
         "openai_chat",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("LLM should not run in backend collecting flow")),
     )
+    return data_source
 
 
 def test_state_recovery_slot_selection_continues_to_name(monkeypatch):
@@ -326,3 +328,99 @@ def test_recovery_keeps_spanish_and_does_not_loop_back_to_email_after_phone(monk
 
     assert "¿Confirmas la cita?" in answer
     assert "What is your email address?" not in answer
+
+
+def test_pending_confirmation_invalid_phone_reasks_phone_instead_of_generic_error(monkeypatch):
+    history_rows = [
+        _history_row("user", "quiero agendar", 30),
+        _history_row("assistant", "Con gusto te ayudo a agendar tu cita. Indícame cuál prefieres.", 31),
+        _history_row("user", "martes 17 de marzo a las 15:00", 32),
+        _history_row("assistant", "Perfecto. ¿Cuál es tu nombre completo?", 33),
+        _history_row("user", "Aldo Benitez", 34),
+        _history_row("assistant", "Gracias. ¿Cuál es tu correo electrónico?", 35),
+        _history_row("user", "aldo.benitez.cortes@gmail.com", 36),
+        _history_row("assistant", "Gracias. ¿Cuál es tu número de teléfono con WhatsApp?", 37),
+        _history_row("user", "5525277660", 38),
+        _history_row("assistant", "¿Confirmas la cita? (responde: Sí o No)", 39),
+    ]
+    data_source = _setup_calendar_handler(monkeypatch, history_rows)
+
+    async def _fake_book(_client_id, _session_id, _collected, _channel):
+        return {"ok": False, "invalid_phone": True}
+
+    monkeypatch.setattr(module, "_book_appointment", _fake_book)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="Si",
+            session_id="whatsapp-5215525277660",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "código de país" in answer
+    saved_state = data_source.get("conversation_state") or {}
+    assert saved_state.get("status") == "collecting"
+    assert not (saved_state.get("collected") or {}).get("user_phone")
+
+
+def test_phone_normalization_uses_whatsapp_session_country_code():
+    normalized = module._normalize_phone_for_booking(
+        "5525277660",
+        "whatsapp-5215525277660",
+        "whatsapp",
+    )
+    assert normalized == "+5215525277660"
+
+
+def test_pick_display_slots_spreads_across_multiple_days():
+    slots = []
+    for hour in [9, 10, 11, 12, 13, 14]:
+        slots.append({"start_iso": f"2026-03-10T{hour:02d}:00:00-06:00"})
+    slots.append({"start_iso": "2026-03-11T09:00:00-06:00"})
+    slots.append({"start_iso": "2026-03-12T09:00:00-06:00"})
+
+    picked = module._pick_display_slots(
+        slots,
+        "America/Mexico_City",
+        limit=6,
+        max_per_day=2,
+    )
+
+    picked_days = {str(s.get("start_iso", ""))[:10] for s in picked}
+    assert len(picked) == 6
+    assert "2026-03-11" in picked_days
+    assert "2026-03-12" in picked_days
+
+
+def test_collecting_with_requested_date_shows_slots_for_that_day(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 10)]
+    _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+
+    mx_now = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Mexico_City"))
+    tomorrow_date = (mx_now + timedelta(days=1)).date()
+    day_after_date = (mx_now + timedelta(days=2)).date()
+
+    monkeypatch.setattr(
+        module,
+        "_generate_available_slots",
+        lambda *_a, **_k: [
+            {"start_iso": f"{tomorrow_date.isoformat()}T11:00:00-06:00", "readable": f"{tomorrow_date.isoformat()} 11:00"},
+            {"start_iso": f"{tomorrow_date.isoformat()}T12:00:00-06:00", "readable": f"{tomorrow_date.isoformat()} 12:00"},
+            {"start_iso": f"{day_after_date.isoformat()}T10:00:00-06:00", "readable": f"{day_after_date.isoformat()} 10:00"},
+        ],
+    )
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="mañana",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert f"Para {tomorrow_date.isoformat()} tengo estos horarios disponibles" in answer
