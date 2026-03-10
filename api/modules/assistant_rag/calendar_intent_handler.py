@@ -102,6 +102,7 @@ def _pick_display_slots(
     limit: int = 9,
     max_per_day: int = 3,
     fill_overflow: bool = True,
+    overflow_target_min: int | None = None,
 ) -> list[dict]:
     if limit <= 0:
         return []
@@ -136,12 +137,31 @@ def _pick_display_slots(
         else:
             overflow.append(slot)
 
-    if fill_overflow and len(picked) < limit:
+    overflow_target = limit
+    if overflow_target_min is not None:
+        try:
+            overflow_target = max(0, min(limit, int(overflow_target_min)))
+        except Exception:
+            overflow_target = limit
+
+    if fill_overflow and len(picked) < overflow_target:
         for slot in overflow:
-            if len(picked) >= limit:
+            if len(picked) >= overflow_target:
                 break
             picked.append(slot)
 
+    # Ensure strict chronological order even when overflow is appended later.
+    def _slot_local_sort_key(slot: dict) -> datetime:
+        iso = str((slot or {}).get("start_iso") or "").strip()
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            return dt.astimezone(tz)
+        except Exception:
+            return datetime.max.replace(tzinfo=timezone.utc)
+
+    picked.sort(key=_slot_local_sort_key)
     return picked
 
 
@@ -152,6 +172,7 @@ def _format_slot_list_for_lang(
     limit: int = 9,
     max_per_day: int = 3,
     fill_overflow: bool = True,
+    overflow_target_min: int | None = None,
 ) -> str:
     out = []
     for slot in _pick_display_slots(
@@ -160,6 +181,7 @@ def _format_slot_list_for_lang(
         limit=limit,
         max_per_day=max_per_day,
         fill_overflow=fill_overflow,
+        overflow_target_min=overflow_target_min,
     ):
         iso = slot.get("start_iso")
         if not iso:
@@ -231,17 +253,14 @@ def _slot_display_limit_for_settings(settings: dict | None) -> int:
 
 
 def _slot_display_max_per_day_for_settings(settings: dict | None) -> int:
-    max_days = 3
-    try:
-        raw = (settings or {}).get("max_days_ahead")
-        if raw is not None:
-            max_days = int(raw)
-    except Exception:
-        max_days = 3
-    # Para ventanas grandes priorizamos cobertura de días (un slot por día).
-    if max_days >= 10:
-        return 1
+    # Mantener 3 horarios por día también para ventanas grandes.
     return 3
+
+
+def _slot_display_overflow_target_min_for_settings(settings: dict | None) -> int | None:
+    # Sin mínimo forzado de overflow; usamos el límite y compactación normal.
+    _ = settings
+    return None
 
 
 def _filter_slots_for_date(slots: list[dict], tz_name: str, date_iso: str) -> list[dict]:
@@ -1611,12 +1630,17 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                     _persist_conversation_state(client_id, session_id, state, log_error=False)
 
                     tz_name = (settings or {}).get("timezone") or "UTC"
+                    display_limit = _slot_display_limit_for_settings(settings)
+                    display_max_per_day = _slot_display_max_per_day_for_settings(settings)
+                    display_overflow_target_min = _slot_display_overflow_target_min_for_settings(settings)
                     slot_text = _format_slot_list_for_lang(
                         state.get("proposed_slots") or [],
                         tz_name,
                         lang,
-                        max_per_day=_slot_display_max_per_day_for_settings(settings),
-                        fill_overflow=_slot_display_max_per_day_for_settings(settings) > 1,
+                        limit=display_limit,
+                        max_per_day=display_max_per_day,
+                        fill_overflow=(display_max_per_day > 1) or bool(display_overflow_target_min),
+                        overflow_target_min=display_overflow_target_min,
                     )
                     slot_text = _compact_slot_text_if_needed(
                         slot_text,
@@ -1738,7 +1762,8 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         tz_name = (settings or {}).get("timezone") or "UTC"
         display_limit = _slot_display_limit_for_settings(settings)
         display_max_per_day = _slot_display_max_per_day_for_settings(settings)
-        display_fill_overflow = display_max_per_day > 1
+        display_overflow_target_min = _slot_display_overflow_target_min_for_settings(settings)
+        display_fill_overflow = (display_max_per_day > 1) or bool(display_overflow_target_min)
 
         if not collected.get("scheduled_time"):
             proposed_slots = state.get("proposed_slots") or []
@@ -1753,6 +1778,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         limit=display_limit,
                         max_per_day=display_max_per_day,
                         fill_overflow=display_fill_overflow,
+                        overflow_target_min=display_overflow_target_min,
                     )
                     slot_text = _compact_slot_text_if_needed(
                         slot_text,
@@ -1773,6 +1799,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                     limit=display_limit,
                     max_per_day=display_max_per_day,
                     fill_overflow=display_fill_overflow,
+                    overflow_target_min=display_overflow_target_min,
                 )
                 fallback_text = _compact_slot_text_if_needed(
                     fallback_text,
@@ -1794,6 +1821,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 limit=display_limit,
                 max_per_day=display_max_per_day,
                 fill_overflow=display_fill_overflow,
+                overflow_target_min=display_overflow_target_min,
             )
             slot_text = _compact_slot_text_if_needed(
                 slot_text,

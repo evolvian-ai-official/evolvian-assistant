@@ -61,6 +61,35 @@ AGENDA_KEYWORDS = {
     "disponible", "disponibles", "availability", "available",
     "dias disponibles", "días disponibles",
 }
+NON_SCHEDULING_PRODUCT_KEYWORDS = {
+    "instagram",
+    "instagrma",
+    "instgram",
+    "insttagrma",
+    "facebook",
+    "messenger",
+    "tiktok",
+    "youtube",
+    "google business",
+    "meta",
+    "instalar",
+    "isntalar",
+    "instalo",
+    "instalacion",
+    "instalación",
+    "installation",
+    "integrar",
+    "integracion",
+    "integración",
+    "integration",
+    "conectar",
+    "conexion",
+    "conexión",
+    "setup",
+    "configurar",
+    "configuracion",
+    "configuración",
+}
 CALENDAR_FOLLOWUP_KEYWORDS = {
     "mañana",
     "manana",
@@ -231,8 +260,18 @@ def looks_like_contact_block(message: str) -> bool:
 
 def contains_schedule_keywords(message: str) -> bool:
     """True si contiene palabras de agenda."""
-    t = (message or "").lower()
-    return any(k in t for k in AGENDA_KEYWORDS)
+    normalized = _normalize_text(message)
+    for keyword in AGENDA_KEYWORDS:
+        token = _normalize_text(keyword)
+        if not token:
+            continue
+        if " " in token:
+            if token in normalized:
+                return True
+            continue
+        if re.search(rf"(?<!\w){re.escape(token)}(?!\w)", normalized):
+            return True
+    return False
 
 
 def _looks_like_person_name_for_calendar(message: str) -> bool:
@@ -272,6 +311,19 @@ def _looks_like_calendar_followup(message: str) -> bool:
     if DATE_LIKE_RE.search(message) or TIME_LIKE_RE.search(message):
         return True
     return False
+
+
+def _looks_like_non_scheduling_product_query(message: str) -> bool:
+    normalized = _normalize_text(message)
+    if not normalized:
+        return False
+    has_product_marker = any(marker in normalized for marker in NON_SCHEDULING_PRODUCT_KEYWORDS)
+    if not has_product_marker:
+        return False
+    # Keep booking path available for explicit scheduling requests.
+    if contains_schedule_keywords(message) or _looks_like_calendar_followup(message) or looks_like_contact_block(message):
+        return False
+    return True
 
 
 def _parse_created_at(raw_value: Any) -> Optional[datetime]:
@@ -352,6 +404,8 @@ def _has_recent_appointment_history(
 
 def detect_intent_to_schedule(message: str) -> bool:
     """Wrapper: detector avanzado o fallback local."""
+    if _looks_like_non_scheduling_product_query(message):
+        return False
     if _detect_appointment_intent:
         try:
             detected = _detect_appointment_intent(message) or {}
@@ -983,6 +1037,27 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
         "plan", "planes", "pricing", "price", "prices", "subscription", "billing",
         "precio", "precios", "suscripción", "suscripcion", "coste", "cost", "cuanto", "cuánto",
     }
+    PRODUCT_HELP_HINTS = {
+        "instagram",
+        "instagrma",
+        "instgram",
+        "insttagrma",
+        "facebook",
+        "messenger",
+        "tiktok",
+        "integracion",
+        "integración",
+        "integrate",
+        "integration",
+        "instalar",
+        "isntalar",
+        "instalo",
+        "installation",
+        "setup",
+        "configurar",
+        "configuracion",
+        "configuración",
+    }
     SCHEDULING_HINTS = {
         "agendar", "reservar", "reagendar", "cita", "citas", "sesion", "sesión",
         "book", "schedule", "appointment", "reschedule", "slot", "slots",
@@ -991,6 +1066,9 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
 
     # Priorizar preguntas comerciales simples (planes/precios) para evitar falsos positivos.
     if any(k in text for k in PRICING_HINTS) and not any(k in text for k in SCHEDULING_HINTS):
+        upsert_state(client_id, session_id, {"intent": None})
+        return "rag"
+    if any(k in text for k in PRODUCT_HELP_HINTS) and not any(k in text for k in SCHEDULING_HINTS):
         upsert_state(client_id, session_id, {"intent": None})
         return "rag"
 
@@ -1019,11 +1097,14 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
     EXIT_CALENDAR_KEYWORDS = {
         "price", "prices", "plan", "plans", "premium", "starter", "free",
         "cost", "how much", "billing", "upgrade", "downgrade",
-        "precio", "precios", "cuánto", "cuanto", "coste", "planes"
+        "precio", "precios", "cuanto", "coste", "planes",
+        "instagram", "facebook", "messenger", "tiktok",
+        "instalar", "instalo", "instalacion", "installation",
+        "integracion", "integration", "setup", "configurar", "configuracion",
     }
 
     def user_wants_to_exit_calendar(msg: str) -> bool:
-        t = (msg or "").lower()
+        t = _normalize_text(msg)
         return any(k in t for k in EXIT_CALENDAR_KEYWORDS)
 
     def _is_truthy(val: Any, default: bool = True) -> bool:

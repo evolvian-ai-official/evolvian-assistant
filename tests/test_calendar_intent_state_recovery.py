@@ -519,9 +519,14 @@ def test_slot_display_limit_uses_client_max_days_ahead():
     assert module._slot_display_limit_for_settings({}) == 9
 
 
-def test_slot_display_max_per_day_uses_one_for_large_windows():
-    assert module._slot_display_max_per_day_for_settings({"max_days_ahead": 15}) == 1
+def test_slot_display_max_per_day_keeps_three_for_large_windows():
+    assert module._slot_display_max_per_day_for_settings({"max_days_ahead": 15}) == 3
     assert module._slot_display_max_per_day_for_settings({"max_days_ahead": 7}) == 3
+
+
+def test_slot_display_overflow_target_min_is_none_for_large_windows():
+    assert module._slot_display_overflow_target_min_for_settings({"max_days_ahead": 15}) is None
+    assert module._slot_display_overflow_target_min_for_settings({"max_days_ahead": 7}) is None
 
 
 def test_collecting_shows_slots_beyond_three_days_when_client_window_is_15(monkeypatch):
@@ -557,7 +562,7 @@ def test_collecting_shows_slots_beyond_three_days_when_client_window_is_15(monke
     assert bullet_count >= 15
 
 
-def test_collecting_with_many_slots_per_day_still_covers_15_day_window(monkeypatch):
+def test_collecting_with_many_slots_per_day_compacts_to_five_when_message_is_large(monkeypatch):
     history_rows = [_history_row("user", "hola me gustaria agendar", 10)]
     _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
     monkeypatch.setattr(module, "_load_settings", lambda _client_id: {**COMMON_SETTINGS, "max_days_ahead": 15})
@@ -588,7 +593,7 @@ def test_collecting_with_many_slots_per_day_still_covers_15_day_window(monkeypat
     )
 
     bullet_count = sum(1 for line in answer.splitlines() if line.strip().startswith("- "))
-    assert bullet_count == 15
+    assert bullet_count == 5
 
 
 def test_compact_slot_text_if_needed_limits_to_five_earliest_slots():
@@ -645,6 +650,65 @@ def test_compact_slot_text_preserves_strict_chronological_order():
         f"- {module._format_slot_for_lang('2026-03-11T09:00:00-06:00', tz_name, 'es')}",
     ]
     assert compact_lines == expected_lines
+
+
+def test_pick_display_slots_keeps_chronological_order_when_overflow_is_used():
+    tz_name = "America/Mexico_City"
+    slots = [
+        {"start_iso": "2026-03-10T11:00:00-06:00"},
+        {"start_iso": "2026-03-10T15:00:00-06:00"},
+        {"start_iso": "2026-03-10T16:00:00-06:00"},
+        {"start_iso": "2026-03-10T17:00:00-06:00"},
+        {"start_iso": "2026-03-11T09:00:00-06:00"},
+    ]
+
+    picked = module._pick_display_slots(
+        slots,
+        tz_name,
+        limit=5,
+        max_per_day=3,
+        fill_overflow=True,
+    )
+    picked_isos = [slot["start_iso"] for slot in picked]
+
+    assert picked_isos == [
+        "2026-03-10T11:00:00-06:00",
+        "2026-03-10T15:00:00-06:00",
+        "2026-03-10T16:00:00-06:00",
+        "2026-03-10T17:00:00-06:00",
+        "2026-03-11T09:00:00-06:00",
+    ]
+
+
+def test_pick_display_slots_large_window_fills_to_five_when_few_days_available():
+    tz_name = "America/Mexico_City"
+    slots = [
+        {"start_iso": "2026-03-10T09:00:00-06:00"},
+        {"start_iso": "2026-03-10T10:00:00-06:00"},
+        {"start_iso": "2026-03-10T11:00:00-06:00"},
+        {"start_iso": "2026-03-11T09:00:00-06:00"},
+        {"start_iso": "2026-03-11T10:00:00-06:00"},
+        {"start_iso": "2026-03-11T11:00:00-06:00"},
+    ]
+
+    picked = module._pick_display_slots(
+        slots,
+        tz_name,
+        limit=45,
+        max_per_day=1,
+        fill_overflow=True,
+        overflow_target_min=5,
+    )
+    picked_isos = [slot["start_iso"] for slot in picked]
+
+    assert len(picked_isos) == 5
+    assert picked_isos == [
+        "2026-03-10T09:00:00-06:00",
+        "2026-03-10T10:00:00-06:00",
+        "2026-03-10T11:00:00-06:00",
+        "2026-03-11T09:00:00-06:00",
+        "2026-03-11T10:00:00-06:00",
+    ]
 
 
 def test_pending_replace_existing_success_reports_both_notifications_sent(monkeypatch):
