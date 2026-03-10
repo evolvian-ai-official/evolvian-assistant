@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import uuid
+import unicodedata
 from datetime import datetime, timedelta, time as dtime
 from api.modules.assistant_rag.prompts.calendar_prompt import get_calendar_prompt
 from api.modules.assistant_rag.llm import openai_chat
@@ -712,6 +713,9 @@ def _extract_fields(message: str, state: dict, settings: dict) -> dict:
     date_iso = _resolve_date_token(low)
     if date_iso:
         out["scheduled_date_hint"] = date_iso
+        # Mantener pista de fecha aunque todavía no llegue la hora
+        # (resiliencia ante pérdida de conversation_state entre turnos).
+        state["last_date_hint"] = date_iso
 
     # -----------------------------------------------------------
     # ⏰ Time extracted
@@ -810,6 +814,104 @@ def _extract_fields(message: str, state: dict, settings: dict) -> dict:
     return out
 
 
+def _normalize_for_match(text: str) -> str:
+    raw = str(text or "").strip().lower()
+    if not raw:
+        return ""
+    raw = unicodedata.normalize("NFKD", raw)
+    raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def _recover_calendar_state_from_history(
+    client_id: str,
+    session_id: str,
+    channel: str,
+    settings: dict | None,
+    fallback_lang: str,
+) -> dict:
+    """
+    Recupera estado mínimo del flujo de agenda desde history cuando
+    conversation_state no está disponible.
+    """
+    try:
+        res = (
+            supabase.table("history")
+            .select("role,content,source_type,channel,created_at")
+            .eq("client_id", client_id)
+            .eq("session_id", session_id)
+            .order("created_at", desc=False)
+            .limit(60)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as e:
+        logger.warning("⚠️ Could not load history for state recovery: %s", e)
+        return {}
+
+    if not rows:
+        return {}
+
+    normalized_channel = (channel or "").strip().lower()
+    if normalized_channel == "widget":
+        normalized_channel = "chat"
+
+    recovered = {
+        "intent": "calendar",
+        "status": "collecting",
+        "collected": {},
+        "lang": fallback_lang,
+    }
+    has_appointment_context = False
+
+    for row in rows:
+        source_type = str(row.get("source_type") or "").strip().lower()
+        if source_type != "appointment":
+            continue
+
+        row_channel = str(row.get("channel") or "").strip().lower()
+        if row_channel == "widget":
+            row_channel = "chat"
+        if normalized_channel and row_channel and row_channel != normalized_channel:
+            continue
+
+        has_appointment_context = True
+        role = str(row.get("role") or "").strip().lower()
+        content = str(row.get("content") or "")
+
+        signal_lang = _detect_lang_signal(content)
+        if signal_lang:
+            recovered["lang"] = signal_lang
+
+        if role == "user":
+            extracted = _extract_fields(content, recovered, settings or {})
+            for key, value in extracted.items():
+                if value:
+                    recovered["collected"][key] = value
+            continue
+
+        if role == "assistant":
+            normalized_content = _normalize_for_match(content)
+            if "confirmas la cita" in normalized_content or "do you confirm the appointment" in normalized_content:
+                recovered["status"] = "pending_confirmation"
+
+    if not has_appointment_context:
+        return {}
+
+    collected = recovered.get("collected") or {}
+    if (
+        collected.get("scheduled_time")
+        and collected.get("user_name")
+        and collected.get("user_email")
+        and collected.get("user_phone")
+    ):
+        recovered["status"] = "pending_confirmation"
+    else:
+        recovered["status"] = "collecting"
+
+    return recovered
+
+
 
 async def handle_calendar_intent(client_id: str, message: str, session_id: str, channel: str, lang: str):
     logger.info(f"🧭 [LLM-Only Mode] Calendar intent for client_id={client_id}")
@@ -844,6 +946,29 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     except Exception as e:
         logger.warning(f"⚠️ Could not load conversation state: {e}")
         state = {}
+
+    # ✅ Resiliencia: recuperar estado desde history cuando state no existe
+    # o viene incompleto para un mensaje que parece nombre.
+    current_collected = _coerce_dict(state.get("collected")) if isinstance(state, dict) else {}
+    should_try_history_recovery = (
+        not state
+        or (
+            state.get("intent") == "calendar"
+            and state.get("status") == "collecting"
+            and not current_collected.get("scheduled_time")
+            and _looks_like_name(message)
+        )
+    )
+    if should_try_history_recovery:
+        recovered_state = _recover_calendar_state_from_history(
+            client_id=client_id,
+            session_id=session_id,
+            channel=channel,
+            settings=settings,
+            fallback_lang=lang,
+        )
+        if recovered_state:
+            state = recovered_state
 
     state.setdefault("intent", "calendar")
     state.setdefault("status", "collecting")
