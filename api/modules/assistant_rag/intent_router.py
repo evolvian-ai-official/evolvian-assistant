@@ -188,7 +188,7 @@ def _looks_like_calendar_followup(message: str) -> bool:
         return True
 
     normalized = _normalize_text(message)
-    if any(token in normalized for token in CALENDAR_FOLLOWUP_KEYWORDS):
+    if any(re.search(rf"(?<!\w){re.escape(token)}(?!\w)", normalized) for token in CALENDAR_FOLLOWUP_KEYWORDS):
         return True
 
     # Inputs como "mañana 9:00", "2026-03-10 09:00", "10/03/2026 9am".
@@ -464,6 +464,28 @@ def _campaign_interest_followup_message(lang: str) -> str:
         "Gracias por tu interés. Un asesor humano ya está dando seguimiento contigo "
         "directamente por este chat."
     )
+
+
+def _is_campaign_interest_followup(message: str) -> bool:
+    text = _normalize_text(message).strip()
+    if not text:
+        return False
+    markers = (
+        "me interesa",
+        "interesado",
+        "interesada",
+        "que sigue",
+        "qué sigue",
+        "siguiente paso",
+        "quiero info",
+        "mas info",
+        "más info",
+        "asesor",
+        "advisor",
+        "follow up",
+        "followup",
+    )
+    return any(re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", text) for marker in markers)
 
 
 def _get_active_campaign_interest_handoff(client_id: str, session_id: str) -> dict[str, Any] | None:
@@ -1056,15 +1078,10 @@ async def process_user_message(
     if is_whatsapp:
         campaign_interest_handoff = _get_active_campaign_interest_handoff(client_id, session_id)
         if campaign_interest_handoff:
-            # Allow scheduling flows to continue even if a campaign-interest handoff
-            # is still marked active in this WhatsApp session.
-            if detect_intent_to_schedule(message) or _looks_like_calendar_followup(message):
-                logger.info(
-                    "Bypassing campaign-interest handoff for scheduling message | client_ref=%s | session_fp=%s",
-                    _safe_tail(client_id),
-                    _safe_hash(session_id),
-                )
-            else:
+            # Use deterministic local signals here to avoid false positives from
+            # advanced intent detectors and keep campaign follow-up stable.
+            is_schedule_message = contains_schedule_keywords(message) or _looks_like_calendar_followup(message)
+            if not is_schedule_message and _is_campaign_interest_followup(message):
                 answer = _campaign_interest_followup_message(lang)
                 save_history(
                     client_id,
@@ -1098,6 +1115,11 @@ async def process_user_message(
                     "confidence_reason": "campaign_interest_handoff_active",
                 }
                 return payload if return_metadata else answer
+            logger.info(
+                "Campaign-interest handoff active but allowing normal routing | client_ref=%s | session_fp=%s",
+                _safe_tail(client_id),
+                _safe_hash(session_id),
+            )
 
     if is_whatsapp and _is_whatsapp_handoff_request(message):
         handoff_info = _upsert_whatsapp_handoff(

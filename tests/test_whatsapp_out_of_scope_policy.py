@@ -159,6 +159,42 @@ def test_whatsapp_campaign_interest_active_skips_rag(monkeypatch):
     assert [c["role"] for c in history_calls] == ["user", "assistant"]
 
 
+def test_whatsapp_campaign_interest_active_allows_pricing_routing(monkeypatch):
+    from api.modules.assistant_rag import intent_router as module
+
+    history_calls = []
+    route_calls = []
+
+    monkeypatch.setattr(module, "save_history", _capture_save_history(history_calls))
+    monkeypatch.setattr(
+        module,
+        "_get_active_campaign_interest_handoff",
+        lambda *_args, **_kwargs: {"id": "handoff_campaign_1", "reason": "campaign_interest"},
+    )
+    monkeypatch.setattr(
+        module,
+        "route_message",
+        lambda *_args, **_kwargs: route_calls.append(True) or "rag",
+    )
+    monkeypatch.setattr(
+        module,
+        "ask_question",
+        lambda *_args, **_kwargs: "RAG_OK_PRICING",
+    )
+
+    result = asyncio.run(
+        module.process_user_message(
+            client_id="client_1",
+            session_id="whatsapp-5215512345678",
+            message="dame los precios del plan premium",
+            channel="whatsapp",
+            provider="meta",
+        )
+    )
+
+    assert result.startswith("RAG_OK_PRICING")
+    assert route_calls, "route_message should run for non-interest messages"
+
 def test_whatsapp_institutional_auto_reply_is_suppressed(monkeypatch):
     from api.modules.assistant_rag import intent_router as module
 
