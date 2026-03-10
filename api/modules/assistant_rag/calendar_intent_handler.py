@@ -193,6 +193,8 @@ def _normalize_phone_for_booking(phone_value: str | None, session_id: str, chann
         raw_session = str(session_id or "").strip()
         if raw_session.startswith("whatsapp-"):
             session_digits = re.sub(r"\D", "", raw_session[len("whatsapp-") :])
+            if session_digits.startswith("521") and len(session_digits) > 3:
+                session_digits = f"52{session_digits[3:]}"
             if session_digits and session_digits.endswith(digits):
                 candidate = f"+{session_digits}"
                 if E164_PHONE_RE.fullmatch(candidate):
@@ -209,6 +211,22 @@ def _normalize_phone_for_booking(phone_value: str | None, session_id: str, chann
             return candidate
 
     return raw
+
+
+def _infer_whatsapp_phone_from_session(session_id: str, channel: str) -> str | None:
+    if "whatsapp" not in str(channel or "").lower():
+        return None
+    raw_session = str(session_id or "").strip()
+    if raw_session.startswith("whatsapp-"):
+        raw_session = raw_session[len("whatsapp-") :]
+    candidate = _normalize_phone_for_booking(raw_session, session_id, channel)
+    if not candidate:
+        return None
+    digits = re.sub(r"\D", "", candidate)
+    normalized = f"+{digits}" if digits else ""
+    if normalized and E164_PHONE_RE.fullmatch(normalized):
+        return normalized
+    return None
 
 
 def _coerce_dict(val):
@@ -1034,6 +1052,12 @@ def _recover_calendar_state_from_history(
             normalized_content = _normalize_for_match(content)
             if "confirmas la cita" in normalized_content or "do you confirm the appointment" in normalized_content:
                 recovered["status"] = "pending_confirmation"
+            if (
+                "confirmas que ese es tu numero" in normalized_content
+                or "do you confirm that's your number" in normalized_content
+                or "do you confirm that is your number" in normalized_content
+            ):
+                recovered["awaiting_whatsapp_phone_confirmation"] = True
 
     if not has_appointment_context:
         return {}
@@ -1166,6 +1190,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     # ============================================================
     # 🧩 Extract data from message (NOW settings is safe)
     # ============================================================
+    handled_whatsapp_phone_confirmation = False
     new_data = _extract_fields(message, state, settings)
 
     # ============================================================
@@ -1238,6 +1263,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         )
         if normalized_collected_phone:
             collected["user_phone"] = normalized_collected_phone
+        state.pop("awaiting_whatsapp_phone_confirmation", None)
 
 
     # ============================================================
@@ -1261,8 +1287,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         and collected.get("user_email")
         and collected.get("user_phone")
         and collected.get("scheduled_time")
-        and not _is_yes(message)
-        and not _is_no(message)
+        and (handled_whatsapp_phone_confirmation or (not _is_yes(message) and not _is_no(message)))
     ):
         tz_name = (settings or {}).get("timezone") or "UTC"
         pretty_slot = _format_slot_for_lang(collected["scheduled_time"], tz_name, lang)
@@ -1367,7 +1392,11 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     # 📅 Confirmar cita si ya hay horario propuesto
     # ============================================================
     if collected.get("scheduled_time"):
-        if state.get("status") == "pending_confirmation" and _is_yes(message):
+        if (
+            state.get("status") == "pending_confirmation"
+            and _is_yes(message)
+            and not handled_whatsapp_phone_confirmation
+        ):
 
             # Validar slot con settings
             if settings:
@@ -1614,10 +1643,86 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             )
 
         if not collected.get("user_phone"):
+            inferred_whatsapp_phone = _infer_whatsapp_phone_from_session(session_id, channel)
+            awaiting_phone_confirmation = bool(state.get("awaiting_whatsapp_phone_confirmation"))
+            if inferred_whatsapp_phone:
+                if awaiting_phone_confirmation and _is_yes(message):
+                    collected["user_phone"] = inferred_whatsapp_phone
+                    state["collected"] = collected
+                    state.pop("awaiting_whatsapp_phone_confirmation", None)
+                    handled_whatsapp_phone_confirmation = True
+                elif awaiting_phone_confirmation and _is_no(message):
+                    state.pop("awaiting_whatsapp_phone_confirmation", None)
+                    state["collected"] = collected
+                    try:
+                        supabase.table("conversation_state").upsert(
+                            {"client_id": client_id, "session_id": session_id, "state": state},
+                            on_conflict="client_id,session_id",
+                        ).execute()
+                    except Exception:
+                        pass
+                    return (
+                        "Perfecto. Compárteme tu número de WhatsApp con código de país (ej. +525512345678)."
+                        if lang == "es"
+                        else "Perfect. Share your WhatsApp number with country code (e.g. +15551234567)."
+                    )
+                elif not awaiting_phone_confirmation:
+                    state["awaiting_whatsapp_phone_confirmation"] = True
+                    state["collected"] = collected
+                    try:
+                        supabase.table("conversation_state").upsert(
+                            {"client_id": client_id, "session_id": session_id, "state": state},
+                            on_conflict="client_id,session_id",
+                        ).execute()
+                    except Exception:
+                        pass
+                    return (
+                        f"Veo que escribes desde {inferred_whatsapp_phone}. ¿Confirmas que ese es tu número para la cita? (Sí/No)"
+                        if lang == "es"
+                        else f"I see you're messaging from {inferred_whatsapp_phone}. Do you confirm that's your number for the appointment? (Yes/No)"
+                    )
+                else:
+                    return (
+                        f"¿Confirmas que {inferred_whatsapp_phone} es tu número de WhatsApp para la cita? (Sí/No)"
+                        if lang == "es"
+                        else f"Do you confirm {inferred_whatsapp_phone} is your WhatsApp number for the appointment? (Yes/No)"
+                    )
+            else:
+                return (
+                    "Gracias. ¿Cuál es tu número de teléfono con WhatsApp?"
+                    if lang == "es"
+                    else "Thanks. What is your WhatsApp phone number?"
+                )
+
+        # We just confirmed WhatsApp phone in this turn. Continue flow without booking yet.
+        if handled_whatsapp_phone_confirmation:
+            state["status"] = "collecting"
+            if (
+                collected.get("user_name")
+                and collected.get("user_email")
+                and collected.get("user_phone")
+                and collected.get("scheduled_time")
+            ):
+                state["status"] = "pending_confirmation"
+            state["collected"] = collected
+            try:
+                supabase.table("conversation_state").upsert(
+                    {"client_id": client_id, "session_id": session_id, "state": state},
+                    on_conflict="client_id,session_id",
+                ).execute()
+            except Exception:
+                pass
+            pretty_slot = _format_slot_for_lang(collected["scheduled_time"], tz_name, lang)
             return (
-                "Gracias. ¿Cuál es tu número de teléfono con WhatsApp?"
+                f"Perfecto, {collected.get('user_name')}. Tengo todo listo.\n"
+                f"Tu cita sería el {pretty_slot}.\n"
+                "¿Confirmas la cita? (responde: Sí o No)"
                 if lang == "es"
-                else "Thanks. What is your WhatsApp phone number?"
+                else (
+                    f"Perfect, {collected.get('user_name')}. I have everything ready.\n"
+                    f"Your appointment would be on {pretty_slot}.\n"
+                    "Do you confirm the appointment? (reply: Yes or No)"
+                )
             )
 
 

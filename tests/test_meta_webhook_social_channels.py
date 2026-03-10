@@ -237,3 +237,49 @@ def test_meta_graph_api_version_enforces_v19(monkeypatch):
     now = datetime.now(timezone.utc)
     assert is_within_messaging_window(now - timedelta(hours=23), window_hours=24) is True
     assert is_within_messaging_window(now - timedelta(hours=25), window_hours=24) is False
+
+
+def test_whatsapp_session_id_normalizes_mx_521_variant(monkeypatch):
+    client, module = _build_client()
+    process_calls = []
+
+    monkeypatch.setattr(module, "verify_meta_signature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "get_client_id_by_channel", lambda *_args, **_kwargs: "client_wa")
+    monkeypatch.setattr(module, "get_whatsapp_credentials", lambda *_args, **_kwargs: {"wa_token": "tok", "wa_phone_id": "pid"})
+
+    async def _fake_process_user_message(**kwargs):
+        process_calls.append(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(module, "process_user_message", _fake_process_user_message)
+    monkeypatch.setattr(module, "send_whatsapp_message", lambda **_kwargs: True)
+
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"display_phone_number": "15551234567"},
+                            "messages": [
+                                {
+                                    "from": "5215512345678",
+                                    "type": "text",
+                                    "text": {"body": "hola"},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ],
+    }
+
+    res = client.post("/webhooks/meta", json=payload)
+    body = res.json()
+
+    assert res.status_code == 200
+    assert body["status"] == "ok"
+    assert len(process_calls) == 1
+    assert process_calls[0]["session_id"] == "whatsapp-+525512345678"

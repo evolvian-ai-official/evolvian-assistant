@@ -18,7 +18,11 @@ from api.modules.meta.social_sender import (
     send_social_text_message,
 )
 from api.modules.whatsapp.send_wa_message import send_whatsapp_message
-from api.modules.whatsapp.webhook import _cancel_appointment_from_whatsapp, _is_cancel_action
+from api.modules.whatsapp.webhook import (
+    _cancel_appointment_from_whatsapp,
+    _is_cancel_action,
+    _normalize_whatsapp_session_phone,
+)
 from api.webhook_security import verify_meta_signature
 
 
@@ -151,7 +155,8 @@ async def _handle_whatsapp_message(value: dict, msg: dict) -> dict[str, Any]:
             logger.exception("Error cancelling appointment from WhatsApp webhook")
             response = "⚠️ No pude cancelar tu cita en este momento. Intenta de nuevo."
     else:
-        session_id = f"whatsapp-{user_phone}"
+        normalized_session_phone = _normalize_whatsapp_session_phone(user_phone) or user_phone
+        session_id = f"whatsapp-{normalized_session_phone}"
         response = await process_user_message(
             client_id=client_id,
             session_id=session_id,

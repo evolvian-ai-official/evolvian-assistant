@@ -88,6 +88,17 @@ def _safe_tail(value: Any, *, size: int = 8) -> str:
     return raw[-size:]
 
 
+def _normalize_whatsapp_session_phone(value: Any) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if not digits:
+        return str(value or "").strip()
+    # Normalize MX mobile variant so one user does not split conversation state
+    # across 521XXXXXXXXXX and 52XXXXXXXXXX session ids.
+    if digits.startswith("521") and len(digits) > 3:
+        digits = f"52{digits[3:]}"
+    return f"+{digits}"
+
+
 def _normalize_text_key(value: Any) -> str:
     text = str(value or "").strip().lower()
     if not text:
@@ -907,7 +918,8 @@ async def process_whatsapp_payload(payload: dict):
                 from_number=from_number,
             )
 
-            session_id = f"whatsapp-{from_number}"
+            normalized_session_phone = _normalize_whatsapp_session_phone(from_number) or from_number
+            session_id = f"whatsapp-{normalized_session_phone}"
             context_message_id = _extract_context_message_id(message)
             logger.info(
                 "Meta inbound message | type=%s | message_fp=%s | from_fp=%s | session_fp=%s | context_fp=%s | text_len=%s",

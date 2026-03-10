@@ -6,6 +6,13 @@ import sys
 sys.path.insert(0, os.getcwd())
 
 
+def test_whatsapp_session_phone_normalization_mx_521_variant():
+    from api.modules.whatsapp import webhook as module
+
+    assert module._normalize_whatsapp_session_phone("5215512345678") == "+525512345678"
+    assert module._normalize_whatsapp_session_phone("+525512345678") == "+525512345678"
+
+
 def test_whatsapp_campaign_interest_creates_handoff_and_skips_rag(monkeypatch):
     from api.modules.assistant_rag import intent_router
     from api.modules.whatsapp import webhook as module

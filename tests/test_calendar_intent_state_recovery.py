@@ -182,7 +182,7 @@ def test_state_recovery_name_step_continues_to_email(monkeypatch):
     assert "¿Cuál es tu correo electrónico?" in answer
 
 
-def test_state_recovery_email_step_continues_to_phone(monkeypatch):
+def test_state_recovery_email_step_confirms_whatsapp_session_phone(monkeypatch):
     history_rows = [
         _history_row("user", "Quiero agendar una cita", 10),
         _history_row("assistant", "Indícame cuál prefieres.", 11),
@@ -203,7 +203,7 @@ def test_state_recovery_email_step_continues_to_phone(monkeypatch):
         )
     )
 
-    assert "¿Cuál es tu número de teléfono" in answer
+    assert "¿Confirmas que ese es tu número para la cita?" in answer
 
 
 def test_state_recovery_phone_step_continues_to_confirmation(monkeypatch):
@@ -230,6 +230,66 @@ def test_state_recovery_phone_step_continues_to_confirmation(monkeypatch):
     )
 
     assert "¿Confirmas la cita?" in answer
+
+
+def test_state_recovery_whatsapp_phone_confirmation_yes_advances_to_final_confirmation(monkeypatch):
+    history_rows = [
+        _history_row("user", "Quiero agendar una cita", 10),
+        _history_row("assistant", "Indícame cuál prefieres.", 11),
+        _history_row("user", "mañana a las 3PM", 12),
+        _history_row("assistant", "Perfecto. ¿Cuál es tu nombre completo?", 13),
+        _history_row("user", "Aldo Benitez", 14),
+        _history_row("assistant", "Gracias. ¿Cuál es tu correo electrónico?", 15),
+        _history_row("user", "aldo.benitez@example.com", 16),
+        _history_row(
+            "assistant",
+            "Veo que escribes desde +525512345678. ¿Confirmas que ese es tu número para la cita? (Sí/No)",
+            17,
+        ),
+    ]
+    _setup_calendar_handler(monkeypatch, history_rows)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="Sí",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "¿Confirmas la cita?" in answer
+
+
+def test_state_recovery_whatsapp_phone_confirmation_no_requests_manual_phone(monkeypatch):
+    history_rows = [
+        _history_row("user", "Quiero agendar una cita", 10),
+        _history_row("assistant", "Indícame cuál prefieres.", 11),
+        _history_row("user", "mañana a las 3PM", 12),
+        _history_row("assistant", "Perfecto. ¿Cuál es tu nombre completo?", 13),
+        _history_row("user", "Aldo Benitez", 14),
+        _history_row("assistant", "Gracias. ¿Cuál es tu correo electrónico?", 15),
+        _history_row("user", "aldo.benitez@example.com", 16),
+        _history_row(
+            "assistant",
+            "Veo que escribes desde +525512345678. ¿Confirmas que ese es tu número para la cita? (Sí/No)",
+            17,
+        ),
+    ]
+    _setup_calendar_handler(monkeypatch, history_rows)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="No",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "Compárteme tu número de WhatsApp con código de país" in answer
 
 
 def test_state_recovery_confirmation_step_closes_booking(monkeypatch):
@@ -372,7 +432,7 @@ def test_phone_normalization_uses_whatsapp_session_country_code():
         "whatsapp-5215525277660",
         "whatsapp",
     )
-    assert normalized == "+5215525277660"
+    assert normalized == "+525525277660"
 
 
 def test_pick_display_slots_spreads_across_multiple_days():
