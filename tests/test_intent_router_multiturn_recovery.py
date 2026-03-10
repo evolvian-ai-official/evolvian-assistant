@@ -17,7 +17,10 @@ from api.modules.assistant_rag import intent_router
 FOLLOWUPS = [
     "mañana a las 9:00",
     "martes 10:30",
+    "puedes el viernes?",
+    "que dias tienes disponibles?",
     "mi nombre es QA Usuario",
+    "Aldo Nicolas Benitez",
     "mi correo es qa.user@example.com",
     "confirmar",
     "el primer horario",

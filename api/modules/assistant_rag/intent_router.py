@@ -39,8 +39,12 @@ except Exception as e:
 # 🧠 Intent detector avanzado (si existe)
 # ============================================================
 try:
-    from api.modules.assistant_rag.intent_detector import detect_intent_to_schedule as _detect_intent_to_schedule
+    from api.modules.assistant_rag.intent_detector import (
+        detect_appointment_intent as _detect_appointment_intent,
+        detect_intent_to_schedule as _detect_intent_to_schedule,
+    )
 except Exception:
+    _detect_appointment_intent = None
     _detect_intent_to_schedule = None
 
 # ============================================================
@@ -53,7 +57,9 @@ NAME_LINE_RE = re.compile(r"^[A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:[\s\-'][A-Za-z�
 
 AGENDA_KEYWORDS = {
     "agendar", "agenda", "cita", "sesión", "sesion", "reservar",
-    "horario", "book", "schedule", "appointment", "slot", "slots"
+    "horario", "book", "schedule", "appointment", "slot", "slots",
+    "disponible", "disponibles", "availability", "available",
+    "dias disponibles", "días disponibles",
 }
 CALENDAR_FOLLOWUP_KEYWORDS = {
     "mañana",
@@ -98,6 +104,13 @@ CALENDAR_FOLLOWUP_KEYWORDS = {
     "mi telefono",
     "mi teléfono",
     "my phone",
+    "disponible",
+    "disponibles",
+    "availability",
+    "available",
+    "que dias",
+    "qué días",
+    "what days",
 }
 DATE_LIKE_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b", re.I)
 TIME_LIKE_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)?\b", re.I)
@@ -186,6 +199,10 @@ def _looks_like_calendar_followup(message: str) -> bool:
         return False
     if EMAIL_RE.search(message) or PHONE_RE.search(message):
         return True
+    # Permite recuperar flujo cuando el usuario responde solo su nombre completo.
+    # Ejemplo real: "Aldo Nicolas Benitez".
+    if NAME_LINE_RE.match(str(message).strip()):
+        return True
 
     normalized = _normalize_text(message)
     if any(re.search(rf"(?<!\w){re.escape(token)}(?!\w)", normalized) for token in CALENDAR_FOLLOWUP_KEYWORDS):
@@ -267,6 +284,29 @@ def _has_recent_appointment_history(
 
 def detect_intent_to_schedule(message: str) -> bool:
     """Wrapper: detector avanzado o fallback local."""
+    if _detect_appointment_intent:
+        try:
+            detected = _detect_appointment_intent(message) or {}
+            intent = str(detected.get("intent") or "").strip().lower()
+            if intent == "confirm_appointment":
+                normalized = _normalize_text(message)
+                if any(
+                    token in normalized
+                    for token in ("cita", "horario", "slot", "appointment", "agend", "confirm", "ese", "that")
+                ):
+                    return True
+            # Avoid routing generic confirmations ("ok", "está bien") to calendar.
+            if intent == "confirm_appointment":
+                return False
+            if intent in {
+                "create_appointment",
+                "check_availability",
+                "reschedule_appointment",
+                "cancel_appointment",
+            }:
+                return True
+        except Exception:
+            pass
     if _detect_intent_to_schedule:
         try:
             # If advanced detector is uncertain/false, keep robust local fallback
