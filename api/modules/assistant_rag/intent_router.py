@@ -1056,39 +1056,48 @@ async def process_user_message(
     if is_whatsapp:
         campaign_interest_handoff = _get_active_campaign_interest_handoff(client_id, session_id)
         if campaign_interest_handoff:
-            answer = _campaign_interest_followup_message(lang)
-            save_history(
-                client_id,
-                session_id,
-                "user",
-                message,
-                channel=channel,
-                provider=provider,
-            )
-            save_history(
-                client_id,
-                session_id,
-                "assistant",
-                answer,
-                channel=channel,
-                provider=provider,
-                metadata={
-                    "whatsapp_policy": {
-                        "event": "campaign_interest_handoff_active",
-                        "handoff_id": campaign_interest_handoff.get("id"),
-                    }
-                },
-            )
-            payload = {
-                "answer": answer,
-                "confidence_score": 1.0,
-                "handoff_recommended": True,
-                "human_intervention_recommended": True,
-                "needs_human": True,
-                "handoff_reason": "campaign_interest_active",
-                "confidence_reason": "campaign_interest_handoff_active",
-            }
-            return payload if return_metadata else answer
+            # Allow scheduling flows to continue even if a campaign-interest handoff
+            # is still marked active in this WhatsApp session.
+            if detect_intent_to_schedule(message) or _looks_like_calendar_followup(message):
+                logger.info(
+                    "Bypassing campaign-interest handoff for scheduling message | client_ref=%s | session_fp=%s",
+                    _safe_tail(client_id),
+                    _safe_hash(session_id),
+                )
+            else:
+                answer = _campaign_interest_followup_message(lang)
+                save_history(
+                    client_id,
+                    session_id,
+                    "user",
+                    message,
+                    channel=channel,
+                    provider=provider,
+                )
+                save_history(
+                    client_id,
+                    session_id,
+                    "assistant",
+                    answer,
+                    channel=channel,
+                    provider=provider,
+                    metadata={
+                        "whatsapp_policy": {
+                            "event": "campaign_interest_handoff_active",
+                            "handoff_id": campaign_interest_handoff.get("id"),
+                        }
+                    },
+                )
+                payload = {
+                    "answer": answer,
+                    "confidence_score": 1.0,
+                    "handoff_recommended": True,
+                    "human_intervention_recommended": True,
+                    "needs_human": True,
+                    "handoff_reason": "campaign_interest_active",
+                    "confidence_reason": "campaign_interest_handoff_active",
+                }
+                return payload if return_metadata else answer
 
     if is_whatsapp and _is_whatsapp_handoff_request(message):
         handoff_info = _upsert_whatsapp_handoff(
