@@ -24,6 +24,7 @@ from api.utils.babel_compat import format_datetime
 
 
 logger = logging.getLogger("calendar_intent_handler")
+CONVERSATION_STATE_TABLE = "conversation_state"
 
 WEEKDAYS_ES = {"lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2, "jueves": 3, "viernes": 4, "sábado": 5, "sabado": 5, "domingo": 6}
 WEEKDAYS_EN = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
@@ -240,6 +241,68 @@ def _coerce_dict(val):
     return {}
 
 
+def _is_on_conflict_constraint_error(exc: Exception) -> bool:
+    raw = str(exc or "").lower()
+    return (
+        "42p10" in raw
+        or "no unique or exclusion constraint matching the on conflict specification" in raw
+    )
+
+
+def _persist_conversation_state(
+    client_id: str,
+    session_id: str,
+    state: dict,
+    *,
+    log_error: bool = True,
+) -> bool:
+    payload = {
+        "client_id": client_id,
+        "session_id": session_id,
+        "state": state or {},
+    }
+    try:
+        supabase.table(CONVERSATION_STATE_TABLE).upsert(
+            payload,
+            on_conflict="client_id,session_id",
+        ).execute()
+        return True
+    except Exception as exc:
+        if not _is_on_conflict_constraint_error(exc):
+            if log_error:
+                logger.error(f"⚠️ Could not persist conversation state: {exc}")
+            return False
+
+        try:
+            existing = (
+                supabase.table(CONVERSATION_STATE_TABLE)
+                .select("client_id")
+                .eq("client_id", client_id)
+                .eq("session_id", session_id)
+                .limit(1)
+                .execute()
+            )
+            has_existing = bool(existing and getattr(existing, "data", None))
+            if has_existing:
+                (
+                    supabase.table(CONVERSATION_STATE_TABLE)
+                    .update({"state": state or {}})
+                    .eq("client_id", client_id)
+                    .eq("session_id", session_id)
+                    .execute()
+                )
+            else:
+                supabase.table(CONVERSATION_STATE_TABLE).insert(payload).execute()
+            logger.warning(
+                "⚠️ conversation_state upsert fallback applied (missing on_conflict constraint)"
+            )
+            return True
+        except Exception as fallback_exc:
+            if log_error:
+                logger.error(f"⚠️ Could not persist conversation state via fallback: {fallback_exc}")
+            return False
+
+
 def _is_yes(msg: str) -> bool:
     s = msg.strip().lower()
 
@@ -312,7 +375,59 @@ def _resolve_date_token(text: str) -> str | None:
     now = datetime.now()
 
     # ===============================
-    # 1. Expresiones absolutas simples (hoy, mañana...)
+    # 1. Fechas explícitas (prioridad sobre weekday words)
+    # ===============================
+    # ISO: 2026-03-12
+    m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return datetime(y, mo, d).strftime("%Y-%m-%d")
+        except Exception:
+            return None
+
+    # Numérica: 12/03 o 12/03/2026
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", s)
+    if m:
+        d = int(m.group(1))
+        mo = int(m.group(2))
+        y = m.group(3)
+        if y is None:
+            year = now.year
+        else:
+            year = int(y)
+            if year < 100:
+                year += 2000
+        try:
+            return datetime(year, mo, d).strftime("%Y-%m-%d")
+        except Exception:
+            return None
+
+    # Español: 12 de marzo (de 2026)
+    m = re.search(r"\b(\d{1,2})\s+de\s+([a-záéíóú]+)(?:\s+de\s+(\d{4}))?\b", s)
+    if m:
+        d = int(m.group(1))
+        mo = MONTHS_ES.get(m.group(2).lower())
+        year = int(m.group(3)) if m.group(3) else now.year
+        if mo:
+            try:
+                return datetime(year, mo, d).strftime("%Y-%m-%d")
+            except Exception:
+                return None
+
+    # Inglés: March 12 (, 2026)
+    m = re.search(r"\b([a-z]+)\s+(\d{1,2})(?:,\s*(\d{4}))?\b", s)
+    if m and m.group(1).lower() in MONTHS_EN:
+        mo = MONTHS_EN[m.group(1).lower()]
+        d = int(m.group(2))
+        year = int(m.group(3)) if m.group(3) else now.year
+        try:
+            return datetime(year, mo, d).strftime("%Y-%m-%d")
+        except Exception:
+            return None
+
+    # ===============================
+    # 2. Expresiones absolutas simples (hoy, mañana...)
     # ===============================
     if "hoy" in s or "today" in s:
         return now.strftime("%Y-%m-%d")
@@ -324,7 +439,7 @@ def _resolve_date_token(text: str) -> str | None:
         return (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # ===============================
-    # 2. Expresiones relativas por semanas
+    # 3. Expresiones relativas por semanas
     # ===============================
     # “en dos semanas”, “en 3 semanas”, “in two weeks”, “in 3 weeks”
     m = re.search(r"\ben\s+(\d+)\s+seman", s)
@@ -338,7 +453,7 @@ def _resolve_date_token(text: str) -> str | None:
         return (now + timedelta(days=7*n)).strftime("%Y-%m-%d")
 
     # ===============================
-    # 3. Expresiones como “en 3 días”, “in 2 days”
+    # 4. Expresiones como “en 3 días”, “in 2 days”
     # ===============================
     m = re.search(r"\ben\s+(\d+)\s+d[ií]as", s)
     if m:
@@ -349,25 +464,29 @@ def _resolve_date_token(text: str) -> str | None:
         return (now + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
 
     # ===============================
-    # 4. Detección de modificadores tipo Calendly
+    # 5. Detección de modificadores tipo Calendly
     # ===============================
-    modifiers_next = [
-        "siguiente", "próximo", "proximo", "que viene", 
-        "upcoming", "next", "following"
-    ]
     modifiers_this = [
         "este", "esta", "this"
     ]
+    explicit_next_week_markers = [
+        "proxima semana",
+        "próxima semana",
+        "siguiente semana",
+        "next week",
+        "following week",
+    ]
 
     # ===============================
-    # 5. Días de la semana (ES)
+    # 6. Días de la semana (ES)
     # ===============================
     for wd, idx in WEEKDAYS_ES.items():
         if wd in s:
             base = _next_weekday(now, idx)
 
-            # “el siguiente lunes” → +7 días extra
-            if any(m in s for m in modifiers_next):
+            # Solo empujar +7 cuando el usuario menciona explícitamente
+            # que se refiere a la próxima semana.
+            if any(m in s for m in explicit_next_week_markers):
                 base += timedelta(days=7)
 
             # “este lunes” → lunes de esta semana (solo si todavía no pasó)
@@ -377,13 +496,13 @@ def _resolve_date_token(text: str) -> str | None:
             return base.strftime("%Y-%m-%d")
 
     # ===============================
-    # 6. Días de la semana (EN)
+    # 7. Días de la semana (EN)
     # ===============================
     for wd, idx in WEEKDAYS_EN.items():
         if wd in s:
             base = _next_weekday(now, idx)
 
-            if any(m in s for m in modifiers_next):
+            if any(m in s for m in explicit_next_week_markers):
                 base += timedelta(days=7)
 
             if any(m in s for m in modifiers_this):
@@ -393,32 +512,7 @@ def _resolve_date_token(text: str) -> str | None:
             return base.strftime("%Y-%m-%d")
 
     # ===============================
-    # 7. Fechas explícitas tipo “14 de noviembre”
-    # ===============================
-    m = re.search(r"\b(\d{1,2})\s+de\s+([a-záéíóú]+)\b", s)
-    if m:
-        d = int(m.group(1))
-        mo = MONTHS_ES.get(m.group(2).lower())
-        if mo:
-            try:
-                return datetime(now.year, mo, d).strftime("%Y-%m-%d")
-            except:
-                return None
-
-    # ===============================
-    # 8. Fechas explícitas inglés: “November 14”
-    # ===============================
-    m = re.search(r"\b([a-z]+)\s+(\d{1,2})\b", s)
-    if m and m.group(1).lower() in MONTHS_EN:
-        mo = MONTHS_EN[m.group(1).lower()]
-        d = int(m.group(2))
-        try:
-            return datetime(now.year, mo, d).strftime("%Y-%m-%d")
-        except:
-            return None
-
-    # ===============================
-    # 9. Estilo “14th of November”
+    # 8. Estilo “14th of November”
     # ===============================
     m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+of\s+([a-z]+)\b", s)
     if m and m.group(2).lower() in MONTHS_EN:
@@ -1224,10 +1318,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             )
 
             state["collected"] = collected
-            supabase.table("conversation_state").upsert(
-                {"client_id": client_id, "session_id": session_id, "state": state},
-                on_conflict="client_id,session_id",
-            ).execute()
+            _persist_conversation_state(client_id, session_id, state)
 
             return reply
 
@@ -1242,10 +1333,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
 
         collected.pop("user_email", None)
         state["collected"] = collected
-        supabase.table("conversation_state").upsert(
-            {"client_id": client_id, "session_id": session_id, "state": state},
-            on_conflict="client_id,session_id",
-        ).execute()
+        _persist_conversation_state(client_id, session_id, state)
 
         return reply
 
@@ -1304,13 +1392,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         )
 
         state["collected"] = collected
-        try:
-            supabase.table("conversation_state").upsert(
-                {"client_id": client_id, "session_id": session_id, "state": state},
-                on_conflict="client_id,session_id",
-            ).execute()
-        except Exception:
-            pass
+        _persist_conversation_state(client_id, session_id, state, log_error=False)
         return confirm_msg
 
 
@@ -1332,17 +1414,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 state.pop("proposed_slots", None)
                 state.pop("existing_appointment", None)
                 state["collected"] = collected
-                try:
-                    supabase.table("conversation_state").upsert(
-                        {
-                            "client_id": client_id,
-                            "session_id": session_id,
-                            "state": state,
-                        },
-                        on_conflict="client_id,session_id",
-                    ).execute()
-                except Exception:
-                    pass
+                _persist_conversation_state(client_id, session_id, state, log_error=False)
                 return (
                     "✅ Listo. Cancelé tu cita activa y registré la nueva."
                     if lang == "es"
@@ -1360,13 +1432,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             state.pop("existing_appointment", None)
             collected.pop("scheduled_time", None)
             state["collected"] = collected
-            try:
-                supabase.table("conversation_state").upsert(
-                    {"client_id": client_id, "session_id": session_id, "state": state},
-                    on_conflict="client_id,session_id",
-                ).execute()
-            except Exception:
-                pass
+            _persist_conversation_state(client_id, session_id, state, log_error=False)
             return (
                 "Perfecto. Mantengo tu cita actual. Si quieres, te ayudo a elegir otro horario."
                 if lang == "es"
@@ -1414,17 +1480,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         state["proposed_slots"] = []
 
                     state["collected"] = collected
-                    try:
-                        supabase.table("conversation_state").upsert(
-                            {
-                                "client_id": client_id,
-                                "session_id": session_id,
-                                "state": state,
-                            },
-                            on_conflict="client_id,session_id",
-                        ).execute()
-                    except Exception:
-                        pass
+                    _persist_conversation_state(client_id, session_id, state, log_error=False)
 
                     tz_name = (settings or {}).get("timezone") or "UTC"
                     slot_text = _format_slot_list_for_lang(
@@ -1463,17 +1519,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 state.pop("proposed_slots", None)
                 state["collected"] = collected
 
-                try:
-                    supabase.table("conversation_state").upsert(
-                        {
-                            "client_id": client_id,
-                            "session_id": session_id,
-                            "state": state,
-                        },
-                        on_conflict="client_id,session_id",
-                    ).execute()
-                except Exception:
-                    pass
+                _persist_conversation_state(client_id, session_id, state, log_error=False)
 
                 # WhatsApp + Email confirmation comes from appointments.create_appointment flow.
 
@@ -1486,17 +1532,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 state["status"] = "pending_replace_existing"
                 state["existing_appointment"] = booking_result.get("existing_appointment") or {}
                 state["collected"] = collected
-                try:
-                    supabase.table("conversation_state").upsert(
-                        {
-                            "client_id": client_id,
-                            "session_id": session_id,
-                            "state": state,
-                        },
-                        on_conflict="client_id,session_id",
-                    ).execute()
-                except Exception:
-                    pass
+                _persist_conversation_state(client_id, session_id, state, log_error=False)
 
                 existing = booking_result.get("existing_appointment") or {}
                 existing_time = existing.get("scheduled_time")
@@ -1517,17 +1553,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                     collected.pop("user_phone", None)
                     state["status"] = "collecting"
                     state["collected"] = collected
-                    try:
-                        supabase.table("conversation_state").upsert(
-                            {
-                                "client_id": client_id,
-                                "session_id": session_id,
-                                "state": state,
-                            },
-                            on_conflict="client_id,session_id",
-                        ).execute()
-                    except Exception:
-                        pass
+                    _persist_conversation_state(client_id, session_id, state, log_error=False)
                     return (
                         "⚠️ El número debe incluir código de país (ej. +525512345678). ¿Cuál es tu número de WhatsApp?"
                         if lang == "es"
@@ -1544,16 +1570,12 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     # ============================================================
 
     state["collected"] = collected
-    try:
-        supabase.table("conversation_state").upsert(
-            {"client_id": client_id, "session_id": session_id, "state": state},
-            on_conflict="client_id,session_id",
-        ).execute()
+    if _persist_conversation_state(client_id, session_id, state, log_error=False):
         logger.info(
             f"🧠 Updated conversation state (pre-LLM) for {session_id}: {json.dumps(state, ensure_ascii=False)}"
         )
-    except Exception as e:
-        logger.error(f"⚠️ Could not persist updated state: {e}")
+    else:
+        logger.error("⚠️ Could not persist updated state")
 
 
     # ============================================================
@@ -1566,14 +1588,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             # Guardarlos en el estado para que el LLM NO invente horarios
             state["proposed_slots"] = available_slots
 
-            supabase.table("conversation_state").upsert(
-                {
-                    "client_id": client_id,
-                    "session_id": session_id,
-                    "state": state,
-                },
-                on_conflict="client_id,session_id",
-            ).execute()
+            _persist_conversation_state(client_id, session_id, state, log_error=False)
 
             logger.info(f"🟦 Proposed slots generated: {len(available_slots)}")
     except Exception as e:
@@ -1654,13 +1669,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 elif awaiting_phone_confirmation and _is_no(message):
                     state.pop("awaiting_whatsapp_phone_confirmation", None)
                     state["collected"] = collected
-                    try:
-                        supabase.table("conversation_state").upsert(
-                            {"client_id": client_id, "session_id": session_id, "state": state},
-                            on_conflict="client_id,session_id",
-                        ).execute()
-                    except Exception:
-                        pass
+                    _persist_conversation_state(client_id, session_id, state, log_error=False)
                     return (
                         "Perfecto. Compárteme tu número de WhatsApp con código de país (ej. +525512345678)."
                         if lang == "es"
@@ -1669,13 +1678,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                 elif not awaiting_phone_confirmation:
                     state["awaiting_whatsapp_phone_confirmation"] = True
                     state["collected"] = collected
-                    try:
-                        supabase.table("conversation_state").upsert(
-                            {"client_id": client_id, "session_id": session_id, "state": state},
-                            on_conflict="client_id,session_id",
-                        ).execute()
-                    except Exception:
-                        pass
+                    _persist_conversation_state(client_id, session_id, state, log_error=False)
                     return (
                         f"Veo que escribes desde {inferred_whatsapp_phone}. ¿Confirmas que ese es tu número para la cita? (Sí/No)"
                         if lang == "es"
@@ -1705,13 +1708,7 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             ):
                 state["status"] = "pending_confirmation"
             state["collected"] = collected
-            try:
-                supabase.table("conversation_state").upsert(
-                    {"client_id": client_id, "session_id": session_id, "state": state},
-                    on_conflict="client_id,session_id",
-                ).execute()
-            except Exception:
-                pass
+            _persist_conversation_state(client_id, session_id, state, log_error=False)
             pretty_slot = _format_slot_for_lang(collected["scheduled_time"], tz_name, lang)
             return (
                 f"Perfecto, {collected.get('user_name')}. Tengo todo listo.\n"
@@ -1785,18 +1782,10 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
     # ============================================================
     # 💾 Guardar estado final y respuesta
     # ============================================================
-    try:
-        supabase.table("conversation_state").upsert(
-            {
-                "client_id": client_id,
-                "session_id": session_id,
-                "state": state,
-            },
-            on_conflict="client_id,session_id",
-        ).execute()
+    if _persist_conversation_state(client_id, session_id, state, log_error=False):
         logger.info(f"💾 Final conversation state saved for {session_id}")
-    except Exception as e:
-        logger.warning(f"⚠️ Could not persist final conversation state: {e}")
+    else:
+        logger.warning("⚠️ Could not persist final conversation state")
 
     # ============================================================
     # 💬 Respuesta final (usa LLM si es coherente, fallback si no)

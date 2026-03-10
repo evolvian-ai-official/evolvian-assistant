@@ -347,17 +347,53 @@ def get_state(client_id: str, session_id: str) -> Dict:
         print(f"⚠️ get_state error: {e}")
         return {}
 
+
+def _is_on_conflict_constraint_error(exc: Exception) -> bool:
+    raw = str(exc or "").lower()
+    return (
+        "42p10" in raw
+        or "no unique or exclusion constraint matching the on conflict specification" in raw
+    )
+
+
 def upsert_state(client_id: str, session_id: str, state: Dict) -> None:
+    payload = {
+        "client_id": client_id,
+        "session_id": session_id,
+        "state": state or {},
+    }
     try:
         supabase.table(CS_TABLE).upsert(
-            {
-                "client_id": client_id,
-                "session_id": session_id,
-                "state": state or {},
-            },
+            payload,
             on_conflict="client_id,session_id",
         ).execute()
     except Exception as e:
+        if _is_on_conflict_constraint_error(e):
+            try:
+                existing = (
+                    supabase.table(CS_TABLE)
+                    .select("client_id")
+                    .eq("client_id", client_id)
+                    .eq("session_id", session_id)
+                    .limit(1)
+                    .execute()
+                )
+                has_existing = bool(existing and getattr(existing, "data", None))
+                if has_existing:
+                    (
+                        supabase.table(CS_TABLE)
+                        .update({"state": state or {}})
+                        .eq("client_id", client_id)
+                        .eq("session_id", session_id)
+                        .execute()
+                    )
+                else:
+                    supabase.table(CS_TABLE).insert(payload).execute()
+                print("⚠️ upsert_state fallback applied (missing on_conflict constraint)")
+                return
+            except Exception as fallback_exc:
+                print(f"⚠️ upsert_state fallback error: {fallback_exc}")
+                return
         print(f"⚠️ upsert_state error: {e}")
 
 def get_active_intent(client_id: str, session_id: str) -> Optional[str]:
