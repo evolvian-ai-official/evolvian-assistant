@@ -735,13 +735,15 @@ def meta_embedded_signup_callback(
     request: Request,
     code: str | None = None,
     state: str | None = None,
+    redirect_state: str | None = None,
     error: str | None = None,
     error_reason: str | None = None,
     error_description: str | None = None,
 ):
+    effective_state = state or redirect_state
     ui_return_url = _default_ui_return_url(request)
     try:
-        state_payload = decode_signed_state(state or "", max_age_seconds=1200)
+        state_payload = decode_signed_state(effective_state or "", max_age_seconds=1200)
         ui_return_url = _normalize_ui_return_url(
             str(state_payload.get("ui_return_url") or _default_ui_return_url(request))
         )
@@ -761,7 +763,7 @@ def meta_embedded_signup_callback(
             status_code=302,
         )
 
-    if not code or not state:
+    if not code or not effective_state:
         return RedirectResponse(
             url=_append_query_params(
                 ui_return_url,
@@ -774,7 +776,7 @@ def meta_embedded_signup_callback(
         )
 
     try:
-        decoded = decode_signed_state(state, max_age_seconds=1200)
+        decoded = decode_signed_state(effective_state, max_age_seconds=1200)
         client_id = str(decoded.get("client_id") or "").strip()
         preferred_phone = str(decoded.get("preferred_phone") or "").strip() or None
         if not client_id:
@@ -837,14 +839,15 @@ def meta_embedded_signup_callback(
             ),
             status_code=302,
         )
-    except Exception:
-        logger.exception("❌ meta_embedded_signup_callback internal error")
+    except Exception as exc:
+        error_type = type(exc).__name__
+        logger.exception("❌ meta_embedded_signup_callback internal error | error_type=%s", error_type)
         return RedirectResponse(
             url=_append_query_params(
                 ui_return_url,
                 {
                     "meta_setup": "error",
-                    "meta_reason": "internal_error",
+                    "meta_reason": f"internal_error:{error_type}",
                 },
             ),
             status_code=302,

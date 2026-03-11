@@ -1,5 +1,6 @@
 # api/channels.py
 from datetime import datetime, timezone
+import logging
 import re
 import uuid
 from typing import Literal
@@ -14,6 +15,7 @@ from api.security.whatsapp_token_crypto import (
 )
 
 router = APIRouter(prefix="/channels", tags=["Email Automation"])
+logger = logging.getLogger(__name__)
 SAFE_CHANNEL_FIELDS = {
     "id",
     "client_id",
@@ -96,7 +98,7 @@ async def get_channels(
     type: str = Query(None, description="Tipo de canal (email, whatsapp, etc.)"),
     provider: str = Query(None, description="Proveedor del canal (gmail, twilio, etc.)")
 ):
-    print(f"🔍 Buscando canales de client_id={client_id}, type={type}, provider={provider}")
+    logger.info("🔍 Buscando canales | client_id=%s | type=%s | provider=%s", client_id, type, provider)
 
     try:
         authorize_client_request(request, client_id)
@@ -107,13 +109,12 @@ async def get_channels(
             query = query.eq("provider", provider.strip().lower())
 
         result = query.execute()
-        print("🧾 Resultado bruto de Supabase:", result)
         if getattr(result, "error", None):
-            print("⚠️ Error en consulta Supabase:", result.error)
+            logger.warning("⚠️ Error en consulta Supabase channels: %s", result.error)
 
         data = getattr(result, "data", None)
         if not data:
-            print("🚫 Sin resultados para ese filtro exacto. Probando búsqueda laxa...")
+            logger.info("🚫 Sin resultados exactos. Probando búsqueda laxa en channels")
 
             # Fallback de búsqueda laxa (por si hay espacios o mayúsculas)
             fallback_query = (
@@ -127,16 +128,15 @@ async def get_channels(
                 fallback_query = fallback_query.ilike("type", f"%{type}%")
 
             result_fallback = fallback_query.execute()
-            print("🧾 Resultado fallback:", result_fallback)
             data = result_fallback.data or []
 
         if isinstance(data, dict):
             data = [data]
         data = _sanitize_channels(data)
 
-        print(f"📦 Canales encontrados: {len(data)}")
+        logger.info("📦 Canales encontrados: %s", len(data))
         for d in data:
-            print(
+            logger.info(
                 " → Canal: "
                 f"{d.get('provider')} ({d.get('value')}) "
                 f"activo={d.get('active', d.get('is_active'))}"
@@ -150,7 +150,7 @@ async def get_channels(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"🔥 Error consultando canales: {e}")
+        logger.exception("🔥 Error consultando canales")
         raise HTTPException(status_code=500, detail=f"Error interno al consultar canales: {e}")
 
 
