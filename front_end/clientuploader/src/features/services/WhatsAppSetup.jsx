@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import axios from "axios";
 import { useClientId } from "../../hooks/useClientId";
@@ -14,6 +14,18 @@ const isValidPhoneId = (id) => /^\d{10,20}$/.test(id);
 const isValidToken = (token) => /^EA[A-Za-z0-9]{16,}$/.test(token);
 const isValidWabaId = (id) => /^\d{8,24}$/.test(id);
 const isValidMetaRecipientId = (id) => /^[A-Za-z0-9_.:-]{5,100}$/.test(String(id || "").trim());
+const WA_SETUP_TIMEOUT_MS = 120000;
+const WA_SETUP_POLL_MS = 5000;
+
+const emptySetupProgress = () => ({
+  active: false,
+  complete: false,
+  timedOut: false,
+  steps: [],
+  suggestions: [],
+  phoneStatus: null,
+  lastError: "",
+});
 
 const maskSensitive = (value, visibleStart = 3, visibleEnd = 3) => {
   const raw = String(value || "").trim();
@@ -60,6 +72,8 @@ export default function WhatsAppSetup() {
   const [instagramConnected, setInstagramConnected] = useState(false);
 
   const [status, setStatus] = useState({ message: "", type: "" });
+  const [waSetupProgress, setWaSetupProgress] = useState(emptySetupProgress);
+  const setupRunRef = useRef(0);
 
   const [touched, setTouched] = useState({
     phone: false,
@@ -72,6 +86,12 @@ export default function WhatsAppSetup() {
   });
 
   const loadingAction = (key) => submitting === key;
+
+  useEffect(() => {
+    return () => {
+      setupRunRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -118,6 +138,58 @@ export default function WhatsAppSetup() {
 
   const setError = (message) => setStatus({ message, type: "error" });
   const setSuccess = (message) => setStatus({ message, type: "success" });
+  const resetSetupProgress = () => setWaSetupProgress(emptySetupProgress());
+
+  const applySetupProgressPayload = (payload, options = {}) => {
+    const setupComplete = Boolean(payload?.setup_complete);
+    setWaSetupProgress({
+      active: options.forceActive === true ? true : !setupComplete,
+      complete: setupComplete,
+      timedOut: Boolean(options.timedOut),
+      steps: Array.isArray(payload?.steps) ? payload.steps : [],
+      suggestions: Array.isArray(payload?.suggestions) ? payload.suggestions : [],
+      phoneStatus: payload?.phone_status || null,
+      lastError: options.lastError || "",
+    });
+  };
+
+  const pollSetupProgress = async (headers, runId) => {
+    const deadline = Date.now() + WA_SETUP_TIMEOUT_MS;
+    let latestPayload = null;
+
+    while (Date.now() < deadline && runId === setupRunRef.current) {
+      await new Promise((resolve) => setTimeout(resolve, WA_SETUP_POLL_MS));
+      if (runId !== setupRunRef.current) break;
+
+      try {
+        const progressRes = await axios.get(`${API}/whatsapp_setup_progress`, { headers });
+        latestPayload = progressRes?.data || null;
+        applySetupProgressPayload(latestPayload);
+
+        if (Boolean(latestPayload?.setup_complete)) {
+          return { completed: true, payload: latestPayload };
+        }
+      } catch (err) {
+        const detail = err?.response?.data?.detail || t("wa_setup_error_progress");
+        setWaSetupProgress((prev) => ({ ...prev, active: false, lastError: detail }));
+        return { completed: false, error: detail, payload: latestPayload };
+      }
+    }
+
+    if (runId !== setupRunRef.current) {
+      return { completed: false, cancelled: true, payload: latestPayload };
+    }
+
+    return { completed: false, timeout: true, payload: latestPayload };
+  };
+
+  const getProgressStepTitle = (key) => {
+    if (key === "channel_ready") return t("wa_setup_step_channel_ready");
+    if (key === "waba_phone_binding") return t("wa_setup_step_binding");
+    if (key === "waba_subscription") return t("wa_setup_step_subscription");
+    if (key === "phone_approval") return t("wa_setup_step_phone_status");
+    return key;
+  };
 
   const handleConnectWhatsApp = async () => {
     if (!session || loadingAction("wa_connect")) return;
@@ -130,9 +202,14 @@ export default function WhatsAppSetup() {
     try {
       setSubmitting("wa_connect");
       setStatus({ message: "", type: "" });
+      resetSetupProgress();
+
+      const runId = setupRunRef.current + 1;
+      setupRunRef.current = runId;
+      setWaSetupProgress((prev) => ({ ...prev, active: true, complete: false, timedOut: false }));
 
       const headers = await getAuthHeaders();
-      await axios.post(
+      const linkRes = await axios.post(
         `${API}/link_whatsapp`,
         {
           email: session.user.email,
@@ -144,10 +221,37 @@ export default function WhatsAppSetup() {
         },
         { headers }
       );
+      const linkData = linkRes?.data || {};
 
       setWaConnected(true);
       setWaToken("");
-      setSuccess(t("wa_success"));
+
+      if (linkData?.setup_progress) {
+        applySetupProgressPayload(linkData.setup_progress);
+      }
+
+      if (Boolean(linkData?.setup_complete)) {
+        setSuccess(t("wa_setup_success_ready"));
+      } else {
+        setSuccess(t("wa_setup_connected_waiting"));
+        const pollResult = await pollSetupProgress(headers, runId);
+        if (pollResult?.completed) {
+          setSuccess(t("wa_setup_success_ready"));
+        } else if (pollResult?.cancelled) {
+          return;
+        } else if (pollResult?.timeout) {
+          const fallbackSuggestion = t("wa_setup_timeout_suggestion_retry");
+          const firstSuggestion = Array.isArray(pollResult?.payload?.suggestions)
+            ? pollResult.payload.suggestions[0]
+            : "";
+          setWaSetupProgress((prev) => ({ ...prev, active: false, timedOut: true }));
+          setError(`${t("wa_setup_timeout")} ${firstSuggestion || fallbackSuggestion}`);
+        } else if (pollResult?.error) {
+          setError(`${t("wa_setup_error_progress")}: ${pollResult.error}`);
+        } else {
+          setError(t("wa_setup_error_progress"));
+        }
+      }
 
       if (clientId) {
         void trackClientEvent({
@@ -163,7 +267,9 @@ export default function WhatsAppSetup() {
       }
     } catch (err) {
       console.error(err);
-      setError(t("wa_error_linking"));
+      const detail = err?.response?.data?.detail;
+      setWaSetupProgress((prev) => ({ ...prev, active: false, lastError: detail || "" }));
+      setError(detail || t("wa_error_linking"));
     } finally {
       setSubmitting("");
     }
@@ -182,11 +288,13 @@ export default function WhatsAppSetup() {
         { auth_user_id: session.user.id },
         { headers }
       );
+      setupRunRef.current += 1;
       setPhone("");
       setWaPhoneId("");
       setWaToken("");
       setWaBusinessAccountId("");
       setWaConnected(false);
+      resetSetupProgress();
       setSuccess(t("wa_disconnected"));
     } catch (err) {
       console.error(err);
@@ -317,6 +425,12 @@ export default function WhatsAppSetup() {
   const displayedPhone = waConnected ? maskSensitive(phone, 4, 3) : phone;
   const displayedWaPhoneId = waConnected ? maskSensitive(waPhoneId, 3, 3) : waPhoneId;
   const displayedWabaId = waConnected ? maskSensitive(waBusinessAccountId, 3, 3) : waBusinessAccountId;
+  const showSetupProgressCard =
+    waSetupProgress.active
+    || waSetupProgress.complete
+    || waSetupProgress.timedOut
+    || Boolean(waSetupProgress.lastError)
+    || (waSetupProgress.steps || []).length > 0;
 
   return (
     <div className="ia-page">
@@ -427,6 +541,57 @@ export default function WhatsAppSetup() {
             )}
           </div>
         </section>
+
+        {showSetupProgressCard ? (
+          <section className="ia-card ia-setup-progress-card" style={{ marginBottom: "1rem" }}>
+            <div className="ia-setup-progress-header">
+              <h3 className="ia-header-title" style={{ marginBottom: 0 }}>{t("wa_setup_progress_title")}</h3>
+              {waSetupProgress.active ? <div className="ia-spinner ia-spinner-sm" /> : null}
+            </div>
+            <p className="ia-help-text" style={{ marginTop: "0.5rem" }}>
+              {waSetupProgress.active ? t("wa_setup_progress_subtitle") : t("wa_setup_progress_snapshot")}
+            </p>
+
+            {(waSetupProgress.steps || []).length ? (
+              <ul className="ia-setup-steps">
+                {waSetupProgress.steps.map((step, index) => (
+                  <li key={`${step?.key || "step"}-${index}`} className="ia-setup-step-row">
+                    <span className={`ia-setup-step-dot ia-setup-step-${step?.state || "pending"}`} />
+                    <div>
+                      <p className="ia-setup-step-title">{getProgressStepTitle(step?.key)}</p>
+                      <p className="ia-setup-step-detail">{step?.detail || ""}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            {waSetupProgress?.phoneStatus?.status ? (
+              <p className="ia-help-text" style={{ marginTop: "0.7rem" }}>
+                {waSetupProgress.phoneStatus.approved
+                  ? t("wa_setup_phone_status_approved").replace("{status}", waSetupProgress.phoneStatus.status)
+                  : t("wa_setup_phone_status_pending").replace("{status}", waSetupProgress.phoneStatus.status)}
+              </p>
+            ) : null}
+
+            {(waSetupProgress.timedOut || waSetupProgress.lastError || (waSetupProgress.suggestions || []).length) ? (
+              <div className="ia-note ia-setup-progress-warning" style={{ marginTop: "0.7rem" }}>
+                <strong>{waSetupProgress.timedOut ? t("wa_setup_timeout_title") : t("wa_setup_recommendations_title")}</strong>
+                {(waSetupProgress.suggestions || []).length ? (
+                  <ul className="ia-list" style={{ marginTop: "0.4rem" }}>
+                    {waSetupProgress.suggestions.map((suggestion, index) => (
+                      <li key={`suggestion-${index}`}>{suggestion}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ marginTop: "0.4rem", marginBottom: 0 }}>
+                    {waSetupProgress.lastError || t("wa_setup_timeout_suggestion_retry")}
+                  </p>
+                )}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         <section className="ia-card">
           <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
@@ -542,4 +707,3 @@ export default function WhatsAppSetup() {
     </div>
   );
 }
-

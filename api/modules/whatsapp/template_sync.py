@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import mimetypes
 import os
@@ -19,6 +20,14 @@ GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v22.0")
 GRAPH_BASE_URL = f"https://graph.facebook.com/{GRAPH_VERSION}"
 HTTP_TIMEOUT_SECONDS = 18
 WHATSAPP_TEMPLATE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _safe_id_fingerprint(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "none"
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return f"fp_{digest}"
 
 _TYPE_TO_CATEGORY = {
     "appointment_reminder": "UTILITY",
@@ -399,14 +408,14 @@ def _waba_has_phone_number(*, waba_id: str, wa_phone_id: str, wa_token: str) -> 
             # candidate during fallback discovery instead of warning noise.
             if _response_has_unknown_field_error(response):
                 logger.debug(
-                    "Skipping WABA phone number probe (unsupported edge/object) | waba_id=%s | %s",
-                    waba_id,
+                    "Skipping WABA phone number probe (unsupported edge/object) | waba_fp=%s | %s",
+                    _safe_id_fingerprint(waba_id),
                     _format_meta_error(response),
                 )
                 return False
             logger.warning(
-                "⚠️ Failed listing phone numbers for WABA | waba_id=%s | %s",
-                waba_id,
+                "⚠️ Failed listing phone numbers for WABA | waba_fp=%s | %s",
+                _safe_id_fingerprint(waba_id),
                 _format_meta_error(response),
             )
             return False
@@ -512,8 +521,8 @@ def validate_waba_access(*, waba_id: str, wa_token: str) -> bool:
         )
         if response.status_code >= 400:
             logger.warning(
-                "⚠️ WABA access validation failed | waba_id=%s | %s",
-                normalized_waba_id,
+                "⚠️ WABA access validation failed | waba_fp=%s | %s",
+                _safe_id_fingerprint(normalized_waba_id),
                 _format_meta_error(response),
             )
             return False
@@ -522,7 +531,10 @@ def validate_waba_access(*, waba_id: str, wa_token: str) -> bool:
         remote_id = str((payload or {}).get("id") or "").strip()
         return remote_id == normalized_waba_id
     except Exception:
-        logger.exception("❌ validate_waba_access failed | waba_id=%s", normalized_waba_id)
+        logger.exception(
+            "❌ validate_waba_access failed | waba_fp=%s",
+            _safe_id_fingerprint(normalized_waba_id),
+        )
         return False
 
 
@@ -543,6 +555,235 @@ def validate_waba_phone_binding(
         wa_phone_id=normalized_phone_id,
         wa_token=wa_token,
     )
+
+
+def _is_already_subscribed_apps_error(response: requests.Response) -> bool:
+    try:
+        payload = response.json()
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        if not isinstance(error, dict):
+            return False
+        message = str(error.get("message") or "").lower()
+        return "already subscribed" in message
+    except Exception:
+        return False
+
+
+def get_waba_subscription_status(*, waba_id: str, wa_token: str) -> dict:
+    normalized_waba_id = str(waba_id or "").strip()
+    normalized_token = str(wa_token or "").strip()
+    if not normalized_waba_id or not normalized_token:
+        return {
+            "success": False,
+            "subscribed": False,
+            "error": "missing_waba_id_or_token",
+        }
+
+    try:
+        response = _meta_request(
+            "GET",
+            f"{normalized_waba_id}/subscribed_apps",
+            token=normalized_token,
+            params={"fields": "id,name", "limit": 200},
+        )
+        if response.status_code >= 400:
+            formatted_error = _format_meta_error(response)
+            logger.warning(
+                "⚠️ Failed checking WABA subscribed apps | waba_fp=%s | status=%s | %s",
+                _safe_id_fingerprint(normalized_waba_id),
+                response.status_code,
+                formatted_error,
+            )
+            return {
+                "success": False,
+                "subscribed": False,
+                "status_code": response.status_code,
+                "error": formatted_error,
+            }
+
+        payload = response.json()
+        rows = payload.get("data") if isinstance(payload, dict) else []
+        app_count = len(rows or [])
+        return {
+            "success": True,
+            "subscribed": app_count > 0,
+            "app_count": app_count,
+        }
+    except Exception as exc:
+        logger.exception(
+            "❌ get_waba_subscription_status failed | waba_fp=%s",
+            _safe_id_fingerprint(normalized_waba_id),
+        )
+        return {
+            "success": False,
+            "subscribed": False,
+            "error": str(exc),
+        }
+
+
+def ensure_waba_app_subscription(*, waba_id: str, wa_token: str) -> dict:
+    normalized_waba_id = str(waba_id or "").strip()
+    normalized_token = str(wa_token or "").strip()
+    if not normalized_waba_id or not normalized_token:
+        return {
+            "success": False,
+            "already_subscribed": False,
+            "error": "missing_waba_id_or_token",
+        }
+
+    try:
+        response = _meta_request(
+            "POST",
+            f"{normalized_waba_id}/subscribed_apps",
+            token=normalized_token,
+        )
+
+        if response.status_code < 400:
+            return {
+                "success": True,
+                "already_subscribed": False,
+            }
+
+        if _is_already_subscribed_apps_error(response):
+            return {
+                "success": True,
+                "already_subscribed": True,
+            }
+
+        formatted_error = _format_meta_error(response)
+        logger.warning(
+            "⚠️ Failed subscribing app to WABA | waba_fp=%s | status=%s | %s",
+            _safe_id_fingerprint(normalized_waba_id),
+            response.status_code,
+            formatted_error,
+        )
+        return {
+            "success": False,
+            "already_subscribed": False,
+            "status_code": response.status_code,
+            "error": formatted_error,
+        }
+    except Exception as exc:
+        logger.exception(
+            "❌ ensure_waba_app_subscription failed | waba_fp=%s",
+            _safe_id_fingerprint(normalized_waba_id),
+        )
+        return {
+            "success": False,
+            "already_subscribed": False,
+            "error": str(exc),
+        }
+
+
+_PHONE_FIELDS_CANDIDATES = (
+    "id,display_phone_number,verified_name,quality_rating,code_verification_status,name_status,status",
+    "id,display_phone_number,verified_name,quality_rating,code_verification_status,name_status",
+    "id,display_phone_number,verified_name,quality_rating,code_verification_status",
+    "id,display_phone_number,verified_name,quality_rating",
+    "id,display_phone_number,verified_name",
+    "id,display_phone_number",
+    "id",
+)
+
+_PHONE_APPROVED_VALUES = {
+    "VERIFIED",
+    "APPROVED",
+    "ACTIVE",
+    "CONNECTED",
+    "ONLINE",
+    "LIVE",
+}
+
+
+def _as_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_phone_status_value(value: Any) -> Optional[str]:
+    text = _as_text(value)
+    return text.upper() if text else None
+
+
+def fetch_phone_number_metadata(*, wa_phone_id: str, wa_token: str) -> dict:
+    normalized_phone_id = str(wa_phone_id or "").strip()
+    normalized_token = str(wa_token or "").strip()
+    if not normalized_phone_id or not normalized_token:
+        return {
+            "success": False,
+            "error": "missing_phone_id_or_token",
+        }
+
+    for fields in _PHONE_FIELDS_CANDIDATES:
+        response = _meta_request(
+            "GET",
+            normalized_phone_id,
+            token=normalized_token,
+            params={"fields": fields},
+        )
+        if response.status_code < 400:
+            try:
+                payload = response.json()
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            data = {
+                "id": _as_text(payload.get("id")),
+                "display_phone_number": _as_text(payload.get("display_phone_number")),
+                "verified_name": _as_text(payload.get("verified_name")),
+                "quality_rating": _as_text(payload.get("quality_rating")),
+                "code_verification_status": _as_text(payload.get("code_verification_status")),
+                "name_status": _as_text(payload.get("name_status")),
+                "status": _as_text(payload.get("status")),
+            }
+            return {
+                "success": True,
+                "data": data,
+            }
+
+        if _response_has_unknown_field_error(response):
+            continue
+
+        formatted_error = _format_meta_error(response)
+        logger.warning(
+            "⚠️ Failed reading phone metadata | phone_id=%s | status=%s | %s",
+            normalized_phone_id,
+            response.status_code,
+            formatted_error,
+        )
+        return {
+            "success": False,
+            "status_code": response.status_code,
+            "error": formatted_error,
+        }
+
+    return {
+        "success": False,
+        "error": "unsupported_phone_metadata_fields",
+    }
+
+
+def extract_phone_effective_status(phone_metadata: dict) -> str:
+    for key in ("code_verification_status", "name_status", "status", "quality_rating"):
+        normalized = _normalize_phone_status_value((phone_metadata or {}).get(key))
+        if normalized:
+            return normalized
+    return "UNKNOWN"
+
+
+def is_phone_number_approved(*, phone_metadata: dict) -> bool:
+    status_candidates = [
+        _normalize_phone_status_value((phone_metadata or {}).get("code_verification_status")),
+        _normalize_phone_status_value((phone_metadata or {}).get("name_status")),
+        _normalize_phone_status_value((phone_metadata or {}).get("status")),
+    ]
+    for status in status_candidates:
+        if status and status in _PHONE_APPROVED_VALUES:
+            return True
+    return False
 
 
 def _ensure_body_placeholders(text: str, parameter_count: int) -> str:

@@ -11,6 +11,10 @@ _SENSITIVE_KEYS = {
     "gmail_access_token",
     "gmail_refresh_token",
     "wa_token",
+    "waba_id",
+    "wa_business_account_id",
+    "wa_waba_id",
+    "whatsapp_business_account_id",
     "authorization",
     "api_key",
     "apikey",
@@ -21,7 +25,8 @@ _SENSITIVE_KEYS = {
 
 _SENSITIVE_KEYS_PATTERN = (
     r"access_token|refresh_token|gmail_access_token|gmail_refresh_token|"
-    r"wa_token|authorization|api_key|apikey|secret|password|token"
+    r"wa_token|waba_id|wa_business_account_id|wa_waba_id|whatsapp_business_account_id|"
+    r"authorization|api_key|apikey|secret|password|token"
 )
 
 _JSON_DOUBLE_QUOTE_PATTERN = re.compile(

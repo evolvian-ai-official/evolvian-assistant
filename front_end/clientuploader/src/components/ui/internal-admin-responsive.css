@@ -710,6 +710,78 @@
   font-size: 0.82rem;
 }
 
+.ia-setup-progress-card {
+  border-color: #d5e8fa;
+}
+
+.ia-setup-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ia-spinner-sm {
+  width: 24px;
+  height: 24px;
+  border-width: 3px;
+}
+
+.ia-setup-steps {
+  list-style: none;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.ia-setup-step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.ia-setup-step-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-top: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.ia-setup-step-done {
+  background: #2eb39a;
+}
+
+.ia-setup-step-pending {
+  background: #f5a623;
+}
+
+.ia-setup-step-error {
+  background: #d64545;
+}
+
+.ia-setup-step-title {
+  margin: 0;
+  color: #274472;
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.ia-setup-step-detail {
+  margin: 0.2rem 0 0;
+  color: #5f6c7a;
+  font-size: 0.88rem;
+}
+
+.ia-setup-progress-warning {
+  background: #fff7e6;
+  border: 1px solid #f5a623;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  color: #7a4a00;
+}
+
 @media (max-width: 768px) {
   .ia-header-row {
     align-items: flex-start;
