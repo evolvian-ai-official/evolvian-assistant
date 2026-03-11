@@ -73,6 +73,9 @@ export default function WhatsAppSetup() {
 
   const [status, setStatus] = useState({ message: "", type: "" });
   const [waSetupProgress, setWaSetupProgress] = useState(emptySetupProgress);
+  const [metaSelectionToken, setMetaSelectionToken] = useState("");
+  const [metaSelectionOptions, setMetaSelectionOptions] = useState([]);
+  const [metaSelectedPhoneId, setMetaSelectedPhoneId] = useState("");
   const setupRunRef = useRef(0);
 
   const [touched, setTouched] = useState({
@@ -88,20 +91,28 @@ export default function WhatsAppSetup() {
   const loadingAction = (key) => submitting === key;
 
   const consumeMetaCallbackQuery = () => {
-    if (typeof window === "undefined") return { status: "", reason: "" };
-    const params = new URLSearchParams(window.location.search || "");
-    const status = String(params.get("meta_setup") || "").trim();
-    const reason = String(params.get("meta_reason") || "").trim();
-    if (!status) return { status: "", reason: "" };
+    if (typeof window === "undefined") return { status: "", reason: "", selectionToken: "" };
+    const queryParams = new URLSearchParams(window.location.search || "");
+    const hashRaw = String(window.location.hash || "").replace(/^#/, "");
+    const hashParams = new URLSearchParams(hashRaw);
 
-    params.delete("meta_setup");
-    params.delete("meta_reason");
-    params.delete("meta_connected");
-    params.delete("meta_setup_complete");
-    const nextQuery = params.toString();
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    const getParam = (key) => String(queryParams.get(key) || hashParams.get(key) || "").trim();
+    const status = getParam("meta_setup");
+    const reason = getParam("meta_reason");
+    const selectionToken = getParam("meta_selection_token");
+    if (!status && !selectionToken) return { status: "", reason: "", selectionToken: "" };
+
+    const cleanupKeys = ["meta_setup", "meta_reason", "meta_connected", "meta_setup_complete", "meta_selection_token"];
+    cleanupKeys.forEach((key) => {
+      queryParams.delete(key);
+      hashParams.delete(key);
+    });
+
+    const nextQuery = queryParams.toString();
+    const nextHash = hashParams.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${nextHash ? `#${nextHash}` : ""}`;
     window.history.replaceState({}, "", nextUrl);
-    return { status, reason };
+    return { status, reason, selectionToken };
   };
 
   useEffect(() => {
@@ -114,15 +125,6 @@ export default function WhatsAppSetup() {
     const init = async () => {
       try {
         const callbackState = consumeMetaCallbackQuery();
-        if (callbackState.status === "success") {
-          setSuccess(t("meta_embedded_callback_success"));
-        } else if (callbackState.status === "error") {
-          setError(
-            callbackState.reason
-              ? `${t("meta_embedded_callback_error")}: ${callbackState.reason}`
-              : t("meta_embedded_callback_error")
-          );
-        }
 
         const {
           data: { session: userSession },
@@ -134,6 +136,26 @@ export default function WhatsAppSetup() {
         setSession(userSession);
 
         const headers = await getAuthHeaders();
+        if (callbackState.status === "success") {
+          setSuccess(t("meta_embedded_callback_success"));
+          resetMetaSelection();
+        } else if (callbackState.status === "error") {
+          resetMetaSelection();
+          setError(
+            callbackState.reason
+              ? `${t("meta_embedded_callback_error")}: ${callbackState.reason}`
+              : t("meta_embedded_callback_error")
+          );
+        } else if (callbackState.status === "select_phone" && callbackState.selectionToken) {
+          try {
+            await loadMetaSelectionOptions(callbackState.selectionToken, headers);
+            setSuccess(t("meta_embedded_select_phone_prompt"));
+          } catch (selectionErr) {
+            const detail = selectionErr?.response?.data?.detail;
+            setError(detail || t("meta_embedded_select_phone_error"));
+          }
+        }
+
         const [waRes, messengerRes, instagramRes] = await Promise.all([
           axios.get(`${API}/whatsapp_status`, { headers }).catch(() => ({ data: { connected: false } })),
           fetchMetaChannel(clientId, "messenger", headers).catch(() => null),
@@ -180,12 +202,33 @@ export default function WhatsAppSetup() {
   const setError = (message) => setStatus({ message, type: "error" });
   const setSuccess = (message) => setStatus({ message, type: "success" });
   const resetSetupProgress = () => setWaSetupProgress(emptySetupProgress());
+  const resetMetaSelection = () => {
+    setMetaSelectionToken("");
+    setMetaSelectionOptions([]);
+    setMetaSelectedPhoneId("");
+  };
+
+  const loadMetaSelectionOptions = async (selectionToken, headers) => {
+    const token = String(selectionToken || "").trim();
+    if (!token) return;
+    const res = await axios.post(
+      `${API}/meta_embedded_signup/selection_options`,
+      { selection_token: token },
+      { headers }
+    );
+    const options = Array.isArray(res?.data?.candidates) ? res.data.candidates : [];
+    const suggested = String(res?.data?.suggested_phone_id || "").trim();
+    setMetaSelectionToken(token);
+    setMetaSelectionOptions(options);
+    setMetaSelectedPhoneId(suggested || String(options?.[0]?.phone_id || ""));
+  };
 
   const startMetaEmbeddedSignup = async () => {
     if (!session || loadingAction("meta_embedded_start")) return;
     try {
       setSubmitting("meta_embedded_start");
       setStatus({ message: "", type: "" });
+      resetMetaSelection();
       const headers = await getAuthHeaders();
       const uiReturnUrl = typeof window !== "undefined"
         ? `${window.location.origin}${window.location.pathname}`
@@ -209,6 +252,73 @@ export default function WhatsAppSetup() {
       console.error(err);
       const detail = err?.response?.data?.detail;
       setError(detail || t("meta_embedded_error_start"));
+    } finally {
+      setSubmitting("");
+    }
+  };
+
+  const completeMetaEmbeddedSelection = async () => {
+    if (!session || loadingAction("meta_embedded_complete_selection")) return;
+    if (!metaSelectionToken || !metaSelectedPhoneId) {
+      return setError(t("meta_embedded_select_phone_required"));
+    }
+
+    try {
+      setSubmitting("meta_embedded_complete_selection");
+      setStatus({ message: "", type: "" });
+      resetSetupProgress();
+
+      const runId = setupRunRef.current + 1;
+      setupRunRef.current = runId;
+      setWaSetupProgress((prev) => ({ ...prev, active: true, complete: false, timedOut: false }));
+
+      const headers = await getAuthHeaders();
+      const res = await axios.post(
+        `${API}/meta_embedded_signup/complete_selection`,
+        {
+          selection_token: metaSelectionToken,
+          wa_phone_id: metaSelectedPhoneId,
+        },
+        { headers }
+      );
+      const payload = res?.data || {};
+      setWaConnected(true);
+      setPhone(String(payload?.phone || phone || ""));
+      setWaPhoneId(String(payload?.wa_phone_id || metaSelectedPhoneId || ""));
+      setWaBusinessAccountId(String(payload?.wa_business_account_id || waBusinessAccountId || ""));
+      resetMetaSelection();
+
+      if (payload?.setup_progress) {
+        applySetupProgressPayload(payload.setup_progress);
+      }
+
+      if (Boolean(payload?.setup_complete)) {
+        setSuccess(t("wa_setup_success_ready"));
+      } else {
+        setSuccess(t("wa_setup_connected_waiting"));
+        const pollResult = await pollSetupProgress(headers, runId);
+        if (pollResult?.completed) {
+          setSuccess(t("wa_setup_success_ready"));
+        } else if (pollResult?.cancelled) {
+          return;
+        } else if (pollResult?.timeout) {
+          const fallbackSuggestion = t("wa_setup_timeout_suggestion_retry");
+          const firstSuggestion = Array.isArray(pollResult?.payload?.suggestions)
+            ? pollResult.payload.suggestions[0]
+            : "";
+          setWaSetupProgress((prev) => ({ ...prev, active: false, timedOut: true }));
+          setError(`${t("wa_setup_timeout")} ${firstSuggestion || fallbackSuggestion}`);
+        } else if (pollResult?.error) {
+          setError(`${t("wa_setup_error_progress")}: ${pollResult.error}`);
+        } else {
+          setError(t("wa_setup_error_progress"));
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      const detail = err?.response?.data?.detail;
+      setWaSetupProgress((prev) => ({ ...prev, active: false, lastError: detail || "" }));
+      setError(detail || t("meta_embedded_select_phone_error"));
     } finally {
       setSubmitting("");
     }
@@ -539,6 +649,42 @@ export default function WhatsAppSetup() {
                 disabled={loadingAction("meta_embedded_start")}
               >
                 {loadingAction("meta_embedded_start") ? t("meta_embedded_connecting") : t("meta_embedded_connect")}
+              </button>
+            </div>
+          ) : null}
+
+          {!waConnected && metaSelectionOptions.length ? (
+            <div className="ia-note" style={{ marginTop: "0.75rem" }}>
+              <p style={{ marginTop: 0, marginBottom: "0.55rem" }}>{t("meta_embedded_select_phone_prompt")}</p>
+              <div className="ia-form-field" style={{ marginBottom: "0.65rem" }}>
+                <label className="ia-form-label">{t("meta_embedded_select_phone_label")}</label>
+                <select
+                  className="ia-form-input"
+                  value={metaSelectedPhoneId}
+                  onChange={(e) => setMetaSelectedPhoneId(e.target.value)}
+                >
+                  {metaSelectionOptions.map((option) => {
+                    const phoneLabel = option?.display_phone_number || option?.phone_id;
+                    const verifiedName = option?.verified_name ? ` · ${option.verified_name}` : "";
+                    const quality = option?.quality_rating ? ` · ${option.quality_rating}` : "";
+                    return (
+                      <option key={option?.phone_id || ""} value={option?.phone_id || ""}>
+                        {`${phoneLabel}${verifiedName}${quality}`}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              <button
+                type="button"
+                className="ia-button"
+                style={{ backgroundColor: "#2eb39a", color: "#fff" }}
+                onClick={completeMetaEmbeddedSelection}
+                disabled={loadingAction("meta_embedded_complete_selection") || !metaSelectedPhoneId}
+              >
+                {loadingAction("meta_embedded_complete_selection")
+                  ? t("meta_embedded_select_phone_processing")
+                  : t("meta_embedded_select_phone_confirm")}
               </button>
             </div>
           ) : null}

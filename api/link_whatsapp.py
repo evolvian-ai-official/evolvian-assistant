@@ -14,13 +14,15 @@ from api.modules.whatsapp.template_sync import (
     sync_canonical_templates_for_client,
     validate_waba_phone_binding,
 )
-from api.security.whatsapp_token_crypto import encrypt_whatsapp_token
+from api.security.whatsapp_token_crypto import decrypt_whatsapp_token, encrypt_whatsapp_token
 from datetime import datetime
+import json
 import uuid
 import re
 import logging
 import os
 import requests
+import time
 from urllib.parse import urlencode, urlparse, parse_qsl, urlunparse
 from api.authz import get_current_user_id
 from api.oauth_state import decode_signed_state, encode_signed_state
@@ -191,6 +193,27 @@ def _append_query_params(url: str, additions: dict[str, str]) -> str:
     )
 
 
+def _append_fragment_params(url: str, additions: dict[str, str]) -> str:
+    parsed = urlparse(url)
+    existing = parse_qsl(parsed.fragment, keep_blank_values=True)
+    items = [(k, v) for (k, v) in existing if k not in additions]
+    for key, value in additions.items():
+        if value is None:
+            continue
+        items.append((key, str(value)))
+    fragment = urlencode(items, doseq=True)
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            fragment,
+        )
+    )
+
+
 def _meta_scopes() -> str:
     configured = str(os.getenv("META_EMBEDDED_SIGNUP_SCOPES") or "").strip()
     if configured:
@@ -289,6 +312,83 @@ def _pick_candidate_phone(candidates: list[dict], preferred_phone: str | None = 
     return candidates[0]
 
 
+def _pick_matching_candidate_phone(candidates: list[dict], preferred_phone: str | None = None) -> dict | None:
+    if not candidates:
+        return None
+
+    preferred_digits = _sanitize_phone_for_matching(preferred_phone)
+    if not preferred_digits:
+        return None
+
+    for row in candidates:
+        display_digits = _sanitize_phone_for_matching(row.get("display_phone_number"))
+        if display_digits and (display_digits.endswith(preferred_digits) or preferred_digits.endswith(display_digits)):
+            return row
+    return None
+
+
+def _build_phone_selection_option(row: dict) -> dict:
+    return {
+        "phone_id": str(row.get("phone_id") or "").strip(),
+        "display_phone_number": str(row.get("display_phone_number") or "").strip() or None,
+        "verified_name": str(row.get("verified_name") or "").strip() or None,
+        "quality_rating": str(row.get("quality_rating") or "").strip() or None,
+        "code_verification_status": str(row.get("code_verification_status") or "").strip() or None,
+    }
+
+
+def _encode_selection_token(*, client_id: str, wa_token: str, candidates: list[dict], preferred_phone: str | None) -> str:
+    compact_candidates = []
+    for row in candidates or []:
+        phone_id = str(row.get("phone_id") or "").strip()
+        waba_id = str(row.get("waba_id") or "").strip()
+        if not phone_id or not waba_id:
+            continue
+        compact_candidates.append(
+            {
+                "phone_id": phone_id,
+                "waba_id": waba_id,
+                "display_phone_number": str(row.get("display_phone_number") or "").strip() or None,
+                "verified_name": str(row.get("verified_name") or "").strip() or None,
+                "quality_rating": str(row.get("quality_rating") or "").strip() or None,
+                "code_verification_status": str(row.get("code_verification_status") or "").strip() or None,
+            }
+        )
+
+    payload = {
+        "client_id": client_id,
+        "wa_token": wa_token,
+        "preferred_phone": preferred_phone,
+        "candidates": compact_candidates[:30],
+        "iat": int(time.time()),
+    }
+    return encrypt_whatsapp_token(json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
+
+
+def _decode_selection_token(selection_token: str, *, max_age_seconds: int = 1200) -> dict:
+    decrypted = decrypt_whatsapp_token(selection_token)
+    if not decrypted:
+        raise HTTPException(status_code=400, detail="invalid_selection_token")
+    try:
+        payload = json.loads(decrypted)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_selection_token_payload")
+
+    issued_at = int((payload or {}).get("iat") or 0)
+    now = int(time.time())
+    if issued_at <= 0 or now - issued_at > max_age_seconds:
+        raise HTTPException(status_code=400, detail="expired_selection_token")
+
+    return payload if isinstance(payload, dict) else {}
+
+
+def _is_unique_whatsapp_per_client_conflict(error: Exception) -> bool:
+    message = str(error or "").lower()
+    if "23505" not in message:
+        return False
+    return "unique_whatsapp_per_client" in message or "(client_id, type)" in message
+
+
 def _link_whatsapp_channel_for_client(
     *,
     client_id: str,
@@ -384,28 +484,15 @@ def _link_whatsapp_channel_for_client(
         except RuntimeError as crypto_error:
             raise HTTPException(status_code=500, detail=str(crypto_error))
 
-    supabase.table("channels") \
-        .update({
-            "is_active": False,
-            "archived_at": now,
-            "archived_reason": "replaced_by_new_connection",
-            "last_disconnected_at": now,
-            "updated_at": now
-        }) \
-        .eq("client_id", client_id) \
-        .eq("type", "whatsapp") \
-        .execute()
-
-    insert_payload = {
-        "id": str(uuid.uuid4()),
+    channel_payload = {
         "client_id": client_id,
         "type": "whatsapp",
         "value": number,
         "provider": provider,
         "wa_phone_id": wa_phone_id,
         "wa_token": encrypted_wa_token,
+        "active": True,
         "is_active": True,
-        "created_at": now,
         "updated_at": now,
         "last_connected_at": now,
         "archived_at": None,
@@ -414,23 +501,86 @@ def _link_whatsapp_channel_for_client(
     }
 
     if resolved_waba_id:
-        insert_payload["wa_business_account_id"] = resolved_waba_id
+        channel_payload["wa_business_account_id"] = resolved_waba_id
 
-    try:
-        insert_res = supabase.table("channels").insert(insert_payload).execute()
-    except Exception as insert_error:
-        if "wa_business_account_id" in insert_payload:
-            logger.warning(
-                "⚠️ channels.wa_business_account_id not available yet; retrying insert without cache | %s",
-                insert_error,
+    existing_channel_res = (
+        supabase.table("channels")
+        .select("id")
+        .eq("client_id", client_id)
+        .eq("type", "whatsapp")
+        .limit(1)
+        .execute()
+    )
+    existing_rows = getattr(existing_channel_res, "data", None) or []
+    existing_channel_id = str((existing_rows[0] or {}).get("id") or "").strip() if existing_rows else ""
+
+    channel_write_res = None
+
+    def _update_existing(channel_id: str, payload: dict):
+        update_payload = dict(payload)
+        try:
+            return (
+                supabase.table("channels")
+                .update(update_payload)
+                .eq("id", channel_id)
+                .execute()
             )
-            insert_payload.pop("wa_business_account_id", None)
-            insert_res = supabase.table("channels").insert(insert_payload).execute()
-        else:
+        except Exception as update_error:
+            if "wa_business_account_id" in update_payload:
+                logger.warning(
+                    "⚠️ channels.wa_business_account_id not available yet; retrying update without cache | %s",
+                    update_error,
+                )
+                update_payload.pop("wa_business_account_id", None)
+                return (
+                    supabase.table("channels")
+                    .update(update_payload)
+                    .eq("id", channel_id)
+                    .execute()
+                )
             raise
 
-    if not insert_res.data:
-        raise HTTPException(status_code=500, detail="Error creando canal")
+    def _insert_new(payload: dict):
+        insert_payload = dict(payload)
+        insert_payload["id"] = str(uuid.uuid4())
+        insert_payload["created_at"] = now
+        try:
+            return supabase.table("channels").insert(insert_payload).execute()
+        except Exception as insert_error:
+            if "wa_business_account_id" in insert_payload:
+                logger.warning(
+                    "⚠️ channels.wa_business_account_id not available yet; retrying insert without cache | %s",
+                    insert_error,
+                )
+                insert_payload.pop("wa_business_account_id", None)
+                return supabase.table("channels").insert(insert_payload).execute()
+            raise
+
+    if existing_channel_id:
+        channel_write_res = _update_existing(existing_channel_id, channel_payload)
+    else:
+        try:
+            channel_write_res = _insert_new(channel_payload)
+        except Exception as insert_error:
+            if not _is_unique_whatsapp_per_client_conflict(insert_error):
+                raise
+            # Race-safe fallback: another process inserted first; convert to update.
+            race_res = (
+                supabase.table("channels")
+                .select("id")
+                .eq("client_id", client_id)
+                .eq("type", "whatsapp")
+                .limit(1)
+                .execute()
+            )
+            race_rows = getattr(race_res, "data", None) or []
+            race_id = str((race_rows[0] or {}).get("id") or "").strip() if race_rows else ""
+            if not race_id:
+                raise
+            channel_write_res = _update_existing(race_id, channel_payload)
+
+    if not getattr(channel_write_res, "data", None):
+        raise HTTPException(status_code=500, detail="Error guardando canal")
 
     sync_summary = None
     if provider == "meta":
@@ -451,6 +601,10 @@ def _link_whatsapp_channel_for_client(
     return {
         "success": True,
         "connected": True,
+        "provider": provider,
+        "phone": number,
+        "wa_phone_id": str(wa_phone_id or ""),
+        "wa_business_account_id": str(resolved_waba_id or ""),
         "waba_subscription": waba_subscription,
         "phone_probe": phone_probe,
         "setup_complete": bool((setup_progress or {}).get("setup_complete")),
@@ -668,6 +822,15 @@ class MetaEmbeddedSignupStartPayload(BaseModel):
     preferred_phone: str | None = None
 
 
+class MetaEmbeddedSelectionTokenPayload(BaseModel):
+    selection_token: str
+
+
+class MetaEmbeddedSelectionCompletePayload(BaseModel):
+    selection_token: str
+    wa_phone_id: str
+
+
 # =====================================================
 # LINK WHATSAPP
 # =====================================================
@@ -730,6 +893,102 @@ def start_meta_embedded_signup(payload: MetaEmbeddedSignupStartPayload, request:
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.post("/meta_embedded_signup/selection_options")
+def meta_embedded_signup_selection_options(payload: MetaEmbeddedSelectionTokenPayload, request: Request):
+    try:
+        auth_user_id = get_current_user_id(request)
+        client_id = get_client_id_from_user(auth_user_id)
+
+        decoded = _decode_selection_token(payload.selection_token)
+        token_client_id = str(decoded.get("client_id") or "").strip()
+        if not token_client_id or token_client_id != client_id:
+            raise HTTPException(status_code=403, detail="forbidden_selection_token_client")
+
+        candidates = decoded.get("candidates") if isinstance(decoded.get("candidates"), list) else []
+        options = []
+        for row in candidates:
+            if not isinstance(row, dict):
+                continue
+            option = _build_phone_selection_option(row)
+            if not option.get("phone_id"):
+                continue
+            options.append(option)
+
+        preferred_phone = str(decoded.get("preferred_phone") or "").strip() or None
+        suggested = _pick_matching_candidate_phone(options, preferred_phone=preferred_phone)
+
+        return {
+            "success": True,
+            "candidates": options,
+            "suggested_phone_id": str((suggested or {}).get("phone_id") or "").strip() or None,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("❌ meta_embedded_signup_selection_options internal error")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/meta_embedded_signup/complete_selection")
+def meta_embedded_signup_complete_selection(payload: MetaEmbeddedSelectionCompletePayload, request: Request):
+    try:
+        auth_user_id = get_current_user_id(request)
+        client_id = get_client_id_from_user(auth_user_id)
+
+        decoded = _decode_selection_token(payload.selection_token)
+        token_client_id = str(decoded.get("client_id") or "").strip()
+        if not token_client_id or token_client_id != client_id:
+            raise HTTPException(status_code=403, detail="forbidden_selection_token_client")
+
+        wa_token = str(decoded.get("wa_token") or "").strip()
+        if not wa_token:
+            raise HTTPException(status_code=400, detail="selection_token_missing_wa_token")
+
+        candidates = decoded.get("candidates") if isinstance(decoded.get("candidates"), list) else []
+        selected_phone_id = str(payload.wa_phone_id or "").strip()
+        selected = None
+        for row in candidates:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("phone_id") or "").strip() == selected_phone_id:
+                selected = row
+                break
+
+        if not selected:
+            raise HTTPException(status_code=400, detail="invalid_selected_phone")
+
+        waba_id = str(selected.get("waba_id") or "").strip()
+        if not waba_id:
+            raise HTTPException(status_code=400, detail="selection_missing_waba_id")
+
+        display_phone = str(selected.get("display_phone_number") or "").strip()
+        preferred_phone = str(decoded.get("preferred_phone") or "").strip() or None
+        phone_e164 = _normalize_to_e164(display_phone) or _normalize_to_e164(preferred_phone)
+        if not phone_e164:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No se pudo normalizar el número seleccionado. "
+                    "Ingresa manualmente el número en formato E.164 y vuelve a conectar."
+                ),
+            )
+
+        result = _link_whatsapp_channel_for_client(
+            client_id=client_id,
+            phone=phone_e164,
+            provider="meta",
+            wa_phone_id=selected_phone_id,
+            wa_token=wa_token,
+            wa_business_account_id=waba_id,
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("❌ meta_embedded_signup_complete_selection internal error")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @router.get("/meta_embedded_signup/callback", name="meta_embedded_signup_callback")
 def meta_embedded_signup_callback(
     request: Request,
@@ -784,7 +1043,28 @@ def meta_embedded_signup_callback(
 
         wa_token = _exchange_meta_code_for_token(request=request, code=code)
         candidates = discover_waba_phone_candidates(wa_token=wa_token)
-        chosen = _pick_candidate_phone(candidates, preferred_phone=preferred_phone)
+        chosen = _pick_matching_candidate_phone(candidates, preferred_phone=preferred_phone)
+        if not chosen and len(candidates) == 1:
+            chosen = candidates[0]
+
+        if not chosen and len(candidates) > 1:
+            selection_token = _encode_selection_token(
+                client_id=client_id,
+                wa_token=wa_token,
+                candidates=candidates,
+                preferred_phone=preferred_phone,
+            )
+            return RedirectResponse(
+                url=_append_fragment_params(
+                    ui_return_url,
+                    {
+                        "meta_setup": "select_phone",
+                        "meta_selection_token": selection_token,
+                    },
+                ),
+                status_code=302,
+            )
+
         if not chosen:
             raise HTTPException(
                 status_code=400,

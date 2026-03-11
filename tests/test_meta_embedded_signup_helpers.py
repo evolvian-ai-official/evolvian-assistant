@@ -7,6 +7,7 @@ from starlette.requests import Request
 sys.path.insert(0, os.getcwd())
 
 from api import link_whatsapp as module
+from api.security.whatsapp_token_crypto import _get_fernet_optional
 
 
 def _make_request(host: str = "api.evolvianai.com", scheme: str = "https") -> Request:
@@ -54,6 +55,16 @@ def test_append_query_params_replaces_existing_keys():
     assert query["x"] == ["1"]
 
 
+def test_append_fragment_params_replaces_existing_keys():
+    base = "https://evolvianai.com/services/meta-apps#meta_setup=old&x=1"
+    out = module._append_fragment_params(base, {"meta_setup": "select_phone", "meta_reason": "ok"})
+    parsed = urlparse(out)
+    fragment = parse_qs(parsed.fragment)
+    assert fragment["meta_setup"] == ["select_phone"]
+    assert fragment["meta_reason"] == ["ok"]
+    assert fragment["x"] == ["1"]
+
+
 def test_build_meta_oauth_url_contains_expected_query(monkeypatch):
     monkeypatch.setenv("META_APP_ID", "123456")
     monkeypatch.setenv("META_APP_SECRET", "secret")
@@ -88,3 +99,38 @@ def test_is_allowed_ui_return_url_supports_host_only_entry(monkeypatch):
     monkeypatch.setenv("META_EMBEDDED_ALLOWED_UI_ORIGINS", "evolvianai.com")
     assert module._is_allowed_ui_return_url("https://evolvianai.com/services/meta-apps")
     assert not module._is_allowed_ui_return_url("https://evil.example.com/services/meta-apps")
+
+
+def test_pick_matching_candidate_phone_requires_preferred_phone():
+    candidates = [
+        {"phone_id": "a", "display_phone_number": "+1 222 333 4444"},
+        {"phone_id": "b", "display_phone_number": "+52 55 1234 5678"},
+    ]
+    assert module._pick_matching_candidate_phone(candidates, preferred_phone="") is None
+    selected = module._pick_matching_candidate_phone(candidates, preferred_phone="+525512345678")
+    assert selected["phone_id"] == "b"
+
+
+def test_selection_token_roundtrip(monkeypatch):
+    monkeypatch.setenv("WHATSAPP_TOKEN_ENCRYPTION_KEY", "test-meta-selection-secret")
+    _get_fernet_optional.cache_clear()
+    try:
+        token = module._encode_selection_token(
+            client_id="client_1",
+            wa_token="EAATOKEN123",
+            preferred_phone="+525512345678",
+            candidates=[
+                {
+                    "phone_id": "111",
+                    "waba_id": "999",
+                    "display_phone_number": "+52 55 1234 5678",
+                    "verified_name": "Evolvian",
+                }
+            ],
+        )
+        decoded = module._decode_selection_token(token, max_age_seconds=1200)
+        assert decoded["client_id"] == "client_1"
+        assert decoded["wa_token"] == "EAATOKEN123"
+        assert decoded["candidates"][0]["phone_id"] == "111"
+    finally:
+        _get_fernet_optional.cache_clear()
