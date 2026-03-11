@@ -143,3 +143,25 @@ def test_is_phone_number_approved_detects_verified_status():
         }
     )
     assert not_approved is False
+
+
+def test_discover_waba_phone_candidates_deduplicates_phone_ids(monkeypatch):
+    monkeypatch.setattr(module, "_list_business_ids_for_token", lambda _token: ["biz_1"])
+    monkeypatch.setattr(module, "_list_owned_wabas_for_business", lambda **_kwargs: ["waba_1", "waba_2"])
+
+    def _fake_list_phone_numbers_for_waba(**kwargs):
+        if kwargs.get("waba_id") == "waba_1":
+            return [
+                {"phone_id": "111", "display_phone_number": "+52 55 1111 1111"},
+                {"phone_id": "222", "display_phone_number": "+52 55 2222 2222"},
+            ]
+        return [
+            {"phone_id": "222", "display_phone_number": "+52 55 2222 2222"},
+            {"phone_id": "333", "display_phone_number": "+52 55 3333 3333"},
+        ]
+
+    monkeypatch.setattr(module, "_list_phone_numbers_for_waba", _fake_list_phone_numbers_for_waba)
+
+    rows = module.discover_waba_phone_candidates(wa_token="EAABC1234567890TOKEN")
+    ids = sorted([r["phone_id"] for r in rows])
+    assert ids == ["111", "222", "333"]

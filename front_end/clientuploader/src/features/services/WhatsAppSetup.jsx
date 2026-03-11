@@ -87,6 +87,23 @@ export default function WhatsAppSetup() {
 
   const loadingAction = (key) => submitting === key;
 
+  const consumeMetaCallbackQuery = () => {
+    if (typeof window === "undefined") return { status: "", reason: "" };
+    const params = new URLSearchParams(window.location.search || "");
+    const status = String(params.get("meta_setup") || "").trim();
+    const reason = String(params.get("meta_reason") || "").trim();
+    if (!status) return { status: "", reason: "" };
+
+    params.delete("meta_setup");
+    params.delete("meta_reason");
+    params.delete("meta_connected");
+    params.delete("meta_setup_complete");
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", nextUrl);
+    return { status, reason };
+  };
+
   useEffect(() => {
     return () => {
       setupRunRef.current += 1;
@@ -96,6 +113,17 @@ export default function WhatsAppSetup() {
   useEffect(() => {
     const init = async () => {
       try {
+        const callbackState = consumeMetaCallbackQuery();
+        if (callbackState.status === "success") {
+          setSuccess(t("meta_embedded_callback_success"));
+        } else if (callbackState.status === "error") {
+          setError(
+            callbackState.reason
+              ? `${t("meta_embedded_callback_error")}: ${callbackState.reason}`
+              : t("meta_embedded_callback_error")
+          );
+        }
+
         const {
           data: { session: userSession },
         } = await supabase.auth.getSession();
@@ -118,6 +146,19 @@ export default function WhatsAppSetup() {
           setWaBusinessAccountId(waRes.data.wa_business_account_id || "");
           setProvider(waRes.data.provider || "meta");
           setWaConnected(true);
+
+          const progressRes = await axios.get(`${API}/whatsapp_setup_progress`, { headers }).catch(() => null);
+          if (progressRes?.data) {
+            setWaSetupProgress({
+              active: !Boolean(progressRes.data.setup_complete),
+              complete: Boolean(progressRes.data.setup_complete),
+              timedOut: false,
+              steps: Array.isArray(progressRes.data.steps) ? progressRes.data.steps : [],
+              suggestions: Array.isArray(progressRes.data.suggestions) ? progressRes.data.suggestions : [],
+              phoneStatus: progressRes.data.phone_status || null,
+              lastError: "",
+            });
+          }
         }
 
         if (messengerRes) {
@@ -139,6 +180,39 @@ export default function WhatsAppSetup() {
   const setError = (message) => setStatus({ message, type: "error" });
   const setSuccess = (message) => setStatus({ message, type: "success" });
   const resetSetupProgress = () => setWaSetupProgress(emptySetupProgress());
+
+  const startMetaEmbeddedSignup = async () => {
+    if (!session || loadingAction("meta_embedded_start")) return;
+    try {
+      setSubmitting("meta_embedded_start");
+      setStatus({ message: "", type: "" });
+      const headers = await getAuthHeaders();
+      const uiReturnUrl = typeof window !== "undefined"
+        ? `${window.location.origin}${window.location.pathname}`
+        : "";
+      const res = await axios.post(
+        `${API}/meta_embedded_signup/start`,
+        {
+          ui_return_url: uiReturnUrl,
+          preferred_phone: isValidPhone(phone) ? phone : null,
+        },
+        { headers }
+      );
+      const authUrl = res?.data?.auth_url;
+      if (!authUrl) {
+        throw new Error("missing_auth_url");
+      }
+      if (typeof window !== "undefined") {
+        window.location.assign(authUrl);
+      }
+    } catch (err) {
+      console.error(err);
+      const detail = err?.response?.data?.detail;
+      setError(detail || t("meta_embedded_error_start"));
+    } finally {
+      setSubmitting("");
+    }
+  };
 
   const applySetupProgressPayload = (payload, options = {}) => {
     const setupComplete = Boolean(payload?.setup_complete);
@@ -453,6 +527,21 @@ export default function WhatsAppSetup() {
             <h3 className="ia-header-title">💬 {t("whatsapp")}</h3>
             {waConnected ? <span className="ia-badge success">{t("connected")}</span> : null}
           </div>
+
+          {!waConnected ? (
+            <div className="ia-note" style={{ marginTop: "0.65rem" }}>
+              <p style={{ marginTop: 0, marginBottom: "0.55rem" }}>{t("meta_embedded_connect_subtitle")}</p>
+              <button
+                type="button"
+                className="ia-button"
+                style={{ backgroundColor: "#4a90e2", color: "#fff" }}
+                onClick={startMetaEmbeddedSignup}
+                disabled={loadingAction("meta_embedded_start")}
+              >
+                {loadingAction("meta_embedded_start") ? t("meta_embedded_connecting") : t("meta_embedded_connect")}
+              </button>
+            </div>
+          ) : null}
 
           <div className="ia-form-grid">
             <div className="ia-form-field">

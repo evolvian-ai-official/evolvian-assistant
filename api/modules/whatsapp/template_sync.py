@@ -434,6 +434,105 @@ def _waba_has_phone_number(*, waba_id: str, wa_phone_id: str, wa_token: str) -> 
     return False
 
 
+def _list_phone_numbers_for_waba(*, waba_id: str, wa_token: str) -> list[dict]:
+    found: list[dict] = []
+    after_cursor: Optional[str] = None
+    fields_candidates = (
+        "id,display_phone_number,verified_name,quality_rating,code_verification_status",
+        "id,display_phone_number",
+        "id",
+    )
+
+    selected_fields = fields_candidates[0]
+    tried_fields = 0
+
+    while True:
+        params: dict[str, Any] = {"fields": selected_fields, "limit": 200}
+        if after_cursor:
+            params["after"] = after_cursor
+
+        response = _meta_request(
+            "GET",
+            f"{waba_id}/phone_numbers",
+            token=wa_token,
+            params=params,
+        )
+        if response.status_code >= 400:
+            if _response_has_unknown_field_error(response) and tried_fields + 1 < len(fields_candidates):
+                tried_fields += 1
+                selected_fields = fields_candidates[tried_fields]
+                continue
+            logger.warning(
+                "⚠️ Failed listing phone numbers for discovery | waba_fp=%s | %s",
+                _safe_id_fingerprint(waba_id),
+                _format_meta_error(response),
+            )
+            break
+
+        payload = response.json()
+        rows = payload.get("data") if isinstance(payload, dict) else []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            phone_id = str(row.get("id") or "").strip()
+            if not phone_id:
+                continue
+            found.append(
+                {
+                    "phone_id": phone_id,
+                    "display_phone_number": str(row.get("display_phone_number") or "").strip() or None,
+                    "verified_name": str(row.get("verified_name") or "").strip() or None,
+                    "quality_rating": str(row.get("quality_rating") or "").strip() or None,
+                    "code_verification_status": str(row.get("code_verification_status") or "").strip() or None,
+                }
+            )
+
+        after_cursor = _extract_after_cursor(payload)
+        if not after_cursor:
+            break
+
+    return found
+
+
+def discover_waba_phone_candidates(*, wa_token: str) -> list[dict]:
+    token = str(wa_token or "").strip()
+    if not token:
+        return []
+
+    results: list[dict] = []
+    seen_phone_ids: set[str] = set()
+
+    business_ids = _list_business_ids_for_token(token)
+    for business_id in business_ids:
+        waba_ids = _list_owned_wabas_for_business(
+            business_id=business_id,
+            wa_token=token,
+        )
+        for waba_id in waba_ids:
+            phones = _list_phone_numbers_for_waba(
+                waba_id=waba_id,
+                wa_token=token,
+            )
+            for phone in phones:
+                phone_id = str(phone.get("phone_id") or "").strip()
+                if not phone_id or phone_id in seen_phone_ids:
+                    continue
+                seen_phone_ids.add(phone_id)
+                results.append(
+                    {
+                        "business_id": business_id,
+                        "waba_id": waba_id,
+                        "phone_id": phone_id,
+                        "display_phone_number": phone.get("display_phone_number"),
+                        "verified_name": phone.get("verified_name"),
+                        "quality_rating": phone.get("quality_rating"),
+                        "code_verification_status": phone.get("code_verification_status"),
+                    }
+                )
+
+    return results
+
+
 def _resolve_waba_id_via_business_graph(*, wa_phone_id: str, wa_token: str) -> Optional[str]:
     business_ids = _list_business_ids_for_token(wa_token)
     if not business_ids:
