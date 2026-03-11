@@ -73,3 +73,18 @@ def test_build_meta_oauth_url_contains_expected_query(monkeypatch):
     assert query["state"] == ["state-xyz"]
     assert query["response_type"] == ["code"]
     assert "whatsapp_business_management" in query["scope"][0]
+
+
+def test_is_allowed_ui_return_url_accepts_allowed_origin_with_path(monkeypatch):
+    monkeypatch.setenv(
+        "META_EMBEDDED_ALLOWED_UI_ORIGINS",
+        "https://evolvianai.com/services/meta-apps",
+    )
+    assert module._is_allowed_ui_return_url("https://evolvianai.com/services/meta-apps")
+    assert module._is_allowed_ui_return_url("https://evolvianai.com/otra-ruta")
+
+
+def test_is_allowed_ui_return_url_supports_host_only_entry(monkeypatch):
+    monkeypatch.setenv("META_EMBEDDED_ALLOWED_UI_ORIGINS", "evolvianai.com")
+    assert module._is_allowed_ui_return_url("https://evolvianai.com/services/meta-apps")
+    assert not module._is_allowed_ui_return_url("https://evil.example.com/services/meta-apps")

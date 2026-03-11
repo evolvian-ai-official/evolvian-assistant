@@ -130,13 +130,38 @@ def _normalize_ui_return_url(value: str) -> str:
     return candidate
 
 
+def _normalize_allowed_ui_origin(value: str) -> str | None:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return None
+
+    # Accept full URL entries (with path) and keep only origin.
+    parsed = urlparse(candidate)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+    # Accept host-only entries and host/path entries.
+    host = candidate.split("/", 1)[0].strip().lower()
+    if host:
+        return host
+    return None
+
+
 def _is_allowed_ui_return_url(url: str) -> bool:
-    allowed = [p.strip() for p in str(os.getenv("META_EMBEDDED_ALLOWED_UI_ORIGINS") or "").split(",") if p.strip()]
+    allowed = {
+        normalized
+        for item in str(os.getenv("META_EMBEDDED_ALLOWED_UI_ORIGINS") or "").split(",")
+        for normalized in [_normalize_allowed_ui_origin(item)]
+        if normalized
+    }
     if not allowed:
         return True
     parsed = urlparse(url)
-    origin = f"{parsed.scheme}://{parsed.netloc}"
-    return origin in allowed
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    host = parsed.netloc.lower()
+    return origin in allowed or host in allowed
 
 
 def _default_ui_return_url(request: Request) -> str:
