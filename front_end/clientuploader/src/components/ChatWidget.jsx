@@ -23,6 +23,13 @@ const normalizeFeatureKey = (value) =>
     .trim()
     .replace(/\s+/g, "_");
 
+const normalizeLanguage = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw.startsWith("en")) return "en";
+  if (raw.startsWith("es")) return "es";
+  return "";
+};
+
 const withAlpha = (color, alpha) => {
   if (!color) return `rgba(17, 24, 39, ${alpha})`;
 
@@ -96,8 +103,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       return normalizeFeatureKey(f.feature) === "handoff";
     });
   }, [clientSettings]);
+  const urlLanguageOverride = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams(window.location.search);
+    return normalizeLanguage(params.get("lang") || params.get("language"));
+  }, []);
   const effectiveLang =
-    String(clientSettings?.language || lang || "es").toLowerCase() === "en" ? "en" : "es";
+    normalizeLanguage(urlLanguageOverride || lang || clientSettings?.language) || "es";
   const isEnglish = effectiveLang === "en";
   const agendaText = useMemo(
     () =>
@@ -333,22 +345,38 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     const params = new URLSearchParams(window.location.search);
     const urlClientId = params.get("public_client_id");
     const urlView = params.get("view");
+    const urlLang = normalizeLanguage(params.get("lang") || params.get("language"));
     if (propClientId) setPublicClientId(propClientId);
     else if (urlClientId) setPublicClientId(urlClientId);
     if (urlView === "calendar") setActivePanel("calendar");
-  }, [propClientId]);
+    if (urlLang) {
+      changeLanguage?.(urlLang);
+    }
+  }, [propClientId, changeLanguage]);
 
   useEffect(() => {
     const handleViewMessage = (event) => {
       const payload = event?.data;
-      if (!payload || payload.type !== "EVOLVIAN_WIDGET_VIEW") return;
-      if (payload.view === "calendar" && calendarEnabled && showAgendaButton) setActivePanel("calendar");
-      if (payload.view === "chat") setActivePanel("chat");
+      if (!payload || typeof payload !== "object") return;
+
+      if (payload.type === "EVOLVIAN_WIDGET_VIEW") {
+        if (payload.view === "calendar" && calendarEnabled && showAgendaButton) setActivePanel("calendar");
+        if (payload.view === "chat") setActivePanel("chat");
+      }
+
+      if (
+        payload.type === "EVOLVIAN_WIDGET_SET_LANGUAGE" ||
+        payload.type === "EVOLVIAN_WIDGET_LANGUAGE" ||
+        payload.type === "EVOLVIAN_WIDGET_CONTEXT"
+      ) {
+        const nextLang = normalizeLanguage(payload.language || payload.lang);
+        if (nextLang) changeLanguage?.(nextLang);
+      }
     };
 
     window.addEventListener("message", handleViewMessage);
     return () => window.removeEventListener("message", handleViewMessage);
-  }, [calendarEnabled, showAgendaButton]);
+  }, [calendarEnabled, showAgendaButton, changeLanguage]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -444,7 +472,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
         const data = Array.isArray(raw) ? raw[0] : raw;
         if (!data) return;
 
-        if (typeof data.language === "string" && data.language.trim()) {
+        if (!urlLanguageOverride && typeof data.language === "string" && data.language.trim()) {
           changeLanguage?.(data.language);
         }
 
@@ -485,7 +513,7 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       }
     };
     fetchClientSettings();
-  }, [publicClientId]);
+  }, [publicClientId, changeLanguage, urlLanguageOverride]);
 
   useEffect(() => {
     openingTemplateInjectedRef.current = false;

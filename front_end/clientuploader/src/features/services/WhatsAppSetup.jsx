@@ -830,7 +830,7 @@ export default function WhatsAppSetup() {
 
         <section className="ia-card">
           <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-            <h3 className="ia-header-title">🔵/📷 {t("meta_apps_social_title")}</h3>
+            <h3 className="ia-header-title">🔵 {t("meta_apps_social_title")}</h3>
           </div>
           <p className="ia-help-text">{t("meta_apps_social_subtitle")}</p>
 
@@ -887,47 +887,16 @@ export default function WhatsAppSetup() {
                 )}
               </div>
             </div>
-
-            <div className="ia-form-field">
-              <label className="ia-form-label">{t("meta_apps_instagram_business_id")}</label>
-              <input
-                className="ia-form-input"
-                type="text"
-                value={instagramConnected ? maskSensitive(instagramRecipientId, 4, 4) : instagramRecipientId}
-                placeholder="1784xxxxxxxxxxxx"
-                disabled={instagramConnected}
-                onChange={(e) => setInstagramRecipientId(e.target.value)}
-                onBlur={() => setTouched((prev) => ({ ...prev, instagramRecipientId: true }))}
-              />
-              {showError("instagramRecipientId", instagramRecipientId)}
-              <div className="ia-inline-actions" style={{ marginTop: "0.7rem" }}>
-                {!instagramConnected ? (
-                  <button
-                    type="button"
-                    className="ia-button"
-                    style={{ backgroundColor: "#2eb39a", color: "#fff" }}
-                    onClick={() => connectSocialChannel("instagram")}
-                    disabled={
-                      loadingAction("instagram_connect")
-                      || !isValidMetaRecipientId(instagramRecipientId)
-                      || (!instagramConnected && !isValidToken(metaPageToken))
-                    }
-                  >
-                    {loadingAction("instagram_connect") ? t("connecting") : t("meta_apps_connect_instagram")}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="ia-button ia-button-ghost"
-                    onClick={() => disconnectSocialChannel("instagram")}
-                    disabled={loadingAction("instagram_disconnect")}
-                  >
-                    {loadingAction("instagram_disconnect") ? t("processing") : t("meta_apps_disconnect_instagram")}
-                  </button>
-                )}
-              </div>
-            </div>
           </div>
+
+          <details className="ia-note" style={{ marginTop: "0.9rem" }}>
+            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+              {t("meta_apps_instagram_coming_soon_title")}
+            </summary>
+            <p className="ia-help-text" style={{ marginTop: "0.55rem", marginBottom: 0 }}>
+              {t("meta_apps_instagram_coming_soon_body")}
+            </p>
+          </details>
         </section>
 
         {status.message ? (
