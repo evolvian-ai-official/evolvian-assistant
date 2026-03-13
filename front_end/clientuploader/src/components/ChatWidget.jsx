@@ -1,6 +1,7 @@
 // 💬 Evolvian Chat Widget – Versión Final Consolidada (con Consent + CheckConsent + UI completa)
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useLanguage } from "../contexts/LanguageContext";
+import { translations } from "../lib/i18n";
 import WidgetConsentScreen from "./WidgetConsentScreen";
 
 const ASSETS_BASE_URL =
@@ -71,11 +72,7 @@ const resolveApiBaseUrl = () => {
 
 export default function ChatWidget({ clientId: propClientId, usageLimit = 100 }) {
   const languageContext = useLanguage();
-  const { t = (x) => x, lang = "es", changeLanguage } = languageContext || {};
-  const wt = (key, fallback) => {
-    const value = t(key);
-    return !value || value === key ? fallback : value;
-  };
+  const { t = (x) => x, lang = "", changeLanguage } = languageContext || {};
 
   // =============================
   // 🔹 Estados base
@@ -109,7 +106,18 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     return normalizeLanguage(params.get("lang") || params.get("language"));
   }, []);
   const effectiveLang =
-    normalizeLanguage(urlLanguageOverride || lang || clientSettings?.language) || "es";
+    normalizeLanguage(urlLanguageOverride || clientSettings?.language || lang) || "es";
+  const widgetTranslations = useMemo(
+    () => translations[effectiveLang] || {},
+    [effectiveLang]
+  );
+  const wt = (key, fallback) => {
+    const widgetValue = widgetTranslations[key];
+    if (typeof widgetValue === "string" && widgetValue.trim()) return widgetValue;
+
+    const contextValue = t(key);
+    return !contextValue || contextValue === key ? fallback : contextValue;
+  };
   const isEnglish = effectiveLang === "en";
   const agendaText = useMemo(
     () =>
