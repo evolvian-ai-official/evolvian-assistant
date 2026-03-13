@@ -610,6 +610,13 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
     if (aiMessage) setHumanHandoffLastAiMessage(aiMessage);
   };
 
+  const closeSelectedCalendarSlot = () => {
+    setSelectedCalendarSlot(null);
+    setBookingError("");
+    setBookingSuccess("");
+    setDuplicateExistingAppt(null);
+  };
+
   const submitHumanHandoffRequest = async () => {
     if (!publicClientId) return;
     if (!handoffFeatureEnabled) {
@@ -1634,8 +1641,18 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
           )}
           {selectedCalendarSlot && (
             <div style={styles.selectedSlotBar}>
-              <div style={styles.selectedSlotText}>
-                {agendaText.selectedPrefix} {selectedCalendarSlot.date} {selectedCalendarSlot.time}
+              <div style={styles.selectedSlotHeader}>
+                <div style={styles.selectedSlotText}>
+                  {agendaText.selectedPrefix} {selectedCalendarSlot.date} {selectedCalendarSlot.time}
+                </div>
+                <button
+                  type="button"
+                  onClick={closeSelectedCalendarSlot}
+                  style={styles.selectedSlotCloseButton}
+                  aria-label={isEnglish ? "Close selected slot form" : "Cerrar formulario de horario seleccionado"}
+                >
+                  ×
+                </button>
               </div>
               <div style={styles.formGrid}>
                 <input
@@ -2493,6 +2510,29 @@ const styles = {
     fontSize: "0.78rem",
     color: "#274472",
     fontWeight: "600",
+  },
+  selectedSlotHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "0.5rem",
+  },
+  selectedSlotCloseButton: {
+    border: "1px solid #cfe0f6",
+    borderRadius: 999,
+    background: "#ffffff",
+    color: "#274472",
+    width: 26,
+    height: 26,
+    minWidth: 26,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    fontSize: "1rem",
+    fontWeight: "700",
+    lineHeight: 1,
+    padding: 0,
   },
   selectedSlotButton: {
     border: "none",
