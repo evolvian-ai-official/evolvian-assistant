@@ -163,3 +163,31 @@ def test_client_settings_language_update_does_not_apply_model_defaults(monkeypat
     assert "temperature" not in payload
     assert "show_powered_by" not in payload
     assert "session_message_limit" not in payload
+
+
+def test_client_settings_free_plan_does_not_persist_launcher_icon(monkeypatch):
+    import api.client_settings_api as client_settings_api
+
+    fake_supabase = _FakeSupabase(plan_id="free")
+    monkeypatch.setattr(client_settings_api, "supabase", fake_supabase)
+    monkeypatch.setattr(client_settings_api, "authorize_client_request", lambda _request, _client_id: None)
+
+    request = _DummyRequest(
+        {
+            "client_id": "client-1",
+            "launcher_icon_url": "https://cdn.example.com/widget-icon.png",
+        }
+    )
+    response = asyncio.run(client_settings_api.upsert_client_settings(request))
+    assert response.status_code == 200
+
+    settings_upserts = [
+        call for call in fake_supabase.state["calls"]
+        if call["table"] == "client_settings" and call["op"] == "upsert"
+    ]
+    assert len(settings_upserts) == 1
+    payload = settings_upserts[0]["payload"]
+
+    assert payload["client_id"] == "client-1"
+    assert payload["plan_id"] == "free"
+    assert "launcher_icon_url" not in payload

@@ -221,3 +221,42 @@ def test_client_settings_uses_client_language_for_widget_template_when_not_overr
     assert payload["widget_opening_template"]["id"] == "tpl-es"
     assert payload["widget_opening_template"]["body"] == "Hola desde widget"
     assert payload["widget_opening_template"]["language_family"] == "es"
+
+
+def test_client_settings_free_plan_hides_custom_launcher_icon(monkeypatch):
+    import api.client_settings_api as client_settings_api
+
+    state = {
+        "client_settings": {
+            "client_id": "client-1",
+            "assistant_name": "Assistant",
+            "language": "es",
+            "appointments_template_language": "es",
+            "show_powered_by": True,
+            "show_logo": True,
+            "require_email": False,
+            "require_phone": False,
+            "require_terms": False,
+            "show_tooltip": False,
+            "show_legal_links": False,
+            "require_email_consent": False,
+            "require_terms_consent": False,
+            "launcher_icon_url": "https://cdn.example.com/premium-icon.png",
+            "plan_id": "free",
+            "plan": {"id": "free", "plan_features": []},
+        },
+        "message_templates": [],
+    }
+
+    monkeypatch.setattr(client_settings_api, "supabase", _FakeSupabase(state))
+    monkeypatch.setattr(client_settings_api, "authorize_client_request", lambda _request, _client_id: None)
+    monkeypatch.setattr(
+        client_settings_api,
+        "resolve_effective_plan_id",
+        lambda client_id, base_plan_id, supabase_client: base_plan_id,
+    )
+
+    response = client_settings_api.get_client_settings(_DummyRequest(), client_id="client-1")
+    payload = _load_response_body(response)
+
+    assert payload["launcher_icon_url"] is None

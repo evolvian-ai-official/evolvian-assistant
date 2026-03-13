@@ -95,6 +95,7 @@ class ClientSettingsPayload(BaseModel):
     button_color: Optional[str] = None
     button_text_color: Optional[str] = None
     footer_text_color: Optional[str] = None
+    launcher_icon_url: Optional[str] = None
     font_family: Optional[str] = None
     widget_height: Optional[int] = None
     widget_border_radius: Optional[int] = None
@@ -155,6 +156,10 @@ async def upsert_client_settings(request: Request):
         # 🧹 Normalizar tipos (true/false como booleanos, números como int)
         for k, v in list(raw.items()):
             if isinstance(v, str):
+                if k == "launcher_icon_url":
+                    trimmed = v.strip()
+                    raw[k] = trimmed or None
+                    continue
                 if v.lower() in ["true", "false"]:
                     raw[k] = v.lower() == "true"
                 else:
@@ -230,6 +235,7 @@ async def upsert_client_settings(request: Request):
         # 🔒 Solo premium / white_label puede editar custom_prompt
         if effective_plan_id not in ["premium", "white_label"]:
             payload_dict.pop("custom_prompt", None)
+            payload_dict.pop("launcher_icon_url", None)
 
         # 💾 Guardar configuración limpia
         print(
@@ -325,6 +331,7 @@ def get_client_settings(
                 button_color,
                 button_text_color,
                 footer_text_color,
+                launcher_icon_url,
                 font_family,
                 widget_height,
                 widget_border_radius,
@@ -554,6 +561,7 @@ def get_client_settings(
                 "button_color": settings.get("button_color") or "#f5a623",
                 "button_text_color": settings.get("button_text_color") or "#ffffff",
                 "footer_text_color": settings.get("footer_text_color") or "#999999",
+                "launcher_icon_url": None,
                 "widget_height": settings.get("widget_height") or 420,
                 "widget_border_radius": settings.get("widget_border_radius") or 13,
                 "show_logo": settings.get("show_logo", True),

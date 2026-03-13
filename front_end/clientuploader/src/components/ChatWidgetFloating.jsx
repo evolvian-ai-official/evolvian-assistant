@@ -8,6 +8,8 @@ const MOBILE_HEADER_DRAG_ZONE = 84;
 const DESKTOP_PANEL_HEIGHT = 500;
 
 export default function ChatWidgetFloating({ publicClientId: propPublicClientId }) {
+  const apiBaseUrl = getWidgetApiBaseUrl();
+  const defaultLauncherIconUrl = getDefaultLauncherIconUrl(apiBaseUrl);
   const [isOpen, setIsOpen] = useState(false);
   const [shouldRenderPanel, setShouldRenderPanel] = useState(false);
   const [isMobile, setIsMobile] = useState(() =>
@@ -19,9 +21,14 @@ export default function ChatWidgetFloating({ publicClientId: propPublicClientId 
   const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [sheetDragOffset, setSheetDragOffset] = useState(0);
   const [sheetDragStartY, setSheetDragStartY] = useState(null);
+  const [launcherIconUrl, setLauncherIconUrl] = useState(defaultLauncherIconUrl);
   const params = new URLSearchParams(window.location.search);
   const urlPublicClientId = params.get("public_client_id");
   const publicClientId = propPublicClientId || urlPublicClientId;
+
+  useEffect(() => {
+    setLauncherIconUrl(defaultLauncherIconUrl);
+  }, [defaultLauncherIconUrl]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -82,6 +89,33 @@ export default function ChatWidgetFloating({ publicClientId: propPublicClientId 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+
+  useEffect(() => {
+    if (!publicClientId) return undefined;
+
+    let cancelled = false;
+
+    const fetchLauncherIcon = async () => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/client_settings?public_client_id=${encodeURIComponent(publicClientId)}`
+        );
+        if (!response.ok) return;
+        const data = await response.json();
+        if (cancelled) return;
+        const nextIconUrl = String(data?.launcher_icon_url || "").trim();
+        setLauncherIconUrl(nextIconUrl || defaultLauncherIconUrl);
+      } catch (error) {
+        if (!cancelled) setLauncherIconUrl(defaultLauncherIconUrl);
+        console.error("⚠️ Error loading floating widget icon:", error);
+      }
+    };
+
+    fetchLauncherIcon();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, defaultLauncherIconUrl, publicClientId]);
 
   useEffect(() => {
     if (isOpen && isMobile) return;
@@ -291,13 +325,18 @@ export default function ChatWidgetFloating({ publicClientId: propPublicClientId 
           }}
         />
         <img
-          src="/logo-evolvian.svg"
+          src={launcherIconUrl}
           alt="Evolvian"
           style={{
             width: "36px",
             height: "36px",
             borderRadius: "50%",
             objectFit: "cover",
+          }}
+          onError={() => {
+            if (launcherIconUrl !== defaultLauncherIconUrl) {
+              setLauncherIconUrl(defaultLauncherIconUrl);
+            }
           }}
         />
       </button>
@@ -376,3 +415,17 @@ const styles = {
     pointerEvents: "none",
   },
 };
+
+function getWidgetApiBaseUrl() {
+  if (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) {
+    return String(import.meta.env.VITE_API_URL).replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined" && window.location.hostname.includes("localhost")) {
+    return "http://localhost:8001";
+  }
+  return "https://evolvian-assistant.onrender.com";
+}
+
+function getDefaultLauncherIconUrl(apiBaseUrl) {
+  return `${String(apiBaseUrl).replace(/\/$/, "")}/static/logo-evolvian.svg`;
+}

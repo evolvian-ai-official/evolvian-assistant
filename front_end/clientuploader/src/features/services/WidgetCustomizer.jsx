@@ -9,6 +9,7 @@ export default function WidgetCustomizer() {
   const clientId = useClientId();
   const [saving, setSaving] = useState(false);
   const [planId, setPlanId] = useState("free"); // Detectar plan actual
+  const defaultLauncherIconUrl = getDefaultLauncherIconUrl();
 
   const [form, setForm] = useState({
     assistant_name: "Assistant",
@@ -22,6 +23,7 @@ export default function WidgetCustomizer() {
     button_color: "#f5a623",
     button_text_color: "#ffffff",
     footer_text_color: "#999999",
+    launcher_icon_url: "",
     font_family: "Inter, sans-serif",
     widget_border_radius: 16,
     widget_height: 520,
@@ -109,6 +111,7 @@ export default function WidgetCustomizer() {
       const cleanedForm = {
         ...form,
         font_family: form.font_family.replace(/['"]/g, "").trim(),
+        launcher_icon_url: String(form.launcher_icon_url || "").trim(),
       };
 
       const res = await authFetch(`${import.meta.env.VITE_API_URL}/client_settings`, {
@@ -376,6 +379,20 @@ export default function WidgetCustomizer() {
           </label>
 
           <label style={labelStyle}>
+            {t("widget_launcher_icon_url")}:
+            <input
+              type="url"
+              placeholder={t("widget_launcher_icon_url_placeholder")}
+              value={form.launcher_icon_url || ""}
+              onChange={(e) => handleChange("launcher_icon_url", e.target.value)}
+              style={textInput}
+            />
+            <small style={{ color: "#667085", marginTop: "0.25rem" }}>
+              {t("widget_launcher_icon_helper")}
+            </small>
+          </label>
+
+          <label style={labelStyle}>
             {t("widget_font_family")}:
             <select
               value={form.font_family}
@@ -490,6 +507,19 @@ export default function WidgetCustomizer() {
 
       {/* 👀 Vista previa */}
       <div style={previewPanel}>
+        <div style={previewLauncherWrap}>
+          <div style={previewLauncherLabel}>{t("widget_launcher_preview_label")}</div>
+          <button type="button" style={previewLauncherButton} aria-label={t("widget_launcher_preview_label")}>
+            <img
+              src={String(form.launcher_icon_url || "").trim() || defaultLauncherIconUrl}
+              alt={t("widget_launcher_preview_alt")}
+              style={previewLauncherImage}
+              onError={(event) => {
+                event.currentTarget.src = defaultLauncherIconUrl;
+              }}
+            />
+          </button>
+        </div>
         <div
           style={{
             ...previewWidget,
@@ -676,10 +706,42 @@ const previewPanel = {
   border: "1px solid #EDEDED",
   borderRadius: "14px",
   display: "flex",
+  flexDirection: "column",
   alignItems: "center",
   justifyContent: "center",
+  gap: "0.9rem",
   boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
   minWidth: 0,
+};
+const previewLauncherWrap = {
+  width: "100%",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.75rem",
+};
+const previewLauncherLabel = {
+  fontSize: "0.85rem",
+  color: "#667085",
+  fontWeight: 600,
+};
+const previewLauncherButton = {
+  width: "56px",
+  height: "56px",
+  borderRadius: "999px",
+  border: "1px solid rgba(32, 64, 112, 0.12)",
+  background: "linear-gradient(135deg, #ffffff 0%, #f1f7ff 100%)",
+  boxShadow: "0 10px 22px rgba(21, 45, 79, 0.18)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "6px",
+};
+const previewLauncherImage = {
+  width: "36px",
+  height: "36px",
+  borderRadius: "999px",
+  objectFit: "cover",
 };
 const formGrid = { display: "grid", gap: "1rem" };
 const labelStyle = { display: "flex", flexDirection: "column", fontSize: "0.9rem" };
@@ -837,3 +899,12 @@ const sectionTitle = {
   borderBottom: "1px solid #EDEDED",
   paddingBottom: "0.3rem",
 };
+
+function getDefaultLauncherIconUrl() {
+  const apiBaseUrl =
+    import.meta.env.VITE_API_URL ||
+    (window.location.hostname.includes("localhost")
+      ? "http://localhost:8001"
+      : "https://evolvian-assistant.onrender.com");
+  return `${String(apiBaseUrl).replace(/\/$/, "")}/static/logo-evolvian.svg`;
+}

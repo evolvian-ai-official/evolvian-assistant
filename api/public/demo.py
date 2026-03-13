@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
@@ -18,6 +19,13 @@ class DemoLeadPayload(BaseModel):
     accepted_terms: bool
     accepted_marketing: bool = False
     consent_version: str | None = None
+
+
+class DemoFeedbackPayload(BaseModel):
+    message: str
+    email: EmailStr | None = None
+    phone: str | None = None
+    language: str | None = None
 
 
 @router.post("/demo/lead")
@@ -100,3 +108,46 @@ def register_demo_lead(payload: DemoLeadPayload, request: Request):
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"Failed to register demo lead: {error}")
 
+
+@router.post("/demo/feedback")
+def submit_demo_feedback(payload: DemoFeedbackPayload, request: Request):
+    message = (payload.message or "").strip()
+    if len(message) < 10:
+        raise HTTPException(status_code=400, detail="Feedback must have at least 10 characters.")
+
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    email = str(payload.email).strip().lower() if payload.email else None
+    phone = (payload.phone or "").strip() or None
+    language = (payload.language or "").strip().lower() or "en"
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    fallback_email = f"demo-feedback+{uuid4().hex[:12]}@evolvian.local"
+    record_email = email or fallback_email
+
+    feedback_message = (
+        f"Demo feedback submitted at: {submitted_at}\n"
+        f"Language: {language}\n"
+        f"Phone: {phone or 'N/A'}\n\n"
+        f"{message}"
+    )
+
+    insert_payload = {
+        "name": "Demo Feedback",
+        "email": record_email,
+        "subject": "Demo feedback",
+        "interested_plan": "Demo",
+        "message": feedback_message[:3900],
+        "accepted_terms": True,
+        "accepted_marketing": False,
+        "terms_accepted_at": submitted_at,
+        "source": "public_demo_feedback",
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+    }
+
+    try:
+        supabase.table("contactame").insert(insert_payload).execute()
+        return {"message": "Feedback saved successfully."}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Failed to save demo feedback: {error}")
