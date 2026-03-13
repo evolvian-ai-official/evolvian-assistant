@@ -11,6 +11,7 @@ from api.utils.effective_plan import (
     normalize_plan_id,
     resolve_effective_plan_id,
 )
+from api.appointments.template_language_resolution import normalize_language_preferences
 
 # 🧠 Prompt base por defecto
 DEFAULT_PROMPT = "You are a helpful assistant. Provide relevant answers based only on the uploaded documents."
@@ -260,7 +261,8 @@ async def upsert_client_settings(request: Request):
 def get_client_settings(
     request: Request,
     client_id: Optional[str] = Query(None),
-    public_client_id: Optional[str] = Query(None)
+    public_client_id: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
 ):
     """Obtiene la configuración del cliente."""
     request_started = time.perf_counter()
@@ -372,25 +374,41 @@ def get_client_settings(
         # Public widget opening message template (if configured)
         widget_opening_template = None
         try:
+            requested_template_language, _ = normalize_language_preferences(
+                language_family=language or settings.get("language"),
+            )
+
             def _widget_opening_template_query():
                 return (
                     supabase.table("message_templates")
-                    .select("id, label, body, channel, type, is_active")
+                    .select(
+                        "id, label, body, channel, type, is_active, "
+                        "language_family, locale_code, updated_at"
+                    )
                     .eq("client_id", client_id)
                     .eq("channel", "widget")
                     .eq("type", "opening_message")
                     .eq("is_active", True)
-                    .limit(1)
                 )
 
             def _fetch_widget_opening_template():
                 base = _widget_opening_template_query()
                 try:
-                    return base.order("updated_at", desc=True).execute()
+                    return base.order("updated_at", desc=True).limit(10).execute()
                 except Exception as ordered_exc:
-                    if "updated_at" not in str(ordered_exc).lower():
+                    lowered_error = str(ordered_exc).lower()
+                    if "updated_at" not in lowered_error and "language_family" not in lowered_error and "locale_code" not in lowered_error:
                         raise
-                    return _widget_opening_template_query().execute()
+                    return (
+                        supabase.table("message_templates")
+                        .select("id, label, body, channel, type, is_active")
+                        .eq("client_id", client_id)
+                        .eq("channel", "widget")
+                        .eq("type", "opening_message")
+                        .eq("is_active", True)
+                        .limit(10)
+                        .execute()
+                    )
 
             tpl_res = _run_timed(
                 perf_ms,
@@ -402,7 +420,24 @@ def get_client_settings(
             )
             tpl_rows = tpl_res.data or []
             if tpl_rows:
-                row = tpl_rows[0]
+                matching_rows = []
+                fallback_rows = []
+                for candidate in tpl_rows:
+                    candidate_language = candidate.get("language_family") or candidate.get("locale_code")
+                    family = None
+                    if candidate_language:
+                        family, _ = normalize_language_preferences(
+                            language_family=candidate.get("language_family"),
+                            locale_code=candidate.get("locale_code"),
+                            fallback_language=requested_template_language,
+                        )
+
+                    if family == requested_template_language:
+                        matching_rows.append(candidate)
+                    else:
+                        fallback_rows.append(candidate)
+
+                row = (matching_rows or fallback_rows)[0]
                 body = str(row.get("body") or "").strip()
                 if body:
                     widget_opening_template = {
@@ -411,6 +446,7 @@ def get_client_settings(
                         "body": body,
                         "channel": "widget",
                         "type": "opening_message",
+                        "language_family": row.get("language_family") or requested_template_language,
                     }
         except Exception as tpl_err:
             logging.warning(

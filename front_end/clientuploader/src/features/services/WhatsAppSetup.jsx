@@ -59,6 +59,7 @@ export default function WhatsAppSetup() {
   const [submitting, setSubmitting] = useState("");
 
   const [provider, setProvider] = useState("meta");
+  const [waConnectionMethod, setWaConnectionMethod] = useState("meta_embedded");
   const [phone, setPhone] = useState("");
   const [waPhoneId, setWaPhoneId] = useState("");
   const [waToken, setWaToken] = useState("");
@@ -137,6 +138,7 @@ export default function WhatsAppSetup() {
 
         const headers = await getAuthHeaders();
         if (callbackState.status === "success") {
+          setWaConnectionMethod("meta_embedded");
           setSuccess(t("meta_embedded_callback_success"));
           resetMetaSelection();
         } else if (callbackState.status === "error") {
@@ -148,6 +150,7 @@ export default function WhatsAppSetup() {
           );
         } else if (callbackState.status === "select_phone" && callbackState.selectionToken) {
           try {
+            setWaConnectionMethod("meta_embedded");
             await loadMetaSelectionOptions(callbackState.selectionToken, headers);
             setSuccess(t("meta_embedded_select_phone_prompt"));
           } catch (selectionErr) {
@@ -478,6 +481,7 @@ export default function WhatsAppSetup() {
       setWaToken("");
       setWaBusinessAccountId("");
       setWaConnected(false);
+      setWaConnectionMethod("meta_embedded");
       resetSetupProgress();
       setSuccess(t("wa_disconnected"));
     } catch (err) {
@@ -609,6 +613,8 @@ export default function WhatsAppSetup() {
   const displayedPhone = waConnected ? maskSensitive(phone, 4, 3) : phone;
   const displayedWaPhoneId = waConnected ? maskSensitive(waPhoneId, 3, 3) : waPhoneId;
   const displayedWabaId = waConnected ? maskSensitive(waBusinessAccountId, 3, 3) : waBusinessAccountId;
+  const showEmbeddedWhatsAppFlow = !waConnected && waConnectionMethod === "meta_embedded";
+  const showManualWhatsAppFlow = waConnected || waConnectionMethod === "manual";
   const showSetupProgressCard =
     waSetupProgress.active
     || waSetupProgress.complete
@@ -639,6 +645,25 @@ export default function WhatsAppSetup() {
           </div>
 
           {!waConnected ? (
+            <div className="ia-form-field" style={{ marginTop: "0.9rem" }}>
+              <label className="ia-form-label">{t("wa_connection_method_label")}</label>
+              <select
+                className="ia-form-input"
+                value={waConnectionMethod}
+                onChange={(e) => setWaConnectionMethod(e.target.value)}
+              >
+                <option value="meta_embedded">{t("wa_connection_method_meta_embedded")}</option>
+                <option value="manual">{t("wa_connection_method_manual")}</option>
+              </select>
+              <p className="ia-help-text" style={{ marginTop: "0.45rem", marginBottom: 0 }}>
+                {waConnectionMethod === "meta_embedded"
+                  ? t("wa_connection_method_meta_embedded_help")
+                  : t("wa_connection_method_manual_help")}
+              </p>
+            </div>
+          ) : null}
+
+          {showEmbeddedWhatsAppFlow ? (
             <div className="ia-note" style={{ marginTop: "0.65rem" }}>
               <p style={{ marginTop: 0, marginBottom: "0.55rem" }}>{t("meta_embedded_connect_subtitle")}</p>
               <button
@@ -653,7 +678,7 @@ export default function WhatsAppSetup() {
             </div>
           ) : null}
 
-          {!waConnected && metaSelectionOptions.length ? (
+          {showEmbeddedWhatsAppFlow && metaSelectionOptions.length ? (
             <div className="ia-note" style={{ marginTop: "0.75rem" }}>
               <p style={{ marginTop: 0, marginBottom: "0.55rem" }}>{t("meta_embedded_select_phone_prompt")}</p>
               <div className="ia-form-field" style={{ marginBottom: "0.65rem" }}>
@@ -689,72 +714,75 @@ export default function WhatsAppSetup() {
             </div>
           ) : null}
 
-          <div className="ia-form-grid">
-            <div className="ia-form-field">
-              <label className="ia-form-label">{t("wa_choose_provider")}</label>
-              <select className="ia-form-input" value={provider} onChange={(e) => setProvider(e.target.value)} disabled={waConnected}>
-                <option value="meta">{t("meta_official_whatsapp_cloud_api")}</option>
-              </select>
-            </div>
+          {showManualWhatsAppFlow ? (
+            <>
+              {!waConnected ? (
+                <div className="ia-note" style={{ marginTop: "0.75rem" }}>
+                  <p style={{ margin: 0 }}>{t("wa_manual_setup_subtitle")}</p>
+                </div>
+              ) : null}
 
-            <div className="ia-form-field">
-              <label className="ia-form-label">{t("wa_label_phone")}</label>
-              <input
-                className="ia-form-input"
-                type="text"
-                value={displayedPhone}
-                placeholder="+5215512345678"
-                disabled={waConnected}
-                onChange={(e) => setPhone(e.target.value)}
-                onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-              />
-              {showError("phone", phone)}
-            </div>
+              <div className="ia-form-grid" style={{ marginTop: "0.9rem" }}>
+                <div className="ia-form-field">
+                  <label className="ia-form-label">{t("wa_label_phone")}</label>
+                  <input
+                    className="ia-form-input"
+                    type="text"
+                    value={displayedPhone}
+                    placeholder="+5215512345678"
+                    disabled={waConnected}
+                    onChange={(e) => setPhone(e.target.value)}
+                    onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                  />
+                  {showError("phone", phone)}
+                </div>
 
-            <div className="ia-form-field">
-              <label className="ia-form-label">{t("whatsapp_phone_number_id")}</label>
-              <input
-                className="ia-form-input"
-                type="text"
-                value={displayedWaPhoneId}
-                disabled={waConnected}
-                onChange={(e) => setWaPhoneId(e.target.value)}
-                onBlur={() => setTouched((prev) => ({ ...prev, waPhoneId: true }))}
-              />
-              {showError("waPhoneId", waPhoneId)}
-            </div>
+                <div className="ia-form-field">
+                  <label className="ia-form-label">{t("whatsapp_phone_number_id")}</label>
+                  <input
+                    className="ia-form-input"
+                    type="text"
+                    value={displayedWaPhoneId}
+                    disabled={waConnected}
+                    onChange={(e) => setWaPhoneId(e.target.value)}
+                    onBlur={() => setTouched((prev) => ({ ...prev, waPhoneId: true }))}
+                  />
+                  {showError("waPhoneId", waPhoneId)}
+                </div>
 
-            <div className="ia-form-field">
-              <label className="ia-form-label">{t("whatsapp_business_account_id")}</label>
-              <input
-                className="ia-form-input"
-                type="text"
-                value={displayedWabaId}
-                placeholder={t("wa_placeholder_waba_id")}
-                disabled={waConnected}
-                onChange={(e) => setWaBusinessAccountId(e.target.value)}
-                onBlur={() => setTouched((prev) => ({ ...prev, waBusinessAccountId: true }))}
-              />
-              {showError("waBusinessAccountId", waBusinessAccountId)}
-            </div>
+                <div className="ia-form-field">
+                  <label className="ia-form-label">{t("whatsapp_business_account_id")}</label>
+                  <input
+                    className="ia-form-input"
+                    type="text"
+                    value={displayedWabaId}
+                    placeholder={t("wa_placeholder_waba_id")}
+                    disabled={waConnected}
+                    onChange={(e) => setWaBusinessAccountId(e.target.value)}
+                    onBlur={() => setTouched((prev) => ({ ...prev, waBusinessAccountId: true }))}
+                  />
+                  {showError("waBusinessAccountId", waBusinessAccountId)}
+                </div>
 
-            {!waConnected ? (
-              <div className="ia-form-field">
-                <label className="ia-form-label">{t("permanent_access_token")}</label>
-                <input
-                  className="ia-form-input"
-                  type="password"
-                  value={waToken}
-                  onChange={(e) => setWaToken(e.target.value)}
-                  onBlur={() => setTouched((prev) => ({ ...prev, waToken: true }))}
-                />
-                {showError("waToken", waToken)}
+                {!waConnected ? (
+                  <div className="ia-form-field">
+                    <label className="ia-form-label">{t("permanent_access_token")}</label>
+                    <input
+                      className="ia-form-input"
+                      type="password"
+                      value={waToken}
+                      onChange={(e) => setWaToken(e.target.value)}
+                      onBlur={() => setTouched((prev) => ({ ...prev, waToken: true }))}
+                    />
+                    {showError("waToken", waToken)}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
+            </>
+          ) : null}
 
           <div className="ia-inline-actions" style={{ marginTop: "1rem" }}>
-            {!waConnected ? (
+            {!waConnected && showManualWhatsAppFlow ? (
               <button
                 type="button"
                 className="ia-button"
@@ -764,7 +792,9 @@ export default function WhatsAppSetup() {
               >
                 {loadingAction("wa_connect") ? t("connecting") : t("connect_whatsapp")}
               </button>
-            ) : (
+            ) : null}
+
+            {waConnected ? (
               <button
                 type="button"
                 className="ia-button ia-button-ghost"
@@ -773,7 +803,7 @@ export default function WhatsAppSetup() {
               >
                 {loadingAction("wa_disconnect") ? t("processing") : t("disconnect_whatsapp")}
               </button>
-            )}
+            ) : null}
           </div>
         </section>
 
@@ -830,64 +860,18 @@ export default function WhatsAppSetup() {
 
         <section className="ia-card">
           <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-            <h3 className="ia-header-title">🔵 {t("meta_apps_social_title")}</h3>
+            <h3 className="ia-header-title">🔵/📷 {t("meta_apps_social_title")}</h3>
           </div>
           <p className="ia-help-text">{t("meta_apps_social_subtitle")}</p>
 
-          <div className="ia-form-field" style={{ marginTop: "0.9rem" }}>
-            <label className="ia-form-label">{t("meta_apps_page_access_token")}</label>
-            <input
-              className="ia-form-input"
-              type="password"
-              value={metaPageToken}
-              placeholder={t("wa_placeholder_token")}
-              onChange={(e) => setMetaPageToken(e.target.value)}
-              onBlur={() => setTouched((prev) => ({ ...prev, metaPageToken: true }))}
-            />
-            {showError("metaPageToken", metaPageToken)}
-          </div>
-
-          <div className="ia-form-grid" style={{ marginTop: "0.8rem" }}>
-            <div className="ia-form-field">
-              <label className="ia-form-label">{t("meta_apps_messenger_page_id")}</label>
-              <input
-                className="ia-form-input"
-                type="text"
-                value={messengerConnected ? maskSensitive(messengerRecipientId, 4, 4) : messengerRecipientId}
-                placeholder="123456789012345"
-                disabled={messengerConnected}
-                onChange={(e) => setMessengerRecipientId(e.target.value)}
-                onBlur={() => setTouched((prev) => ({ ...prev, messengerRecipientId: true }))}
-              />
-              {showError("messengerRecipientId", messengerRecipientId)}
-              <div className="ia-inline-actions" style={{ marginTop: "0.7rem" }}>
-                {!messengerConnected ? (
-                  <button
-                    type="button"
-                    className="ia-button"
-                    style={{ backgroundColor: "#2eb39a", color: "#fff" }}
-                    onClick={() => connectSocialChannel("messenger")}
-                    disabled={
-                      loadingAction("messenger_connect")
-                      || !isValidMetaRecipientId(messengerRecipientId)
-                      || (!messengerConnected && !isValidToken(metaPageToken))
-                    }
-                  >
-                    {loadingAction("messenger_connect") ? t("connecting") : t("meta_apps_connect_messenger")}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="ia-button ia-button-ghost"
-                    onClick={() => disconnectSocialChannel("messenger")}
-                    disabled={loadingAction("messenger_disconnect")}
-                  >
-                    {loadingAction("messenger_disconnect") ? t("processing") : t("meta_apps_disconnect_messenger")}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
+          <details className="ia-note" style={{ marginTop: "0.9rem" }}>
+            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+              {t("meta_apps_messenger_coming_soon_title")}
+            </summary>
+            <p className="ia-help-text" style={{ marginTop: "0.55rem", marginBottom: 0 }}>
+              {t("meta_apps_messenger_coming_soon_body")}
+            </p>
+          </details>
 
           <details className="ia-note" style={{ marginTop: "0.9rem" }}>
             <summary style={{ cursor: "pointer", fontWeight: 600 }}>

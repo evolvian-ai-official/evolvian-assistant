@@ -43,8 +43,8 @@ const marketingCopyById = (id, isEs, requiredPlanLabel) => {
       ? `Convierte conversaciones perdidas en ventas y soporte resuelto: IA + agente humano, alertas, notas y seguimiento desde un solo inbox. Disponible en ${tier}.`
       : `Turn unresolved chats into resolved support and revenue: AI + human agent handoff, alerts, notes, and follow-up in one inbox. Available on ${tier}.`,
     "/services/meta-apps": isEs
-      ? `Conecta WhatsApp y Messenger desde una sola integración de Meta Apps. Disponible en ${tier}.`
-      : `Connect WhatsApp and Messenger from one Meta Apps integration. Available on ${tier}.`,
+      ? `Conecta WhatsApp desde Meta Apps. Disponible en ${tier}.`
+      : `Connect WhatsApp from Meta Apps. Available on ${tier}.`,
     "/services/email": isEs
       ? `Haz seguimiento profesional por email con historial y automatización. Ideal para tickets y leads de mayor intención. Disponible en ${tier}.`
       : `Deliver professional email follow-up with history and automation. Ideal for tickets and high-intent leads. Available on ${tier}.`,

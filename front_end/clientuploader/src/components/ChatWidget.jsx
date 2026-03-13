@@ -467,7 +467,12 @@ export default function ChatWidget({ clientId: propClientId, usageLimit = 100 })
       try {
         const apiUrl = resolveApiBaseUrl();
 
-        const res = await fetch(`${apiUrl}/client_settings?public_client_id=${publicClientId}`);
+        const params = new URLSearchParams({ public_client_id: publicClientId });
+        if (urlLanguageOverride) {
+          params.set("language", urlLanguageOverride);
+        }
+
+        const res = await fetch(`${apiUrl}/client_settings?${params.toString()}`);
         const raw = await res.json();
         const data = Array.isArray(raw) ? raw[0] : raw;
         if (!data) return;
