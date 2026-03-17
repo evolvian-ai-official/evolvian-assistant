@@ -27,6 +27,42 @@ CONSENT_LOG_TABLE = "public_privacy_consents"
 PRIVACY_REQUEST_TABLE = "public_privacy_requests"
 
 
+def _is_duplicate_contactame_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return (
+        "duplicate" in message
+        or "unique" in message
+        or "23505" in message
+        or "contactame_email_key" in message
+    )
+
+
+def _insert_contactame_with_fallbacks(
+    *,
+    primary_payload: dict,
+    legacy_payload: dict | None = None,
+    update_payload: dict | None = None,
+    email: str,
+) -> None:
+    try:
+        supabase.table("contactame").insert(primary_payload).execute()
+        return
+    except Exception as primary_error:
+        if _is_duplicate_contactame_error(primary_error) and update_payload:
+            supabase.table("contactame").update(update_payload).eq("email", email).execute()
+            return
+        if legacy_payload:
+            try:
+                supabase.table("contactame").insert(legacy_payload).execute()
+                return
+            except Exception as legacy_error:
+                if _is_duplicate_contactame_error(legacy_error) and update_payload:
+                    supabase.table("contactame").update(update_payload).eq("email", email).execute()
+                    return
+                raise legacy_error from primary_error
+        raise
+
+
 def _extract_opt_out_client_id(details: str | None) -> str | None:
     text_details, metadata = split_details_and_metadata(str(details or ""))
     scoped = str((metadata or {}).get("client_id") or "").strip()
@@ -165,8 +201,34 @@ def submit_privacy_request(payload: PrivacyRequestPayload, request: Request):
             "ip_address": ip_address,
             "user_agent": user_agent,
         }
+        legacy_fallback_record = {
+            "name": name or "Privacy Request",
+            "email": email,
+            "subject": "Privacy request",
+            "interested_plan": "Privacy",
+            "message": fallback_message[:3900],
+            "accepted_terms": True,
+            "accepted_marketing": False,
+            "terms_accepted_at": isoformat_utc(submitted_at),
+            "source": "privacy_request",
+        }
         try:
-            supabase.table("contactame").insert(fallback_record).execute()
+            _insert_contactame_with_fallbacks(
+                primary_payload=fallback_record,
+                legacy_payload=legacy_fallback_record,
+                update_payload={
+                    "subject": "Privacy request",
+                    "interested_plan": "Privacy",
+                    "message": fallback_message[:3900],
+                    "accepted_terms": True,
+                    "accepted_marketing": False,
+                    "terms_accepted_at": isoformat_utc(submitted_at),
+                    "source": "privacy_request",
+                    "ip_address": ip_address,
+                    "user_agent": user_agent,
+                },
+                email=email,
+            )
             return {
                 "message": "Privacy request submitted successfully.",
                 "request_id": request_id,
@@ -312,8 +374,34 @@ def unsubscribe_marketing_email(
                     "ip_address": request_ip,
                     "user_agent": request.headers.get("user-agent"),
                 }
+                legacy_fallback_record = {
+                    "name": "Unsubscribe request",
+                    "email": normalized_email,
+                    "subject": "Marketing unsubscribe request",
+                    "interested_plan": "Privacy",
+                    "message": fallback_message[:3900],
+                    "accepted_terms": True,
+                    "accepted_marketing": False,
+                    "terms_accepted_at": isoformat_utc(submitted_at),
+                    "source": "privacy_unsubscribe_fallback",
+                }
                 try:
-                    supabase.table("contactame").insert(fallback_record).execute()
+                    _insert_contactame_with_fallbacks(
+                        primary_payload=fallback_record,
+                        legacy_payload=legacy_fallback_record,
+                        update_payload={
+                            "subject": "Marketing unsubscribe request",
+                            "interested_plan": "Privacy",
+                            "message": fallback_message[:3900],
+                            "accepted_terms": True,
+                            "accepted_marketing": False,
+                            "terms_accepted_at": isoformat_utc(submitted_at),
+                            "source": "privacy_unsubscribe_fallback",
+                            "ip_address": request_ip,
+                            "user_agent": request.headers.get("user-agent"),
+                        },
+                        email=normalized_email,
+                    )
                 except Exception as fallback_error:
                     if language == "es":
                         fail_title = "No se pudo completar la baja"
