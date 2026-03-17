@@ -31,6 +31,11 @@ _TRANSIENT_ERROR_MARKERS = (
 )
 
 
+def _is_missing_column_error(exc: Exception, column_name: str) -> bool:
+    msg = str(exc).lower()
+    return "does not exist" in msg and column_name.lower() in msg
+
+
 def _is_transient_network_error(exc: Exception) -> bool:
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
         return True
@@ -65,6 +70,75 @@ def _run_timed(metrics: dict, key: str, fn):
     result = fn()
     metrics[key] = round((time.perf_counter() - started) * 1000, 1)
     return result
+
+
+def _client_settings_select_fields(*, include_launcher_icon_url: bool = True) -> str:
+    fields = [
+        "client_id",
+        "assistant_name",
+        "language",
+        "appointments_template_language",
+        "temperature",
+        "show_powered_by",
+        "show_logo",
+        "custom_prompt",
+        "daily_message_limit",
+        "require_email",
+        "require_phone",
+        "require_terms",
+        "plan_id",
+        "subscription_id",
+        "subscription_start",
+        "subscription_end",
+        "cancellation_requested_at",
+        "subscription_cycles",
+        "created_at",
+        "header_color",
+        "header_text_color",
+        "background_color",
+        "user_message_color",
+        "bot_message_color",
+        "button_color",
+        "button_text_color",
+        "footer_text_color",
+        "font_family",
+        "widget_height",
+        "widget_border_radius",
+        "session_message_limit",
+        "show_tooltip",
+        "tooltip_text",
+        "tooltip_bg_color",
+        "tooltip_text_color",
+        "show_legal_links",
+        "terms_url",
+        "privacy_url",
+        "require_email_consent",
+        "require_terms_consent",
+        "consent_bg_color",
+        "consent_text_color",
+        "max_messages_per_session",
+    ]
+    if include_launcher_icon_url:
+        fields.append("launcher_icon_url")
+    fields.append(
+        """plan:plan_id(
+                    id,
+                    name,
+                    description,
+                    max_messages,
+                    max_documents,
+                    is_unlimited,
+                    show_powered_by,
+                    supports_chat,
+                    supports_email,
+                    supports_whatsapp,
+                    price_usd,
+                    duration,
+                    plan_features(feature, is_active)
+
+                )"""
+    )
+    return ",\n                ".join(fields)
 
 # ------------------------------
 # MODELO DE PAYLOAD
@@ -242,7 +316,21 @@ async def upsert_client_settings(request: Request):
             "💾 Guardando configuración limpia (metadata):",
             {"keys": list(payload_dict.keys()), "client_id": payload.client_id},
         )
-        response = supabase.table("client_settings").upsert(payload_dict, on_conflict="client_id").execute()
+        try:
+            response = supabase.table("client_settings").upsert(payload_dict, on_conflict="client_id").execute()
+        except Exception as exc:
+            if (
+                "launcher_icon_url" in payload_dict
+                and _is_missing_column_error(exc, "client_settings.launcher_icon_url")
+            ):
+                logging.warning(
+                    "⚠️ client_settings.launcher_icon_url no existe para client_id=%s. Guardando sin esa columna.",
+                    payload.client_id,
+                )
+                payload_dict.pop("launcher_icon_url", None)
+                response = supabase.table("client_settings").upsert(payload_dict, on_conflict="client_id").execute()
+            else:
+                raise
 
         if response.data:
             print("✅ Configuración guardada correctamente para client_id:", payload.client_id)
@@ -297,86 +385,48 @@ def get_client_settings(
             _run_timed(perf_ms, "authorize_client_request", lambda: authorize_client_request(request, client_id))
 
         # Obtener settings
-        response = _run_timed(
-            perf_ms,
-            "settings_query",
-            lambda: _with_retries(
-                lambda: (
-                    supabase.table("client_settings")
-                    .select("""
-                client_id,
-                assistant_name,
-                language,
-                appointments_template_language,
-                temperature,
-                show_powered_by,
-                show_logo,
-                custom_prompt,
-                daily_message_limit,
-                require_email,
-                require_phone,
-                require_terms,
-                plan_id,
-                subscription_id,
-                subscription_start,
-                subscription_end,
-                cancellation_requested_at,
-                subscription_cycles,
-                created_at,
-                header_color,
-                header_text_color,
-                background_color,
-                user_message_color,
-                bot_message_color,
-                button_color,
-                button_text_color,
-                footer_text_color,
-                launcher_icon_url,
-                font_family,
-                widget_height,
-                widget_border_radius,
-                session_message_limit,
-                show_tooltip,
-                tooltip_text,
-                tooltip_bg_color,
-                tooltip_text_color,
-                show_legal_links,
-                terms_url,
-                privacy_url,
-                require_email_consent,
-                require_terms_consent,
-                consent_bg_color,
-                consent_text_color,
-                max_messages_per_session,
-                plan:plan_id(
-                    id,
-                    name,
-                    description,
-                    max_messages,
-                    max_documents,
-                    is_unlimited,
-                    show_powered_by,
-                    supports_chat,
-                    supports_email,
-                    supports_whatsapp,
-                    price_usd,
-                    duration,
-                    plan_features(feature, is_active)
+        def _fetch_client_settings(include_launcher_icon_url: bool = True):
+            return (
+                supabase.table("client_settings")
+                .select(_client_settings_select_fields(include_launcher_icon_url=include_launcher_icon_url))
+                .eq("client_id", client_id)
+                .single()
+                .execute()
+            )
 
-                )
-                    """)
-                    .eq("client_id", client_id)
-                    .single()
-                    .execute()
+        try:
+            response = _run_timed(
+                perf_ms,
+                "settings_query",
+                lambda: _with_retries(
+                    lambda: _fetch_client_settings(include_launcher_icon_url=True),
+                    op_name="client_settings.fetch",
                 ),
-                op_name="client_settings.fetch",
-            ),
-        )
+            )
+            client_settings_has_launcher_icon_url = True
+        except Exception as settings_exc:
+            if not _is_missing_column_error(settings_exc, "client_settings.launcher_icon_url"):
+                raise
+            logging.warning(
+                "⚠️ client_settings.launcher_icon_url no existe para client_id=%s. Reintentando sin esa columna.",
+                client_id,
+            )
+            response = _run_timed(
+                perf_ms,
+                "settings_query_without_launcher_icon_url",
+                lambda: _with_retries(
+                    lambda: _fetch_client_settings(include_launcher_icon_url=False),
+                    op_name="client_settings.fetch_legacy",
+                ),
+            )
+            client_settings_has_launcher_icon_url = False
 
         if not response.data:
             raise HTTPException(status_code=404, detail="Configuración no encontrada")
 
         settings = response.data
+        if not client_settings_has_launcher_icon_url:
+            settings["launcher_icon_url"] = None
 
         # Public widget opening message template (if configured)
         widget_opening_template = None

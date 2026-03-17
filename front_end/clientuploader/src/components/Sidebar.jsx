@@ -75,54 +75,70 @@ export default function Sidebar({ mobile = false, onNavigate }) {
   const [features, setFeatures] = useState([]);
   const [currentPlanId, setCurrentPlanId] = useState("free");
   const [availablePlans, setAvailablePlans] = useState([]);
+  const [entitlementsStatus, setEntitlementsStatus] = useState("idle");
   const [hovered, setHovered] = useState(null);
   const [animateLogo, setAnimateLogo] = useState(false);
 
   useEffect(() => {
     setAnimateLogo(true);
+  }, []);
 
+  useEffect(() => {
+    if (!clientId) {
+      setFeatures([]);
+      setCurrentPlanId("free");
+      setAvailablePlans([]);
+      setEntitlementsStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
     const fetchFeatures = async () => {
-      if (!clientId) return;
+      setEntitlementsStatus("loading");
 
       try {
         const res = await authFetch(
           `${import.meta.env.VITE_API_URL}/client_settings?client_id=${clientId}`
         );
+        const data = await res.json().catch(() => ({}));
 
-        const data = await res.json();
-
-        if (res.ok) {
-          const rawFeatures = data.plan?.plan_features || [];
-          setCurrentPlanId(normalizePlanId(data?.plan?.id || data?.plan_id || "free"));
-          setAvailablePlans(Array.isArray(data?.available_plans) ? data.available_plans : []);
-
-          const featuresArray = rawFeatures
-            .map((f) => {
-              // Caso 1: backend ya envía string
-              if (typeof f === "string") {
-                return normalizeFeature(f);
-              }
-
-              // Caso 2: backend envía objeto { feature, is_active }
-              if (typeof f === "object") {
-                if (f.is_active === true) {
-                  return normalizeFeature(f.feature);
-                }
-                return null; // 🔥 ignorar inactivos
-              }
-
-              return null;
-            })
-            .filter(Boolean);
-
-          setFeatures(featuresArray);
+        if (!res.ok) {
+          throw new Error(data?.detail || "Unable to load sidebar entitlements");
         }
+
+        if (cancelled) return;
+
+        const rawFeatures = data.plan?.plan_features || [];
+        setCurrentPlanId(normalizePlanId(data?.plan?.id || data?.plan_id || "free"));
+        setAvailablePlans(Array.isArray(data?.available_plans) ? data.available_plans : []);
+
+        const featuresArray = rawFeatures
+          .map((f) => {
+            if (typeof f === "string") return normalizeFeature(f);
+            if (typeof f === "object" && f?.is_active === true) {
+              return normalizeFeature(f.feature);
+            }
+            return null;
+          })
+          .filter(Boolean);
+
+        setFeatures(featuresArray);
+        setEntitlementsStatus("ready");
       } catch (error) {
+        if (cancelled) return;
         console.error("❌ Error connecting to backend:", error);
+        setFeatures([]);
+        setCurrentPlanId("free");
+        setAvailablePlans([]);
+        setEntitlementsStatus("error");
       }
     };
 
     fetchFeatures();
+
+    return () => {
+      cancelled = true;
+    };
   }, [clientId]);
 
   const handleLogout = async () => {
@@ -149,7 +165,9 @@ export default function Sidebar({ mobile = false, onNavigate }) {
     return current >= required;
   };
 
-  const serviceItems = [
+  const serviceItems = entitlementsStatus !== "ready"
+    ? []
+    : [
     {
       id: "inbox-handoff",
       label: "Inbox / Handoff",
@@ -235,6 +253,17 @@ export default function Sidebar({ mobile = false, onNavigate }) {
     };
   }).filter((item) => !item.hiddenByFeatureFlag);
 
+  const sidebarStatusMessage =
+    entitlementsStatus === "loading"
+      ? isEs
+        ? "Cargando accesos del plan..."
+        : "Loading plan access..."
+      : entitlementsStatus === "error"
+        ? isEs
+          ? "No se pudieron cargar los accesos del plan."
+          : "Could not load plan access."
+        : "";
+
   return (
     <aside style={mobile ? asideStyleMobile : asideStyle}>
       <div>
@@ -285,6 +314,9 @@ export default function Sidebar({ mobile = false, onNavigate }) {
             id="history"
             onNavigate={onNavigate}
           />
+          {sidebarStatusMessage ? (
+            <div style={statusNoteStyle}>{sidebarStatusMessage}</div>
+          ) : null}
           {serviceItems.map((item) => (
             <FeatureHoverLink
               key={item.id}
@@ -464,6 +496,17 @@ const navStyle = {
 const navItemBlock = {
   padding: "0.5rem 0.6rem",
   borderBottom: "1px solid #EDEDED",
+};
+
+const statusNoteStyle = {
+  margin: "0.5rem 0.6rem 0.25rem",
+  padding: "0.5rem 0.65rem",
+  borderRadius: "10px",
+  border: "1px solid #E5E7EB",
+  background: "#F8FAFC",
+  color: "#64748B",
+  fontSize: "0.78rem",
+  lineHeight: 1.35,
 };
 
 const linkStyle = {

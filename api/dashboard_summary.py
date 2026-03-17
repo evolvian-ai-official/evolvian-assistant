@@ -80,6 +80,32 @@ def _is_no_rows_error(exc: Exception) -> bool:
     )
 
 
+def _is_missing_on_conflict_constraint(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "42p10" in msg or "no unique or exclusion constraint matching the on conflict specification" in msg
+
+
+def _persist_client_usage(client_id: str, payload: dict) -> None:
+    try:
+        supabase.table("client_usage").upsert(payload, on_conflict="client_id").execute()
+        return
+    except Exception as exc:
+        if not _is_missing_on_conflict_constraint(exc):
+            raise
+
+    existing = (
+        supabase.table("client_usage")
+        .select("client_id")
+        .eq("client_id", client_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        supabase.table("client_usage").update(payload).eq("client_id", client_id).execute()
+    else:
+        supabase.table("client_usage").insert(payload).execute()
+
+
 def format_date(dt_str):
     """Convierte un string SQL o ISO en un formato legible (ej: Oct 14, 2025)"""
     if not dt_str:
@@ -348,23 +374,17 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
 
         # Escritura de usage en modo best-effort para no tirar el endpoint
         try:
+            usage_payload = {
+                "client_id": client_id,
+                "messages_used": total_user_messages,
+                "documents_uploaded": usage["documents_uploaded"],
+                "last_used_at": usage["last_used_at"],
+            }
             _run_timed(
                 perf_ms,
                 "usage_upsert_write",
                 lambda: _with_retries(
-                    lambda: (
-                        supabase.table("client_usage")
-                        .upsert(
-                            {
-                                "client_id": client_id,
-                                "messages_used": total_user_messages,
-                                "documents_uploaded": usage["documents_uploaded"],
-                                "last_used_at": usage["last_used_at"],
-                            },
-                            on_conflict="client_id",
-                        )
-                        .execute()
-                    ),
+                    lambda: _persist_client_usage(client_id, usage_payload),
                     op_name="dashboard.usage_upsert",
                 ),
             )
@@ -384,23 +404,17 @@ def dashboard_summary(request: Request, client_id: str = Query(...)):
                 int(bucket_count or 0),
             )
             try:
+                docs_payload = {
+                    "client_id": client_id,
+                    "documents_uploaded": bucket_count,
+                    "messages_used": total_user_messages,
+                    "last_used_at": usage["last_used_at"],
+                }
                 _run_timed(
                     perf_ms,
                     "documents_upsert_write",
                     lambda: _with_retries(
-                        lambda: (
-                            supabase.table("client_usage")
-                            .upsert(
-                                {
-                                    "client_id": client_id,
-                                    "documents_uploaded": bucket_count,
-                                    "messages_used": total_user_messages,
-                                    "last_used_at": usage["last_used_at"],
-                                },
-                                on_conflict="client_id",
-                            )
-                            .execute()
-                        ),
+                        lambda: _persist_client_usage(client_id, docs_payload),
                         op_name="dashboard.usage_docs_upsert",
                     ),
                 )

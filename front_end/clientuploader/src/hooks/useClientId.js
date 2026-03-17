@@ -1,29 +1,36 @@
 import { useEffect, useState } from "react";
 
-export function useClientId() {
-  const [clientId, setClientId] = useState(() => {
-    let stored = null;
-    try {
-      stored = localStorage.getItem("client_id");
-    } catch {
-      stored = null;
-    }
+function readStoredClientId() {
+  try {
+    const stored = localStorage.getItem("client_id");
     return stored && stored !== "undefined" && stored !== "null" ? stored : null;
-  });
+  } catch {
+    return null;
+  }
+}
+
+export function useClientId() {
+  const [clientId, setClientId] = useState(() => readStoredClientId());
 
   useEffect(() => {
-    const handleStorageChange = (event) => {
-      if (event.key === "client_id") {
-        const value = event.newValue;
-        if (value && value !== "undefined" && value !== "null") {
-          setClientId(value);
-        }
-      }
+    const syncClientId = () => {
+      setClientId(readStoredClientId());
     };
 
-    window.addEventListener("storage", handleStorageChange);
+    const handleStorageChange = (event) => {
+      if (!event.key || event.key === "client_id") syncClientId();
+    };
 
-    return () => window.removeEventListener("storage", handleStorageChange);
+    syncClientId();
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("focus", syncClientId);
+    document.addEventListener("visibilitychange", syncClientId);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("focus", syncClientId);
+      document.removeEventListener("visibilitychange", syncClientId);
+    };
   }, []);
 
   return clientId;

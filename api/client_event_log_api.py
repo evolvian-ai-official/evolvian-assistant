@@ -9,6 +9,13 @@ from api.modules.assistant_rag.supabase_client import supabase
 
 router = APIRouter()
 
+UUID_TYPE_ERROR_CODE = "22P02"
+
+
+def _is_invalid_uuid_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return UUID_TYPE_ERROR_CODE in msg and "uuid" in msg.lower()
+
 
 class ClientEventPayload(BaseModel):
     client_id: str
@@ -33,15 +40,28 @@ def log_client_event(payload: ClientEventPayload, request: Request):
 
         # Optional dedupe by event_key (idempotent events like step completion)
         if payload.event_key:
-            existing = (
-                supabase.table("history")
-                .select("id")
-                .eq("client_id", payload.client_id)
-                .eq("source_type", "analytics_event")
-                .eq("source_id", payload.event_key)
-                .limit(1)
-                .execute()
-            )
+            try:
+                existing = (
+                    supabase.table("history")
+                    .select("id")
+                    .eq("client_id", payload.client_id)
+                    .eq("source_type", "analytics_event")
+                    .eq("source_id", payload.event_key)
+                    .limit(1)
+                    .execute()
+                )
+            except Exception as exc:
+                if not _is_invalid_uuid_error(exc):
+                    raise
+                existing = (
+                    supabase.table("history")
+                    .select("id")
+                    .eq("client_id", payload.client_id)
+                    .eq("source_type", "analytics_event")
+                    .eq("session_id", f"__analytics__:{payload.event_key}")
+                    .limit(1)
+                    .execute()
+                )
             if existing.data:
                 return {"success": True, "deduped": True}
 
@@ -66,11 +86,17 @@ def log_client_event(payload: ClientEventPayload, request: Request):
             "status": "tracked",
             "source_id": payload.event_key,
             "metadata": event_metadata,
-            "session_id": "__analytics__",
+            "session_id": f"__analytics__:{payload.event_key}" if payload.event_key else "__analytics__",
             "created_at": created_at,
         }
 
-        res = supabase.table("history").insert(event_row).execute()
+        try:
+            res = supabase.table("history").insert(event_row).execute()
+        except Exception as exc:
+            if not (payload.event_key and _is_invalid_uuid_error(exc)):
+                raise
+            event_row["source_id"] = None
+            res = supabase.table("history").insert(event_row).execute()
         if not res.data:
             raise HTTPException(status_code=500, detail="Failed to store analytics event")
 

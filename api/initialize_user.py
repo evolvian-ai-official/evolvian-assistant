@@ -31,13 +31,14 @@ def generate_unique_public_client_id(length=12):
 
 
 def log_signup_event_once(client_id: str, auth_user_id: str, email: str):
-    event_key = "funnel_signup_completed"
+    event_name = "Funnel_Signup_Completed"
     existing = (
         supabase.table("history")
         .select("id")
         .eq("client_id", client_id)
         .eq("source_type", "analytics_event")
-        .eq("source_id", event_key)
+        .eq("session_id", "__analytics__")
+        .eq("content", event_name)
         .limit(1)
         .execute()
     )
@@ -48,14 +49,15 @@ def log_signup_event_once(client_id: str, auth_user_id: str, email: str):
     supabase.table("history").insert({
         "client_id": client_id,
         "role": "assistant",
-        "content": "Funnel_Signup_Completed",
+        "content": event_name,
         "channel": "system",
         "source_type": "analytics_event",
         "provider": "internal",
         "status": "tracked",
-        "source_id": event_key,
+        "source_id": None,
         "metadata": {
-            "event_name": "Funnel_Signup_Completed",
+            "event_name": event_name,
+            "event_key": "funnel_signup_completed",
             "event_category": "funnel",
             "event_label": "register",
             "event_value": "signup",
