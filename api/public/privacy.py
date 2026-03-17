@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/public/privacy", tags=["Public Privacy"])
 
 CONSENT_LOG_TABLE = "public_privacy_consents"
 PRIVACY_REQUEST_TABLE = "public_privacy_requests"
+CONTACTAME_FALLBACK_PLAN = "free"
 
 
 def _is_duplicate_contactame_error(error: Exception) -> bool:
@@ -42,23 +43,40 @@ def _insert_contactame_with_fallbacks(
     primary_payload: dict,
     legacy_payload: dict | None = None,
     update_payload: dict | None = None,
+    legacy_update_payload: dict | None = None,
     email: str,
 ) -> None:
+    def _update_contactame(payload: dict | None) -> bool:
+        if not payload:
+            return False
+        supabase.table("contactame").update(payload).eq("email", email).execute()
+        return True
+
     try:
         supabase.table("contactame").insert(primary_payload).execute()
         return
     except Exception as primary_error:
         if _is_duplicate_contactame_error(primary_error) and update_payload:
-            supabase.table("contactame").update(update_payload).eq("email", email).execute()
-            return
+            try:
+                if _update_contactame(update_payload):
+                    return
+            except Exception:
+                if legacy_update_payload and _update_contactame(legacy_update_payload):
+                    return
+                raise
         if legacy_payload:
             try:
                 supabase.table("contactame").insert(legacy_payload).execute()
                 return
             except Exception as legacy_error:
                 if _is_duplicate_contactame_error(legacy_error) and update_payload:
-                    supabase.table("contactame").update(update_payload).eq("email", email).execute()
-                    return
+                    try:
+                        if _update_contactame(update_payload):
+                            return
+                    except Exception:
+                        if legacy_update_payload and _update_contactame(legacy_update_payload):
+                            return
+                        raise
                 raise legacy_error from primary_error
         raise
 
@@ -192,7 +210,7 @@ def submit_privacy_request(payload: PrivacyRequestPayload, request: Request):
             "name": name or "Privacy Request",
             "email": email,
             "subject": "Privacy request",
-            "interested_plan": "Privacy",
+            "interested_plan": CONTACTAME_FALLBACK_PLAN,
             "message": fallback_message[:3900],
             "accepted_terms": True,
             "accepted_marketing": False,
@@ -205,7 +223,7 @@ def submit_privacy_request(payload: PrivacyRequestPayload, request: Request):
             "name": name or "Privacy Request",
             "email": email,
             "subject": "Privacy request",
-            "interested_plan": "Privacy",
+            "interested_plan": CONTACTAME_FALLBACK_PLAN,
             "message": fallback_message[:3900],
             "accepted_terms": True,
             "accepted_marketing": False,
@@ -218,7 +236,7 @@ def submit_privacy_request(payload: PrivacyRequestPayload, request: Request):
                 legacy_payload=legacy_fallback_record,
                 update_payload={
                     "subject": "Privacy request",
-                    "interested_plan": "Privacy",
+                    "interested_plan": CONTACTAME_FALLBACK_PLAN,
                     "message": fallback_message[:3900],
                     "accepted_terms": True,
                     "accepted_marketing": False,
@@ -226,6 +244,15 @@ def submit_privacy_request(payload: PrivacyRequestPayload, request: Request):
                     "source": "privacy_request",
                     "ip_address": ip_address,
                     "user_agent": user_agent,
+                },
+                legacy_update_payload={
+                    "subject": "Privacy request",
+                    "interested_plan": CONTACTAME_FALLBACK_PLAN,
+                    "message": fallback_message[:3900],
+                    "accepted_terms": True,
+                    "accepted_marketing": False,
+                    "terms_accepted_at": isoformat_utc(submitted_at),
+                    "source": "privacy_request",
                 },
                 email=email,
             )
@@ -365,7 +392,7 @@ def unsubscribe_marketing_email(
                     "name": "Unsubscribe request",
                     "email": normalized_email,
                     "subject": "Marketing unsubscribe request",
-                    "interested_plan": "Privacy",
+                    "interested_plan": CONTACTAME_FALLBACK_PLAN,
                     "message": fallback_message[:3900],
                     "accepted_terms": True,
                     "accepted_marketing": False,
@@ -378,7 +405,7 @@ def unsubscribe_marketing_email(
                     "name": "Unsubscribe request",
                     "email": normalized_email,
                     "subject": "Marketing unsubscribe request",
-                    "interested_plan": "Privacy",
+                    "interested_plan": CONTACTAME_FALLBACK_PLAN,
                     "message": fallback_message[:3900],
                     "accepted_terms": True,
                     "accepted_marketing": False,
@@ -391,7 +418,7 @@ def unsubscribe_marketing_email(
                         legacy_payload=legacy_fallback_record,
                         update_payload={
                             "subject": "Marketing unsubscribe request",
-                            "interested_plan": "Privacy",
+                            "interested_plan": CONTACTAME_FALLBACK_PLAN,
                             "message": fallback_message[:3900],
                             "accepted_terms": True,
                             "accepted_marketing": False,
@@ -399,6 +426,15 @@ def unsubscribe_marketing_email(
                             "source": "privacy_unsubscribe_fallback",
                             "ip_address": request_ip,
                             "user_agent": request.headers.get("user-agent"),
+                        },
+                        legacy_update_payload={
+                            "subject": "Marketing unsubscribe request",
+                            "interested_plan": CONTACTAME_FALLBACK_PLAN,
+                            "message": fallback_message[:3900],
+                            "accepted_terms": True,
+                            "accepted_marketing": False,
+                            "terms_accepted_at": isoformat_utc(submitted_at),
+                            "source": "privacy_unsubscribe_fallback",
                         },
                         email=normalized_email,
                     )
