@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import lru_cache
 import logging
 import re
 from typing import Any, Optional
+
+from api.config.config import supabase
 
 
 logger = logging.getLogger(__name__)
 
 MARKETING_CONTACTS_TABLE = "marketing_contacts"
 VALID_INTEREST_STATUSES = {"interested", "not_interested", "unknown"}
+_MEXICO_COUNTRY_ALIASES = {"mx", "mex", "mexico", "méxico"}
 
 
 def normalize_marketing_email(value: Any) -> Optional[str]:
@@ -17,7 +21,35 @@ def normalize_marketing_email(value: Any) -> Optional[str]:
     return cleaned or None
 
 
-def normalize_marketing_phone(value: Any) -> Optional[str]:
+@lru_cache(maxsize=512)
+def _resolve_client_country_code(client_id: str) -> str:
+    normalized_client_id = str(client_id or "").strip()
+    if not normalized_client_id:
+        return ""
+    try:
+        rows = (
+            supabase
+            .table("client_profile")
+            .select("country")
+            .eq("client_id", normalized_client_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        if not rows:
+            return ""
+        raw_country = str((rows[0] or {}).get("country") or "").strip().lower()
+        if not raw_country:
+            return ""
+        if raw_country in _MEXICO_COUNTRY_ALIASES:
+            return "MX"
+        if len(raw_country) == 2 and raw_country.isalpha():
+            return raw_country.upper()
+    except Exception:
+        logger.exception("Failed resolving client country | client_id=%s", normalized_client_id)
+    return ""
+
+
+def normalize_marketing_phone(value: Any, *, client_country_code: Optional[str] = None) -> Optional[str]:
     raw = str(value or "").strip()
     if not raw:
         return None
@@ -27,8 +59,14 @@ def normalize_marketing_phone(value: Any) -> Optional[str]:
     digits = re.sub(r"\D", "", cleaned)
     if not digits:
         return None
+    normalized_country = str(client_country_code or "").strip().upper()
+    # Only infer +52 from local 10-digit numbers when the client is known to be in Mexico.
+    if len(digits) == 10 and normalized_country == "MX":
+        digits = f"52{digits}"
     if digits.startswith("521") and len(digits) == 13:
         digits = "52" + digits[3:]
+    if len(digits) == 10:
+        return None
     if len(digits) < 10 or len(digits) > 15:
         return None
     return f"+{digits}"
@@ -60,6 +98,40 @@ def _as_epoch(value: Any) -> float:
     return parsed.astimezone(timezone.utc).timestamp()
 
 
+def _marketing_phone_aliases(value: Any) -> list[str]:
+    raw = str(value or "").strip()
+    normalized = normalize_marketing_phone(raw, client_country_code="MX")
+    aliases: set[str] = set()
+
+    if normalized:
+        aliases.add(normalized)
+        digits = re.sub(r"\D", "", normalized)
+    else:
+        digits = re.sub(r"\D", "", raw)
+
+    if not digits:
+        return []
+
+    aliases.add(digits)
+    aliases.add(f"+{digits}")
+
+    if digits.startswith("52") and len(digits) == 12:
+        local_digits = digits[2:]
+        aliases.add(local_digits)
+        aliases.add(f"+{local_digits}")
+        aliases.add(f"521{local_digits}")
+        aliases.add(f"+521{local_digits}")
+    elif digits.startswith("521") and len(digits) == 13:
+        mx_digits = f"52{digits[3:]}"
+        aliases.add(mx_digits)
+        aliases.add(f"+{mx_digits}")
+        local_digits = mx_digits[2:]
+        aliases.add(local_digits)
+        aliases.add(f"+{local_digits}")
+
+    return sorted(alias for alias in aliases if alias)
+
+
 def _load_existing_contact(
     *,
     supabase_client: Any,
@@ -84,20 +156,22 @@ def _load_existing_contact(
             return rows[0] or None
 
     if normalized_phone:
-        rows = (
-            supabase_client.table(MARKETING_CONTACTS_TABLE)
-            .select(
-                "id,name,email,normalized_email,phone,normalized_phone,"
-                "email_opt_in,whatsapp_opt_in,email_unsubscribed,whatsapp_unsubscribed,"
-                "interest_status,first_seen_at,last_seen_at"
-            )
-            .eq("client_id", client_id)
-            .eq("normalized_phone", normalized_phone)
-            .limit(1)
-            .execute()
-        ).data or []
-        if rows:
-            return rows[0] or None
+        phone_aliases = _marketing_phone_aliases(normalized_phone)
+        for field_name in ("normalized_phone", "phone"):
+            rows = (
+                supabase_client.table(MARKETING_CONTACTS_TABLE)
+                .select(
+                    "id,name,email,normalized_email,phone,normalized_phone,"
+                    "email_opt_in,whatsapp_opt_in,email_unsubscribed,whatsapp_unsubscribed,"
+                    "interest_status,first_seen_at,last_seen_at"
+                )
+                .eq("client_id", client_id)
+                .in_(field_name, phone_aliases)
+                .limit(1)
+                .execute()
+            ).data or []
+            if rows:
+                return rows[0] or None
 
     return None
 
@@ -118,7 +192,8 @@ def upsert_marketing_contact_state(
 ) -> bool:
     normalized_client_id = str(client_id or "").strip()
     normalized_email = normalize_marketing_email(email)
-    normalized_phone = normalize_marketing_phone(phone)
+    client_country_code = _resolve_client_country_code(normalized_client_id)
+    normalized_phone = normalize_marketing_phone(phone, client_country_code=client_country_code)
     normalized_name = str(name or "").strip() or None
     effective_seen_at = str(seen_at or "").strip() or _now_iso()
     incoming_interest = _normalize_interest_status(interest_status)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import lru_cache
 import logging
 import re
 from typing import Optional
@@ -16,6 +17,7 @@ from api.security.request_limiter import enforce_rate_limit, get_request_ip
 
 router = APIRouter(prefix="/api/public/marketing", tags=["Public Marketing"])
 logger = logging.getLogger(__name__)
+_MEXICO_COUNTRY_ALIASES = {"mx", "mex", "mexico", "méxico"}
 
 
 def _normalize_email(value: Optional[str]) -> Optional[str]:
@@ -23,7 +25,32 @@ def _normalize_email(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
-def _normalize_phone(value: Optional[str]) -> Optional[str]:
+@lru_cache(maxsize=512)
+def _get_client_country_code(client_id: str) -> str:
+    normalized_client_id = str(client_id or "").strip()
+    if not normalized_client_id:
+        return ""
+    try:
+        rows = (
+            supabase
+            .table("client_profile")
+            .select("country")
+            .eq("client_id", normalized_client_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        if rows:
+            raw_country = str((rows[0] or {}).get("country") or "").strip().lower()
+            if raw_country in _MEXICO_COUNTRY_ALIASES:
+                return "MX"
+            if len(raw_country) == 2 and raw_country.isalpha():
+                return raw_country.upper()
+    except Exception:
+        logger.warning("Could not resolve client country for phone normalization | client_id=%s", normalized_client_id)
+    return ""
+
+
+def _normalize_phone(value: Optional[str], *, client_id: Optional[str] = None) -> Optional[str]:
     raw = str(value or "").strip()
     if not raw:
         return None
@@ -33,8 +60,13 @@ def _normalize_phone(value: Optional[str]) -> Optional[str]:
     digits = re.sub(r"\D", "", cleaned)
     if not digits:
         return None
+    client_country = _get_client_country_code(str(client_id or "").strip()) if client_id else ""
+    if len(digits) == 10 and client_country == "MX":
+        digits = f"52{digits}"
     if digits.startswith("521") and len(digits) == 13:
         digits = "52" + digits[3:]
+    if len(digits) == 10:
+        return None
     if len(digits) < 10 or len(digits) > 15:
         return None
     return f"+{digits}"
@@ -340,7 +372,7 @@ def marketing_interest_click(
 
     recipient_name = str((recipient_row or {}).get("recipient_name") or "").strip() or None
     recipient_email = _normalize_email((recipient_row or {}).get("email"))
-    recipient_phone = _normalize_phone((recipient_row or {}).get("phone"))
+    recipient_phone = _normalize_phone((recipient_row or {}).get("phone"), client_id=client_id)
 
     handoff_id = _upsert_campaign_interest_handoff(
         client_id=client_id,

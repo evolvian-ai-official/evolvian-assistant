@@ -3,27 +3,64 @@
 
 begin;
 
+create or replace function pg_temp.normalize_marketing_phone(raw text, client_country text default null)
+returns text
+language plpgsql
+as $$
+declare
+  cleaned text;
+  digits text;
+  normalized_country text;
+begin
+  cleaned := regexp_replace(trim(coalesce(raw, '')), '[^0-9+]', '', 'g');
+  if cleaned = '' then
+    return null;
+  end if;
+  if cleaned like '00%' then
+    cleaned := '+' || substr(cleaned, 3);
+  end if;
+  digits := regexp_replace(cleaned, '\D', '', 'g');
+  if digits = '' then
+    return null;
+  end if;
+  normalized_country := upper(trim(coalesce(client_country, '')));
+  if normalized_country in ('MX', 'MEX', 'MEXICO', 'MÉXICO') and length(digits) = 10 then
+    digits := '52' || digits;
+  end if;
+  if digits like '521%' and length(digits) = 13 then
+    digits := '52' || substr(digits, 4);
+  end if;
+  if length(digits) = 10 then
+    return null;
+  end if;
+  if length(digits) < 10 or length(digits) > 15 then
+    return null;
+  end if;
+  return '+' || digits;
+end;
+$$;
+
 with latest_email_consent as (
-  select distinct on (client_id, lower(trim(email)))
-    client_id,
-    lower(trim(email)) as normalized_email,
-    accepted_email_marketing,
-    consent_at::timestamptz as seen_at
-  from public.widget_consents
-  where client_id is not null
-    and nullif(lower(trim(coalesce(email, ''))), '') is not null
-  order by client_id, lower(trim(email)), consent_at desc nulls last
+  select distinct on (wc.client_id, lower(trim(wc.email)))
+    wc.client_id as client_id,
+    lower(trim(wc.email)) as normalized_email,
+    wc.accepted_email_marketing,
+    wc.consent_at::timestamptz as seen_at
+  from public.widget_consents wc
+  where wc.client_id is not null
+    and nullif(lower(trim(coalesce(wc.email, ''))), '') is not null
+  order by wc.client_id, lower(trim(wc.email)), wc.consent_at desc nulls last
 ),
 latest_email_handoff as (
-  select distinct on (client_id, lower(trim(contact_email)))
-    client_id,
-    lower(trim(contact_email)) as normalized_email,
-    accepted_email_marketing,
-    created_at as seen_at
-  from public.conversation_handoff_requests
-  where client_id is not null
-    and nullif(lower(trim(coalesce(contact_email, ''))), '') is not null
-  order by client_id, lower(trim(contact_email)), created_at desc nulls last
+  select distinct on (chr.client_id, lower(trim(chr.contact_email)))
+    chr.client_id as client_id,
+    lower(trim(chr.contact_email)) as normalized_email,
+    chr.accepted_email_marketing,
+    chr.created_at as seen_at
+  from public.conversation_handoff_requests chr
+  where chr.client_id is not null
+    and nullif(lower(trim(coalesce(chr.contact_email, ''))), '') is not null
+  order by chr.client_id, lower(trim(chr.contact_email)), chr.created_at desc nulls last
 ),
 latest_email_choice as (
   select distinct on (client_id, normalized_email)
@@ -39,26 +76,28 @@ latest_email_choice as (
   order by client_id, normalized_email, seen_at desc nulls last
 ),
 latest_phone_consent as (
-  select distinct on (client_id, regexp_replace(trim(phone), '[^0-9+]', '', 'g'))
-    client_id,
-    regexp_replace(trim(phone), '[^0-9+]', '', 'g') as normalized_phone,
-    accepted_email_marketing,
-    consent_at::timestamptz as seen_at
-  from public.widget_consents
-  where client_id is not null
-    and nullif(trim(coalesce(phone, '')), '') is not null
-  order by client_id, regexp_replace(trim(phone), '[^0-9+]', '', 'g'), consent_at desc nulls last
+  select distinct on (wc.client_id, pg_temp.normalize_marketing_phone(wc.phone, cp.country))
+    wc.client_id as client_id,
+    pg_temp.normalize_marketing_phone(wc.phone, cp.country) as normalized_phone,
+    wc.accepted_email_marketing,
+    wc.consent_at::timestamptz as seen_at
+  from public.widget_consents wc
+  left join public.client_profile cp on cp.client_id = wc.client_id
+  where wc.client_id is not null
+    and pg_temp.normalize_marketing_phone(wc.phone, cp.country) is not null
+  order by wc.client_id, pg_temp.normalize_marketing_phone(wc.phone, cp.country), wc.consent_at desc nulls last
 ),
 latest_phone_handoff as (
-  select distinct on (client_id, regexp_replace(trim(contact_phone), '[^0-9+]', '', 'g'))
-    client_id,
-    regexp_replace(trim(contact_phone), '[^0-9+]', '', 'g') as normalized_phone,
-    accepted_email_marketing,
-    created_at as seen_at
-  from public.conversation_handoff_requests
-  where client_id is not null
-    and nullif(trim(coalesce(contact_phone, '')), '') is not null
-  order by client_id, regexp_replace(trim(contact_phone), '[^0-9+]', '', 'g'), created_at desc nulls last
+  select distinct on (chr.client_id, pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country))
+    chr.client_id as client_id,
+    pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country) as normalized_phone,
+    chr.accepted_email_marketing,
+    chr.created_at as seen_at
+  from public.conversation_handoff_requests chr
+  left join public.client_profile cp on cp.client_id = chr.client_id
+  where chr.client_id is not null
+    and pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country) is not null
+  order by chr.client_id, pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country), chr.created_at desc nulls last
 ),
 latest_phone_choice as (
   select distinct on (client_id, normalized_phone)
@@ -82,26 +121,28 @@ where mc.client_id = lec.client_id
   and mc.normalized_email = lec.normalized_email;
 
 with latest_phone_consent as (
-  select distinct on (client_id, regexp_replace(trim(phone), '[^0-9+]', '', 'g'))
-    client_id,
-    regexp_replace(trim(phone), '[^0-9+]', '', 'g') as normalized_phone,
-    accepted_email_marketing,
-    consent_at::timestamptz as seen_at
-  from public.widget_consents
-  where client_id is not null
-    and nullif(trim(coalesce(phone, '')), '') is not null
-  order by client_id, regexp_replace(trim(phone), '[^0-9+]', '', 'g'), consent_at desc nulls last
+  select distinct on (wc.client_id, pg_temp.normalize_marketing_phone(wc.phone, cp.country))
+    wc.client_id as client_id,
+    pg_temp.normalize_marketing_phone(wc.phone, cp.country) as normalized_phone,
+    wc.accepted_email_marketing,
+    wc.consent_at::timestamptz as seen_at
+  from public.widget_consents wc
+  left join public.client_profile cp on cp.client_id = wc.client_id
+  where wc.client_id is not null
+    and pg_temp.normalize_marketing_phone(wc.phone, cp.country) is not null
+  order by wc.client_id, pg_temp.normalize_marketing_phone(wc.phone, cp.country), wc.consent_at desc nulls last
 ),
 latest_phone_handoff as (
-  select distinct on (client_id, regexp_replace(trim(contact_phone), '[^0-9+]', '', 'g'))
-    client_id,
-    regexp_replace(trim(contact_phone), '[^0-9+]', '', 'g') as normalized_phone,
-    accepted_email_marketing,
-    created_at as seen_at
-  from public.conversation_handoff_requests
-  where client_id is not null
-    and nullif(trim(coalesce(contact_phone, '')), '') is not null
-  order by client_id, regexp_replace(trim(contact_phone), '[^0-9+]', '', 'g'), created_at desc nulls last
+  select distinct on (chr.client_id, pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country))
+    chr.client_id as client_id,
+    pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country) as normalized_phone,
+    chr.accepted_email_marketing,
+    chr.created_at as seen_at
+  from public.conversation_handoff_requests chr
+  left join public.client_profile cp on cp.client_id = chr.client_id
+  where chr.client_id is not null
+    and pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country) is not null
+  order by chr.client_id, pg_temp.normalize_marketing_phone(chr.contact_phone, cp.country), chr.created_at desc nulls last
 ),
 latest_phone_choice as (
   select distinct on (client_id, normalized_phone)

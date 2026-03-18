@@ -4,6 +4,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, Literal, Optional
 from urllib.parse import quote_plus, urlparse
 
@@ -43,6 +44,7 @@ WHATSAPP_OPT_OUT_KEYWORDS = (
     "no mas",
     "no más",
 )
+_MEXICO_COUNTRY_ALIASES = {"mx", "mex", "mexico", "méxico"}
 
 
 class CampaignCreatePayload(BaseModel):
@@ -109,7 +111,32 @@ def _normalize_email(value: Any) -> Optional[str]:
     return cleaned or None
 
 
-def _normalize_phone(value: Any) -> Optional[str]:
+@lru_cache(maxsize=512)
+def _get_client_country_code(client_id: str) -> str:
+    normalized_client_id = str(client_id or "").strip()
+    if not normalized_client_id:
+        return ""
+    try:
+        rows = (
+            supabase
+            .table("client_profile")
+            .select("country")
+            .eq("client_id", normalized_client_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        if rows:
+            raw_country = str((rows[0] or {}).get("country") or "").strip().lower()
+            if raw_country in _MEXICO_COUNTRY_ALIASES:
+                return "MX"
+            if len(raw_country) == 2 and raw_country.isalpha():
+                return raw_country.upper()
+    except Exception:
+        pass
+    return ""
+
+
+def _normalize_phone(value: Any, *, client_id: Optional[str] = None) -> Optional[str]:
     if value is None:
         return None
     raw = str(value).strip()
@@ -125,9 +152,15 @@ def _normalize_phone(value: Any) -> Optional[str]:
     if not digits:
         return None
 
+    client_country = _get_client_country_code(str(client_id or "").strip()) if client_id else ""
+    if len(digits) == 10 and client_country == "MX":
+        digits = f"52{digits}"
+
     # Normalize legacy MX format 521XXXXXXXXXX -> 52XXXXXXXXXX
     if digits.startswith("521") and len(digits) == 13:
         digits = "52" + digits[3:]
+    if len(digits) == 10:
+        return None
 
     # Basic E.164 sanity checks.
     if len(digits) < 10 or len(digits) > 15:
@@ -993,7 +1026,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
 
     for raw in appointment_clients.data or []:
         email = _normalize_email(raw.get("user_email"))
-        phone = _normalize_phone(raw.get("user_phone"))
+        phone = _normalize_phone(raw.get("user_phone"), client_id=client_id)
         name = _normalize_name(raw.get("user_name"))
         key = _recipient_key(email, phone, name)
         if not key:
@@ -1020,7 +1053,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
     )
     for raw in appointments.data or []:
         email = _normalize_email(raw.get("user_email"))
-        phone = _normalize_phone(raw.get("user_phone"))
+        phone = _normalize_phone(raw.get("user_phone"), client_id=client_id)
         name = _normalize_name(raw.get("user_name"))
         key = _recipient_key(email, phone, name)
         if not key:
@@ -1057,7 +1090,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
     )
     for raw in widget_consents.data or []:
         email = _normalize_email(raw.get("email"))
-        phone = _normalize_phone(raw.get("phone"))
+        phone = _normalize_phone(raw.get("phone"), client_id=client_id)
         key = _recipient_key(email, phone, None)
         if not key:
             continue
@@ -1087,7 +1120,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
     )
     for raw in handoff_consents.data or []:
         email = _normalize_email(raw.get("contact_email"))
-        phone = _normalize_phone(raw.get("contact_phone"))
+        phone = _normalize_phone(raw.get("contact_phone"), client_id=client_id)
         name = _normalize_name(raw.get("contact_name"))
         key = _recipient_key(email, phone, name)
         if not key:
@@ -1141,7 +1174,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
         row["policy_reason_email"] = _resolve_marketing_policy_reason(
             channel="email",
             email=email,
-            phone=_normalize_phone(row.get("phone")),
+            phone=_normalize_phone(row.get("phone"), client_id=client_id),
             is_opted_out=is_opted_out,
             consent_at=row.get("latest_consent_at"),
             consent_terms_accepted=bool(row.get("consent_terms_accepted")),
@@ -1154,7 +1187,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
         row["policy_reason_whatsapp"] = _resolve_marketing_policy_reason(
             channel="whatsapp",
             email=email,
-            phone=_normalize_phone(row.get("phone")),
+            phone=_normalize_phone(row.get("phone"), client_id=client_id),
             is_opted_out=is_opted_out,
             consent_at=row.get("latest_consent_at"),
             consent_terms_accepted=bool(row.get("consent_terms_accepted")),
@@ -2118,7 +2151,7 @@ async def send_campaign(request: Request, campaign_id: str, payload: CampaignSen
 
             else:
                 raw_phone = str(target.get("phone") or "").strip()
-                recipient_phone = _normalize_phone(raw_phone)
+                recipient_phone = _normalize_phone(raw_phone, client_id=payload.client_id)
                 if not recipient_phone:
                     base_row.update(
                         {
