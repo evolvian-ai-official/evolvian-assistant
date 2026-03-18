@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from api.config.config import supabase
+from api.marketing_contacts_state import upsert_marketing_contact_state
 from api.security.request_limiter import enforce_rate_limit, get_request_ip
 
 
@@ -352,6 +353,15 @@ def marketing_interest_click(
         phone=recipient_phone,
     )
 
+    upsert_marketing_contact_state(
+        supabase_client=supabase,
+        client_id=client_id,
+        name=recipient_name,
+        email=recipient_email,
+        phone=recipient_phone,
+        interest_status="interested",
+    )
+
     event_metadata = {
         "channel": event_channel,
         "recipient_key": normalized_recipient_key,
@@ -364,7 +374,7 @@ def marketing_interest_click(
                 "client_id": client_id,
                 "campaign_id": campaign_id,
                 "recipient_key": normalized_recipient_key,
-                "event_type": "interest",
+                "event_type": "interest_yes",
                 "metadata": event_metadata,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }

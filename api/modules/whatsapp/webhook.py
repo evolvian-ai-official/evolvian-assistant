@@ -12,6 +12,7 @@ from typing import Any, Optional
 from api.modules.assistant_rag.rag_pipeline import handle_message
 from api.modules.whatsapp.whatsapp_sender import send_whatsapp_message
 from api.config.config import supabase
+from api.marketing_contacts_state import upsert_marketing_contact_state
 from api.appointments.cancellation_notifications import (
     send_appointment_cancellation_notification,
     send_appointment_cancellation_email_notification,
@@ -436,7 +437,7 @@ def _log_marketing_interest_event(
                 "client_id": client_id,
                 "campaign_id": normalized_campaign_id,
                 "recipient_key": normalized_recipient_key or None,
-                "event_type": "interest",
+                "event_type": "interest_yes",
                 "metadata": metadata,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -973,6 +974,13 @@ async def process_whatsapp_payload(payload: dict):
                         recipient_key=(recent_marketing_row or {}).get("recipient_key"),
                         provider_message_id=context_message_id or (recent_marketing_row or {}).get("provider_message_id"),
                     )
+                    upsert_marketing_contact_state(
+                        supabase_client=supabase,
+                        client_id=client_id,
+                        email=recipient_email,
+                        phone=(recent_marketing_row or {}).get("phone"),
+                        whatsapp_unsubscribed=True,
+                    )
                     logger.info(
                         "Meta opt-out processed | message_fp=%s | campaign_ref=%s | email_fp=%s",
                         _safe_hash(wa_message_id),
@@ -1047,6 +1055,13 @@ async def process_whatsapp_payload(payload: dict):
                     recipient_key=(recent_marketing_row or {}).get("recipient_key"),
                     provider_message_id=context_message_id or (recent_marketing_row or {}).get("provider_message_id"),
                     handoff_id=(handoff_info or {}).get("handoff_id"),
+                )
+                upsert_marketing_contact_state(
+                    supabase_client=supabase,
+                    client_id=client_id,
+                    email=(recent_marketing_row or {}).get("email"),
+                    phone=(recent_marketing_row or {}).get("phone") or from_number,
+                    interest_status="interested",
                 )
 
                 if (handoff_info or {}).get("handoff_id"):

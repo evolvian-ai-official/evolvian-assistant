@@ -10,7 +10,7 @@ class _DummyRequest:
 def test_unsubscribe_uses_fallback_when_primary_insert_fails(monkeypatch):
     from api.public import privacy as module
 
-    state = {"fallback_payload": None}
+    state = {"fallback_payload": None, "marketing_updates": []}
 
     class _FakeTable:
         def __init__(self, name: str):
@@ -53,6 +53,11 @@ def test_unsubscribe_uses_fallback_when_primary_insert_fails(monkeypatch):
     monkeypatch.setattr(module, "supabase", _FakeSupabase())
     monkeypatch.setattr(module, "enforce_rate_limit", lambda **_kwargs: None)
     monkeypatch.setattr(module, "get_request_ip", lambda _request: "127.0.0.1")
+    monkeypatch.setattr(
+        module,
+        "upsert_marketing_contact_state",
+        lambda **kwargs: state["marketing_updates"].append(kwargs) or True,
+    )
 
     response = module.unsubscribe_marketing_email(
         request=_DummyRequest(),
@@ -66,6 +71,8 @@ def test_unsubscribe_uses_fallback_when_primary_insert_fails(monkeypatch):
     assert state["fallback_payload"]["email"] == "aldo.benitez.cortes@gmail.com"
     assert state["fallback_payload"]["interested_plan"] == module.CONTACTAME_FALLBACK_PLAN
     assert state["fallback_payload"]["source"] == "privacy_unsubscribe_fallback"
+    assert len(state["marketing_updates"]) == 1
+    assert state["marketing_updates"][0]["email_unsubscribed"] is True
 
 
 def test_unsubscribe_treats_duplicate_race_as_success(monkeypatch):

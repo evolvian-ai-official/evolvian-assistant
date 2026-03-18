@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr, Field
 
 from api.config.config import supabase
+from api.marketing_contacts_state import upsert_marketing_contact_state
 from api.privacy_dsr import (
     build_initial_metadata,
     calculate_due_at,
@@ -90,6 +91,18 @@ def _extract_opt_out_client_id(details: str | None) -> str | None:
     if match:
         return str(match.group(1)).strip()
     return None
+
+
+def _mark_contact_email_unsubscribed(*, client_id: str | None, email: str, seen_at: str) -> None:
+    if not str(client_id or "").strip():
+        return
+    upsert_marketing_contact_state(
+        supabase_client=supabase,
+        client_id=client_id,
+        email=email,
+        email_unsubscribed=True,
+        seen_at=seen_at,
+    )
 
 
 class PrivacyConsentPayload(BaseModel):
@@ -349,6 +362,11 @@ def unsubscribe_marketing_email(
         }
         try:
             supabase.table(PRIVACY_REQUEST_TABLE).insert(record).execute()
+            _mark_contact_email_unsubscribed(
+                client_id=resolved_client_id,
+                email=normalized_email,
+                seen_at=record["created_at"],
+            )
         except Exception as insert_error:
             print(
                 f"⚠️ Failed recording marketing unsubscribe | email={normalized_email} | client_id={resolved_client_id or 'none'} | error={insert_error}"
@@ -438,6 +456,11 @@ def unsubscribe_marketing_email(
                         },
                         email=normalized_email,
                     )
+                    _mark_contact_email_unsubscribed(
+                        client_id=resolved_client_id,
+                        email=normalized_email,
+                        seen_at=isoformat_utc(submitted_at),
+                    )
                 except Exception as fallback_error:
                     if language == "es":
                         fail_title = "No se pudo completar la baja"
@@ -460,6 +483,12 @@ def unsubscribe_marketing_email(
                         "</div></body></html>"
                     )
                     return HTMLResponse(content=fail_html, status_code=503)
+            else:
+                _mark_contact_email_unsubscribed(
+                    client_id=resolved_client_id,
+                    email=normalized_email,
+                    seen_at=isoformat_utc(submitted_at),
+                )
 
     if language == "es":
         title = "Has sido dado de baja"

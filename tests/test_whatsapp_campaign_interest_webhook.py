@@ -20,6 +20,7 @@ def test_whatsapp_campaign_interest_creates_handoff_and_skips_rag(monkeypatch):
     handoff_calls = []
     send_calls = []
     event_calls = []
+    state_updates = []
 
     monkeypatch.setattr(module, "get_channel_by_wa_phone_id", lambda *_args, **_kwargs: {"client_id": "client_1"})
     monkeypatch.setattr(module, "is_duplicate_wa_message", lambda *_args, **_kwargs: False)
@@ -38,6 +39,11 @@ def test_whatsapp_campaign_interest_creates_handoff_and_skips_rag(monkeypatch):
         module,
         "_log_marketing_interest_event",
         lambda **kwargs: event_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        module,
+        "upsert_marketing_contact_state",
+        lambda **kwargs: state_updates.append(kwargs) or True,
     )
 
     async def _fake_send_whatsapp_message(*, to_number, text, channel):
@@ -85,6 +91,8 @@ def test_whatsapp_campaign_interest_creates_handoff_and_skips_rag(monkeypatch):
     assert handoff_calls[0]["trigger"] == "campaign_interest_button"
     assert len(event_calls) == 1
     assert event_calls[0]["campaign_id"] == "campaign_1"
+    assert len(state_updates) == 1
+    assert state_updates[0]["interest_status"] == "interested"
     assert len(send_calls) == 1
     assert "asesor humano" in send_calls[0]["text"].lower()
 
@@ -95,6 +103,7 @@ def test_whatsapp_campaign_interest_button_without_text_still_creates_handoff(mo
 
     handoff_calls = []
     send_calls = []
+    state_updates = []
 
     monkeypatch.setattr(module, "get_channel_by_wa_phone_id", lambda *_args, **_kwargs: {"client_id": "client_1"})
     monkeypatch.setattr(module, "is_duplicate_wa_message", lambda *_args, **_kwargs: False)
@@ -110,6 +119,11 @@ def test_whatsapp_campaign_interest_button_without_text_still_creates_handoff(mo
     )
     monkeypatch.setattr(module, "_load_campaign_opt_out_labels", lambda *_args, **_kwargs: {"no recibir más"})
     monkeypatch.setattr(module, "_log_marketing_interest_event", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "upsert_marketing_contact_state",
+        lambda **kwargs: state_updates.append(kwargs) or True,
+    )
 
     async def _fake_send_whatsapp_message(*, to_number, text, channel):
         send_calls.append({"to_number": to_number, "text": text, "channel": channel})
@@ -154,6 +168,8 @@ def test_whatsapp_campaign_interest_button_without_text_still_creates_handoff(mo
     assert len(handoff_calls) == 1
     assert handoff_calls[0]["reason"] == "campaign_interest"
     assert handoff_calls[0]["trigger"] == "campaign_interest_button"
+    assert len(state_updates) == 1
+    assert state_updates[0]["interest_status"] == "interested"
     assert len(send_calls) == 1
 
 

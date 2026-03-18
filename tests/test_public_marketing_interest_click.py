@@ -36,6 +36,7 @@ def test_marketing_interest_click_redirect_logs_event_and_handoff(monkeypatch):
         "marketing_campaign_events": [],
     }
     handoff_calls = []
+    state_updates = []
 
     class _FakeQuery:
         def __init__(self, table_name: str):
@@ -104,6 +105,11 @@ def test_marketing_interest_click_redirect_logs_event_and_handoff(monkeypatch):
         "_upsert_campaign_interest_handoff",
         lambda **kwargs: handoff_calls.append(kwargs) or "handoff_1",
     )
+    monkeypatch.setattr(
+        module,
+        "upsert_marketing_contact_state",
+        lambda **kwargs: state_updates.append(kwargs) or True,
+    )
 
     response = module.marketing_interest_click(
         _DummyRequest(),
@@ -118,10 +124,13 @@ def test_marketing_interest_click_redirect_logs_event_and_handoff(monkeypatch):
     assert handoff_calls[0]["campaign_id"] == "campaign_12345678"
     assert handoff_calls[0]["channel"] == "whatsapp"
     assert handoff_calls[0]["recipient_key"] == "phone:+525512345678"
+    assert len(state_updates) == 1
+    assert state_updates[0]["interest_status"] == "interested"
+    assert state_updates[0]["client_id"] == "client_1"
 
     assert len(state["marketing_campaign_events"]) == 1
     event = state["marketing_campaign_events"][0]
-    assert event["event_type"] == "interest"
+    assert event["event_type"] == "interest_yes"
     assert event["campaign_id"] == "campaign_12345678"
     assert event["metadata"]["handoff_id"] == "handoff_1"
 
