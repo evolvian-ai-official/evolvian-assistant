@@ -47,6 +47,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _as_epoch(value: Any) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).timestamp()
+
+
 def _load_existing_contact(
     *,
     supabase_client: Any,
@@ -130,20 +143,40 @@ def upsert_marketing_contact_state(
         return False
 
     if existing:
+        existing_last_seen_at = existing.get("last_seen_at")
+        incoming_is_newer = _as_epoch(effective_seen_at) >= _as_epoch(existing_last_seen_at)
         current_interest = _normalize_interest_status(existing.get("interest_status"))
-        merged_interest = current_interest if incoming_interest == "unknown" else incoming_interest
+        merged_interest = current_interest
+        if incoming_interest != "unknown" and incoming_is_newer:
+            merged_interest = incoming_interest
         payload = {
             "name": normalized_name or existing.get("name"),
             "email": normalized_email or existing.get("email"),
             "normalized_email": normalized_email or existing.get("normalized_email"),
             "phone": normalized_phone or existing.get("phone"),
             "normalized_phone": normalized_phone or existing.get("normalized_phone"),
-            "email_opt_in": _coerce_bool(existing.get("email_opt_in")) or _coerce_bool(email_opt_in),
-            "whatsapp_opt_in": _coerce_bool(existing.get("whatsapp_opt_in")) or _coerce_bool(whatsapp_opt_in),
-            "email_unsubscribed": _coerce_bool(existing.get("email_unsubscribed")) or _coerce_bool(email_unsubscribed),
-            "whatsapp_unsubscribed": _coerce_bool(existing.get("whatsapp_unsubscribed")) or _coerce_bool(whatsapp_unsubscribed),
+            "email_opt_in": (
+                _coerce_bool(email_opt_in)
+                if incoming_is_newer and email_opt_in is not None
+                else _coerce_bool(existing.get("email_opt_in"))
+            ),
+            "whatsapp_opt_in": (
+                _coerce_bool(whatsapp_opt_in)
+                if incoming_is_newer and whatsapp_opt_in is not None
+                else _coerce_bool(existing.get("whatsapp_opt_in"))
+            ),
+            "email_unsubscribed": (
+                _coerce_bool(email_unsubscribed)
+                if incoming_is_newer and email_unsubscribed is not None
+                else _coerce_bool(existing.get("email_unsubscribed"))
+            ),
+            "whatsapp_unsubscribed": (
+                _coerce_bool(whatsapp_unsubscribed)
+                if incoming_is_newer and whatsapp_unsubscribed is not None
+                else _coerce_bool(existing.get("whatsapp_unsubscribed"))
+            ),
             "interest_status": merged_interest,
-            "last_seen_at": effective_seen_at,
+            "last_seen_at": effective_seen_at if incoming_is_newer else existing_last_seen_at,
             "updated_at": _now_iso(),
         }
         try:
