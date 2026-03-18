@@ -391,6 +391,8 @@ def marketing_interest_click(
         name=recipient_name,
         email=recipient_email,
         phone=recipient_phone,
+        email_opt_in=True if event_channel == "email" else None,
+        whatsapp_opt_in=True if event_channel == "whatsapp" else None,
         interest_status="interested",
     )
 

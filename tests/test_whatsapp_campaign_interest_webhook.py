@@ -93,6 +93,7 @@ def test_whatsapp_campaign_interest_creates_handoff_and_skips_rag(monkeypatch):
     assert event_calls[0]["campaign_id"] == "campaign_1"
     assert len(state_updates) == 1
     assert state_updates[0]["interest_status"] == "interested"
+    assert state_updates[0]["whatsapp_opt_in"] is True
     assert len(send_calls) == 1
     assert "asesor humano" in send_calls[0]["text"].lower()
 
@@ -170,6 +171,7 @@ def test_whatsapp_campaign_interest_button_without_text_still_creates_handoff(mo
     assert handoff_calls[0]["trigger"] == "campaign_interest_button"
     assert len(state_updates) == 1
     assert state_updates[0]["interest_status"] == "interested"
+    assert state_updates[0]["whatsapp_opt_in"] is True
     assert len(send_calls) == 1
 
 

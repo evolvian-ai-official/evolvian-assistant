@@ -1061,6 +1061,7 @@ async def process_whatsapp_payload(payload: dict):
                     client_id=client_id,
                     email=(recent_marketing_row or {}).get("email"),
                     phone=(recent_marketing_row or {}).get("phone") or from_number,
+                    whatsapp_opt_in=True,
                     interest_status="interested",
                 )
 

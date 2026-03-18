@@ -126,6 +126,8 @@ def test_marketing_interest_click_redirect_logs_event_and_handoff(monkeypatch):
     assert handoff_calls[0]["recipient_key"] == "phone:+525512345678"
     assert len(state_updates) == 1
     assert state_updates[0]["interest_status"] == "interested"
+    assert state_updates[0]["whatsapp_opt_in"] is True
+    assert state_updates[0]["email_opt_in"] is None
     assert state_updates[0]["client_id"] == "client_1"
 
     assert len(state["marketing_campaign_events"]) == 1
@@ -195,6 +197,116 @@ def test_marketing_interest_click_without_cta_returns_thanks_html(monkeypatch):
 
     assert response.status_code == 200
     assert "Thanks for your interest" in response.body.decode("utf-8")
+
+
+def test_marketing_interest_click_from_email_sets_email_opt_in(monkeypatch):
+    from api.public import marketing as module
+
+    state = {
+        "marketing_campaigns": [
+            {
+                "id": "campaign_email_123",
+                "client_id": "client_1",
+                "name": "Promo Email",
+                "channel": "email",
+                "cta_url": "https://example.com/email-landing",
+                "is_active": True,
+            }
+        ],
+        "marketing_campaign_recipients": [
+            {
+                "campaign_id": "campaign_email_123",
+                "recipient_key": "email:polanco@example.com",
+                "recipient_name": "Polanco",
+                "email": "polanco@example.com",
+                "phone": "+52 55 0000 0000",
+            }
+        ],
+        "marketing_campaign_events": [],
+    }
+    state_updates = []
+
+    class _FakeQuery:
+        def __init__(self, table_name: str):
+            self.table_name = table_name
+            self.mode = "select"
+            self.filters = {}
+            self.payload = None
+            self._limit = None
+
+        def select(self, _fields):
+            self.mode = "select"
+            return self
+
+        def eq(self, key, value):
+            self.filters[key] = value
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, n):
+            self._limit = n
+            return self
+
+        def insert(self, payload):
+            self.mode = "insert"
+            self.payload = payload
+            return self
+
+        def execute(self):
+            if self.table_name == "marketing_campaigns" and self.mode == "select":
+                rows = [
+                    row
+                    for row in state["marketing_campaigns"]
+                    if all(row.get(k) == v for k, v in self.filters.items())
+                ]
+                if self._limit is not None:
+                    rows = rows[: self._limit]
+                return SimpleNamespace(data=rows)
+
+            if self.table_name == "marketing_campaign_recipients" and self.mode == "select":
+                rows = [
+                    row
+                    for row in state["marketing_campaign_recipients"]
+                    if all(row.get(k) == v for k, v in self.filters.items())
+                ]
+                if self._limit is not None:
+                    rows = rows[: self._limit]
+                return SimpleNamespace(data=rows)
+
+            if self.table_name == "marketing_campaign_events" and self.mode == "insert":
+                state["marketing_campaign_events"].append(dict(self.payload or {}))
+                return SimpleNamespace(data=[self.payload])
+
+            raise AssertionError(f"Unhandled query: {self.table_name} / {self.mode}")
+
+    class _FakeSupabase:
+        def table(self, table_name: str):
+            return _FakeQuery(table_name)
+
+    monkeypatch.setattr(module, "supabase", _FakeSupabase())
+    monkeypatch.setattr(module, "get_request_ip", lambda _request: "1.2.3.4")
+    monkeypatch.setattr(module, "enforce_rate_limit", lambda **_kwargs: None)
+    monkeypatch.setattr(module, "_upsert_campaign_interest_handoff", lambda **_kwargs: "handoff_1")
+    monkeypatch.setattr(
+        module,
+        "upsert_marketing_contact_state",
+        lambda **kwargs: state_updates.append(kwargs) or True,
+    )
+
+    response = module.marketing_interest_click(
+        _DummyRequest(),
+        campaign_id="campaign_email_123",
+        recipient_key="email%3Apolanco%40example.com",
+        channel="email",
+    )
+
+    assert response.status_code == 302
+    assert len(state_updates) == 1
+    assert state_updates[0]["interest_status"] == "interested"
+    assert state_updates[0]["email_opt_in"] is True
+    assert state_updates[0]["whatsapp_opt_in"] is None
 
 
 def test_normalize_recipient_key_recovers_phone_plus():
