@@ -47,9 +47,14 @@ export default function MarketingCampaigns() {
     campaignsSentCount: isEs ? "Campañas enviadas" : "Campaigns sent",
     emailCampaignsSentCount: isEs ? "Email" : "Email",
     whatsappCampaignsSentCount: isEs ? "WhatsApp" : "WhatsApp",
-    emailCampaignsFilter: isEs ? "Envíos Email" : "Email sends",
-    whatsappCampaignsFilter: isEs ? "Envíos WhatsApp" : "WhatsApp sends",
+    emailCampaignsFilter: isEs ? "Número de envíos por Email" : "Number of sends by Email",
+    whatsappCampaignsFilter: isEs ? "Número de envíos por WhatsApp" : "Number of sends by WhatsApp",
+    campaignCountFiltersTitle: isEs ? "Filtrar por campañas enviadas" : "Filter by campaigns sent",
+    campaignCountFiltersHelp: isEs
+      ? "Selecciona un total exacto por canal para ver solo esos contactos."
+      : "Select an exact total by channel to see only those contacts.",
     countFilterPlaceholder: isEs ? "Cualquiera" : "Any",
+    clearCountFilters: isEs ? "Limpiar filtros de envíos" : "Clear send filters",
     lastCampaignSentAt: isEs ? "Último envío" : "Last campaign sent",
     searchAudience: isEs ? "Buscar audiencia" : "Search audience",
     searchCampaigns: isEs ? "Buscar campañas" : "Search campaigns",
@@ -550,6 +555,18 @@ export default function MarketingCampaigns() {
       (row) => matchesAudienceInterest(row, audienceInterest) && matchesCampaignCountFilters(row)
     ),
     [audience, audienceInterest, audienceEmailCountFilter, audienceWhatsappCountFilter],
+  );
+  const emailCampaignCountOptions = useMemo(
+    () => Array.from(
+      new Set((audience || []).map((row) => Number(row?.email_campaigns_sent_count || 0)).filter(Number.isFinite))
+    ).sort((a, b) => a - b),
+    [audience],
+  );
+  const whatsappCampaignCountOptions = useMemo(
+    () => Array.from(
+      new Set((audience || []).map((row) => Number(row?.whatsapp_campaigns_sent_count || 0)).filter(Number.isFinite))
+    ).sort((a, b) => a - b),
+    [audience],
   );
   const selectedRecipientsList = useMemo(
     () => selectedRecipientKeys.map((key) => selectedRecipients[key]).filter(Boolean),
@@ -1626,22 +1643,69 @@ export default function MarketingCampaigns() {
                         <option value="not_interested">{text.notInterested}</option>
                         <option value="opt_out">{text.optOutStatus}</option>
                       </select>
-                      <input
-                        className="ia-form-input"
-                        type="number"
-                        min="0"
-                        placeholder={`${text.emailCampaignsFilter}: ${text.countFilterPlaceholder}`}
-                        value={audienceEmailCountFilter}
-                        onChange={(e) => setAudienceEmailCountFilter(e.target.value)}
-                      />
-                      <input
-                        className="ia-form-input"
-                        type="number"
-                        min="0"
-                        placeholder={`${text.whatsappCampaignsFilter}: ${text.countFilterPlaceholder}`}
-                        value={audienceWhatsappCountFilter}
-                        onChange={(e) => setAudienceWhatsappCountFilter(e.target.value)}
-                      />
+                    </div>
+
+                    <div style={{ ...itemCardStyle, marginBottom: "0.55rem", background: "#fff" }}>
+                      <div style={rowBetweenStyle}>
+                        <div>
+                          <strong style={panelTitleStyle}>{text.campaignCountFiltersTitle}</strong>
+                          <p style={{ ...hintStyle, marginTop: "0.2rem", marginBottom: 0 }}>{text.campaignCountFiltersHelp}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="ia-button ia-button-ghost"
+                          style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem", whiteSpace: "nowrap" }}
+                          onClick={() => {
+                            setAudienceEmailCountFilter("");
+                            setAudienceWhatsappCountFilter("");
+                          }}
+                          disabled={busy && audienceEmailCountFilter === "" && audienceWhatsappCountFilter === ""}
+                        >
+                          {text.clearCountFilters}
+                        </button>
+                      </div>
+                      <div style={{ marginTop: "0.45rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                        <span style={badgeStyle}>
+                          {text.emailCampaignsFilter}: {audienceEmailCountFilter === "" ? text.all : audienceEmailCountFilter}
+                        </span>
+                        <span style={badgeStyle}>
+                          {text.whatsappCampaignsFilter}: {audienceWhatsappCountFilter === "" ? text.all : audienceWhatsappCountFilter}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap", marginTop: "0.55rem" }}>
+                        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", width: "100%", maxWidth: 220 }}>
+                          <span style={{ ...smallStyle, color: "#0f172a", fontWeight: 700 }}>{text.emailCampaignsFilter}</span>
+                          <select
+                            className="ia-form-input"
+                            style={{ minHeight: 36, padding: "0.38rem 0.65rem", fontSize: "0.86rem" }}
+                            value={audienceEmailCountFilter}
+                            onChange={(e) => setAudienceEmailCountFilter(e.target.value)}
+                          >
+                            <option value="">{text.countFilterPlaceholder}</option>
+                            {emailCampaignCountOptions.map((count) => (
+                              <option key={`email-count-${count}`} value={String(count)}>
+                                {count}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", width: "100%", maxWidth: 220 }}>
+                          <span style={{ ...smallStyle, color: "#0f172a", fontWeight: 700 }}>{text.whatsappCampaignsFilter}</span>
+                          <select
+                            className="ia-form-input"
+                            style={{ minHeight: 36, padding: "0.38rem 0.65rem", fontSize: "0.86rem" }}
+                            value={audienceWhatsappCountFilter}
+                            onChange={(e) => setAudienceWhatsappCountFilter(e.target.value)}
+                          >
+                            <option value="">{text.countFilterPlaceholder}</option>
+                            {whatsappCampaignCountOptions.map((count) => (
+                              <option key={`whatsapp-count-${count}`} value={String(count)}>
+                                {count}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
                     </div>
 
                     <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>
