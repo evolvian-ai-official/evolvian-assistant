@@ -252,3 +252,55 @@ def test_list_campaigns_includes_summary_metrics(monkeypatch):
     assert result["items"][0]["interested_count"] == 1
     assert result["items"][0]["not_interested_count"] == 1
     assert result["items"][0]["opt_out_count"] == 1
+
+
+def test_get_campaign_detail_includes_recipient_response_status(monkeypatch):
+    state = {
+        "marketing_campaigns": [
+            {
+                "id": "campaign_1",
+                "client_id": "client_1",
+                "name": "Seguimiento marzo",
+                "channel": "email",
+                "status": "sent",
+                "body": "Hola",
+                "is_active": True,
+                "created_at": "2026-03-18T09:00:00+00:00",
+            }
+        ],
+        "marketing_campaign_recipients": [
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:one@example.com",
+                "recipient_name": "One",
+                "email": "one@example.com",
+                "send_status": "sent",
+                "sent_at": "2026-03-18T10:00:00+00:00",
+                "updated_at": "2026-03-18T10:00:00+00:00",
+            }
+        ],
+        "marketing_campaign_events": [
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:one@example.com",
+                "event_type": "interest_yes",
+                "created_at": "2026-03-18T10:05:00+00:00",
+            }
+        ],
+    }
+
+    monkeypatch.setattr(module, "supabase", _FakeSupabase(state))
+    monkeypatch.setattr(module, "authorize_client_request", lambda *_args, **_kwargs: "user_1")
+    monkeypatch.setattr(module, "_ensure_premium_access", lambda *_args, **_kwargs: None)
+
+    result = module.get_campaign_detail(
+        request=SimpleNamespace(),
+        campaign_id="campaign_1",
+        client_id="client_1",
+    )
+
+    assert result["recipients"][0]["send_status"] == "sent"
+    assert result["recipients"][0]["response_status"] == "interested"
+    assert result["recipients"][0]["response_at"] == "2026-03-18T10:05:00+00:00"

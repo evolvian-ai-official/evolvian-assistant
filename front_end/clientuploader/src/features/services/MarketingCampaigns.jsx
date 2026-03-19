@@ -16,7 +16,7 @@ export default function MarketingCampaigns() {
       ? "Crea campañas de Email y WhatsApp, segmenta audiencia y consulta historial de envíos."
       : "Create Email and WhatsApp campaigns, segment audience, and review send history.",
     create: isEs ? "Crear campaña" : "Create campaign",
-    createNewCampaign: isEs ? "Nueva campaña" : "New campaign",
+    createNewCampaign: isEs ? "Crear Campaña" : "Create Campaign",
     campaigns: isEs ? "Campañas" : "Campaigns",
     campaignHistoryTitle: isEs ? "Histórico de campañas" : "Campaign history",
     campaignHistorySubtitle: isEs
@@ -52,19 +52,24 @@ export default function MarketingCampaigns() {
     noCampaigns: isEs ? "No hay campañas todavía." : "No campaigns yet.",
     history: isEs ? "Historial" : "History",
     recipients: isEs ? "Destinatarios" : "Recipients",
-    sendSectionTitle: isEs ? "Enviar campaña" : "Send campaign",
-    sendSectionSubtitle: isEs
-      ? "Selecciona campaña, elige destinatarios y confirma el envío."
-      : "Select a campaign, choose recipients, and confirm the send.",
-    sendActionReady: isEs ? "Listo para confirmar envío." : "Ready to confirm send.",
-    sendActionNeedsCampaign: isEs ? "Selecciona una campaña del historial o desde el botón de envío." : "Select a campaign from history or from the send button.",
-    sendActionNeedsRecipients: isEs ? "Selecciona destinatarios antes de confirmar." : "Select recipients before confirming.",
-    sendActionPickCampaignFirst: isEs ? "Primero elige una campaña para enviar." : "Choose a campaign to send first.",
-    sendFlowCampaignPicked: isEs
-      ? "Campaña seleccionada. Elige destinatarios y vuelve a presionar Enviar campaña para confirmar."
-      : "Campaign selected. Choose recipients and press Send campaign again to confirm.",
-    openSendFlow: isEs ? "Enviar campaña" : "Send campaign",
-    send: isEs ? "Enviar campaña" : "Send campaign",
+    runCampaign: isEs ? "Iniciar Campaña" : "Start Campaign",
+    runCampaignTitle: isEs ? "Iniciar Campaña" : "Start Campaign",
+    runCampaignSubtitle: isEs
+      ? "Haz el envío en pasos: campaña, destinatarios, preview y resultado."
+      : "Run the send in steps: campaign, recipients, preview, and result.",
+    runCampaignStepCampaign: isEs ? "1. Campaña" : "1. Campaign",
+    runCampaignStepRecipients: isEs ? "2. Destinatarios" : "2. Recipients",
+    runCampaignStepPreview: isEs ? "3. Preview" : "3. Preview",
+    runCampaignStepResult: isEs ? "4. Resultado" : "4. Result",
+    runCampaignSelectCampaign: isEs ? "Selecciona una campaña para continuar." : "Select a campaign to continue.",
+    runCampaignSelectRecipients: isEs ? "Selecciona destinatarios antes de continuar." : "Select recipients before continuing.",
+    runCampaignStepResultSubtitle: isEs
+      ? "Resumen final del envío ejecutado."
+      : "Final summary for the executed send.",
+    next: isEs ? "Continuar" : "Continue",
+    back: isEs ? "Atrás" : "Back",
+    finish: isEs ? "Cerrar" : "Close",
+    confirmRunCampaign: isEs ? "Confirmar e iniciar campaña" : "Confirm and start campaign",
     sending: isEs ? "Enviando..." : "Sending...",
     refresh: isEs ? "Actualizar" : "Refresh",
     loading: isEs ? "Cargando..." : "Loading...",
@@ -234,10 +239,10 @@ export default function MarketingCampaigns() {
   const [selectedRecipientKey, setSelectedRecipientKey] = useState("");
   const [recipientHistory, setRecipientHistory] = useState([]);
   const [selectedRecipients, setSelectedRecipients] = useState({});
-  const [pendingSendAfterPick, setPendingSendAfterPick] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [runCampaignOpen, setRunCampaignOpen] = useState(false);
+  const [runCampaignStep, setRunCampaignStep] = useState("campaign");
+  const [runCampaignResult, setRunCampaignResult] = useState(null);
   const [contentPreviewOpen, setContentPreviewOpen] = useState(false);
-  const [campaignPickerOpen, setCampaignPickerOpen] = useState(false);
   const [campaignFormOpen, setCampaignFormOpen] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
@@ -321,8 +326,8 @@ export default function MarketingCampaigns() {
 
     const items = Array.isArray(data?.items) ? data.items : [];
     setCampaigns(items);
-    if (!selectedCampaignId && items[0]?.id) {
-      setSelectedCampaignId(items[0].id);
+    if (selectedCampaignId && !items.some((item) => item?.id === selectedCampaignId)) {
+      setSelectedCampaignId("");
     }
   };
 
@@ -405,16 +410,6 @@ export default function MarketingCampaigns() {
     skipped: Number(campaign?.skipped_count || 0),
   });
 
-  useEffect(() => {
-    if (!pendingSendAfterPick || !selectedCampaignId) return;
-    setPendingSendAfterPick(false);
-    if (selectedRecipientsList.length > 0) {
-      void openSendPreview();
-      return;
-    }
-    setNotice({ type: "warning", message: text.sendFlowCampaignPicked });
-  }, [pendingSendAfterPick, selectedCampaignId, selectedRecipientsList.length, text.sendFlowCampaignPicked]);
-
   const normalizeCtaUrl = (value) => {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -477,37 +472,6 @@ export default function MarketingCampaigns() {
     if (channel === "whatsapp" && !row?.phone) return text.incompatibleNoPhone;
     return "";
   };
-  const getPolicyReasonForChannel = (row, channel = selectedCampaignChannel) => {
-    if (!row) return "";
-    if (channel === "email") return String(row?.policy_reason_email || "");
-    if (channel === "whatsapp") return String(row?.policy_reason_whatsapp || "");
-    return String(row?.policy_reason_email || row?.policy_reason_whatsapp || "");
-  };
-  const getConsentPolicyHelp = (reason) => {
-    const normalized = String(reason || "").trim().toLowerCase();
-    if (normalized === "missing_or_expired_marketing_consent") return text.consentReasonMissingExpired;
-    if (normalized === "email_marketing_not_opted_in") return text.consentReasonNotOptedIn;
-    if (normalized === "missing_terms_acceptance_for_marketing") return text.consentReasonMissingTerms;
-    if (normalized === "missing_email_in_consent_record") return text.consentReasonMissingEmailInConsent;
-    if (normalized === "missing_phone_in_consent_record") return text.consentReasonMissingPhoneInConsent;
-    return "";
-  };
-  const getConsentPolicyBadgeLabel = (reason) => {
-    const normalized = String(reason || "").trim().toLowerCase();
-    if (normalized === "missing_or_expired_marketing_consent") return text.consentMissingExpiredBadge;
-    return text.consentIssueBadge;
-  };
-  const hasConsentPolicyWarning = (row, channel = selectedCampaignChannel) => {
-    const reason = getPolicyReasonForChannel(row, channel);
-    return [
-      "missing_or_expired_marketing_consent",
-      "email_marketing_not_opted_in",
-      "missing_terms_acceptance_for_marketing",
-      "missing_email_in_consent_record",
-      "missing_phone_in_consent_record",
-    ].includes(String(reason || "").toLowerCase());
-  };
-
   const getAudienceCommercialStatus = (row) => {
     if (!row) return "unknown";
     if (row?.selection_blocked || String(row?.selection_blocked_reason || "").toLowerCase() === "opt_out") {
@@ -866,22 +830,56 @@ export default function MarketingCampaigns() {
     }
   };
 
-  const openSendPreview = async () => {
+  const openRunCampaignModal = async () => {
     if (!clientId) return;
+    setError("");
+    setNotice(null);
+    setRunCampaignResult(null);
+    setRunCampaignStep("campaign");
+    clearRecipientSelection();
+    setRunCampaignOpen(true);
+    try {
+      await Promise.all([loadCampaigns(), loadAudience()]);
+    } catch (err) {
+      setError(err?.message || "Unexpected error");
+    }
+  };
+
+  const closeRunCampaignModal = () => {
+    if (busy) return;
+    setRunCampaignOpen(false);
+    setRunCampaignStep("campaign");
+    setRunCampaignResult(null);
+    clearRecipientSelection();
+  };
+
+  const pickCampaign = (campaignId) => {
+    setSelectedCampaignId(campaignId);
+  };
+
+  const continueToRecipients = async () => {
     if (!selectedCampaign?.id) {
-      setError(text.selectCampaignFirst);
+      setError(text.runCampaignSelectCampaign);
       return;
     }
     if (selectedCampaignChannel === "whatsapp") {
       const isConnected = await checkWhatsAppConnection();
       if (!isConnected) {
         setError(text.whatsappNotConnected);
-        setNotice(null);
         return;
       }
     }
+    setError("");
+    setRunCampaignStep("recipients");
+  };
+
+  const continueToPreview = async () => {
+    if (!selectedCampaign?.id) {
+      setError(text.selectCampaignFirst);
+      return;
+    }
     if (selectedRecipientsList.length === 0) {
-      setError(text.requiredRecipientSelection);
+      setError(text.runCampaignSelectRecipients);
       return;
     }
     if (sendableSelectedRecipients.length === 0) {
@@ -889,37 +887,10 @@ export default function MarketingCampaigns() {
       return;
     }
     setError("");
-    setNotice(null);
-    setPreviewOpen(true);
+    setRunCampaignStep("preview");
   };
 
-  const startSendFlow = async () => {
-    setError("");
-    setNotice(null);
-    setPendingSendAfterPick(true);
-    setCampaignPickerOpen(true);
-    try {
-      await loadCampaigns();
-    } catch (err) {
-      setPendingSendAfterPick(false);
-      setError(err?.message || "Unexpected error");
-    }
-  };
-
-  const handlePrimarySendAction = async () => {
-    if (!selectedCampaign) {
-      await startSendFlow();
-      return;
-    }
-    await openSendPreview();
-  };
-
-  const pickCampaign = (campaignId) => {
-    setSelectedCampaignId(campaignId);
-    setCampaignPickerOpen(false);
-  };
-
-  const confirmSendCampaign = async () => {
+  const confirmRunCampaign = async () => {
     if (!clientId || !selectedCampaign?.id) return;
     setBusy(true);
     setError("");
@@ -946,23 +917,28 @@ export default function MarketingCampaigns() {
       const imageSkippedNoHeaderTemplate = Number(summary.image_skipped_no_header_template || 0);
 
       const messageCounts = `${text.sent}: ${sent} · ${text.failed}: ${failed} · ${text.blocked}: ${blocked} · ${text.skipped}: ${skipped}`;
+      let message = `${text.sendSummaryFailed} ${messageCounts}`;
+      let type = "error";
       if (sent > 0 && failed === 0 && blocked === 0) {
         let extra = "";
         if (imageSkippedNoHeaderTemplate > 0) extra += ` ${text.sendSummaryImageNoHeader}`;
         if (imageFallbackNoHeader > 0) extra += ` ${text.sendSummaryImageFallback}`;
-        setNotice({ type: "success", message: `${text.sendSummarySuccess} ${messageCounts}${extra}` });
+        message = `${text.sendSummarySuccess} ${messageCounts}${extra}`;
+        type = "success";
       } else if (sent > 0) {
         let extra = "";
         if (imageSkippedNoHeaderTemplate > 0) extra += ` ${text.sendSummaryImageNoHeader}`;
         if (imageFallbackNoHeader > 0) extra += ` ${text.sendSummaryImageFallback}`;
-        setNotice({ type: "warning", message: `${text.sendSummaryPartial} ${messageCounts}${extra}` });
-      } else {
-        setError(`${text.sendSummaryFailed} ${messageCounts}`);
+        message = `${text.sendSummaryPartial} ${messageCounts}${extra}`;
+        type = "warning";
       }
+      setRunCampaignResult({ type, message, sent, failed, blocked, skipped });
+      setRunCampaignStep("result");
+      setNotice(type === "error" ? null : { type: type === "success" ? "success" : "warning", message });
 
       await refreshAll();
       await loadCampaignDetail(selectedCampaign.id);
-      setPreviewOpen(false);
+      clearRecipientSelection();
     } catch (err) {
       setError(err?.message || "Unexpected error");
     } finally {
@@ -1003,9 +979,11 @@ export default function MarketingCampaigns() {
               <strong style={{ ...panelTitleStyle, fontSize: "1rem" }}>{text.campaignHistoryTitle}</strong>
               <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.campaignHistorySubtitle}</p>
             </div>
-            <button type="button" className="ia-button ia-button-primary" onClick={openCreateCampaignModal} disabled={busy}>
-              {text.createNewCampaign}
-            </button>
+            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button type="button" className="ia-button ia-button-primary" onClick={openCreateCampaignModal} disabled={busy}>
+                {text.createNewCampaign}
+              </button>
+            </div>
           </div>
 
           <div style={{ ...panelStyle, marginTop: "0.8rem" }}>
@@ -1030,18 +1008,21 @@ export default function MarketingCampaigns() {
               </select>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 1.2fr) minmax(320px, 1fr)", gap: "0.8rem" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 460, overflowY: "auto" }}>
-                {campaigns.length === 0 ? <p style={hintStyle}>{text.noCampaigns}</p> : null}
-                {campaigns.map((campaign) => {
-                  const metrics = getCampaignSummaryMetrics(campaign);
-                  const isActiveCampaign = selectedCampaignId === campaign.id;
-                  return (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem", maxHeight: 620, overflowY: "auto" }}>
+              {campaigns.length === 0 ? <p style={hintStyle}>{text.noCampaigns}</p> : null}
+              {campaigns.map((campaign) => {
+                const metrics = getCampaignSummaryMetrics(campaign);
+                const isActiveCampaign = selectedCampaignId === campaign.id;
+                const detailRecipients = isActiveCampaign ? (selectedCampaignDetail?.recipients || []) : [];
+                return (
+                  <div
+                    key={`history-${campaign.id}`}
+                    style={{ ...itemCardStyle, ...(isActiveCampaign ? campaignBtnActiveStyle : {}), background: "#fff" }}
+                  >
                     <button
                       type="button"
-                      key={`history-${campaign.id}`}
-                      onClick={() => setSelectedCampaignId(campaign.id)}
-                      style={{ ...campaignBtnStyle, ...(isActiveCampaign ? campaignBtnActiveStyle : {}), textAlign: "left" }}
+                      onClick={() => setSelectedCampaignId((current) => (current === campaign.id ? "" : campaign.id))}
+                      style={{ width: "100%", border: "none", background: "transparent", padding: 0, textAlign: "left", cursor: "pointer" }}
                     >
                       <div style={rowBetweenStyle}>
                         <strong style={{ color: "#0f172a" }}>{campaign.name}</strong>
@@ -1056,333 +1037,85 @@ export default function MarketingCampaigns() {
                         <span style={badgeStyle}>{text.campaignMetricsResponses}: {metrics.responses}</span>
                         <span style={badgeStyle}>{text.campaignMetricsOptOut}: {metrics.optOut}</span>
                         <span style={badgeStyle}>{text.campaignMetricsFailed}: {metrics.failed}</span>
+                        <span style={badgeStyle}>{text.campaignMetricsBlocked}: {metrics.blocked}</span>
+                        <span style={badgeStyle}>{text.campaignMetricsSkipped}: {metrics.skipped}</span>
                       </div>
                     </button>
-                  );
-                })}
-              </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                <div style={{ ...itemCardStyle, background: "#f8fafc" }}>
-                  <div style={rowBetweenStyle}>
-                    <strong style={panelTitleStyle}>{text.selectedCampaignTitle}</strong>
-                    <button type="button" className="ia-button ia-button-ghost" onClick={refreshAll} disabled={busy || loading}>
-                      {text.refresh}
-                    </button>
-                  </div>
-                  {!selectedCampaign ? <p style={{ ...hintStyle, marginTop: "0.55rem" }}>{text.noCampaignSelected}</p> : null}
+                    {isActiveCampaign ? (
+                      <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #E5E7EB" }}>
+                        <p style={{ ...smallStyle, color: "#334155", margin: 0 }}>
+                          {campaign.body || ""}
+                        </p>
 
-                  {selectedCampaign ? (
-                    <>
-                      <div style={{ marginTop: "0.55rem" }}>
-                        <div style={rowBetweenStyle}>
-                          <strong>{selectedCampaign.name}</strong>
-                          <span style={badgeStyle}>{selectedCampaign.channel}</span>
+                        <div style={{ marginTop: "0.55rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className="ia-button ia-button-ghost"
+                            style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                            onClick={() => setContentPreviewOpen(true)}
+                          >
+                            {text.campaignPreview}
+                          </button>
+                          <button
+                            type="button"
+                            className="ia-button ia-button-ghost"
+                            style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
+                            onClick={startEditCampaign}
+                          >
+                            {text.editCampaign}
+                          </button>
+                          <button
+                            type="button"
+                            className="ia-button ia-button-ghost"
+                            style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem", color: "#b91c1c", borderColor: "#fecaca", background: "#fff1f2" }}
+                            onClick={archiveSelectedCampaign}
+                            disabled={busy}
+                          >
+                            {text.archiveCampaign}
+                          </button>
                         </div>
-                        <small style={smallStyle}>
-                          {selectedCampaign.status}
-                          {selectedCampaign.subject ? ` · ${selectedCampaign.subject}` : ""}
-                        </small>
-                      </div>
 
-                      <div style={{ marginTop: "0.55rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                        <span style={badgeStyle}>{text.campaignMetricsSent}: {getCampaignSummaryMetrics(selectedCampaign).sent}</span>
-                        <span style={badgeStyle}>{text.campaignMetricsResponses}: {getCampaignSummaryMetrics(selectedCampaign).responses}</span>
-                        <span style={badgeStyle}>{text.campaignMetricsOptOut}: {getCampaignSummaryMetrics(selectedCampaign).optOut}</span>
-                        <span style={badgeStyle}>{text.campaignMetricsFailed}: {getCampaignSummaryMetrics(selectedCampaign).failed}</span>
-                        <span style={badgeStyle}>{text.campaignMetricsBlocked}: {getCampaignSummaryMetrics(selectedCampaign).blocked}</span>
-                        <span style={badgeStyle}>{text.campaignMetricsSkipped}: {getCampaignSummaryMetrics(selectedCampaign).skipped}</span>
-                      </div>
-
-                      <p style={{ ...smallStyle, marginTop: "0.45rem", color: "#334155", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                        {selectedCampaign.body || ""}
-                      </p>
-
-                      <div style={{ marginTop: "0.55rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          className="ia-button ia-button-ghost"
-                          style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                          onClick={() => setContentPreviewOpen(true)}
-                        >
-                          {text.campaignPreview}
-                        </button>
-                        <button
-                          type="button"
-                          className="ia-button ia-button-ghost"
-                          style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                          onClick={startEditCampaign}
-                        >
-                          {text.editCampaign}
-                        </button>
-                        <button
-                          type="button"
-                          className="ia-button ia-button-ghost"
-                          style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem", color: "#b91c1c", borderColor: "#fecaca", background: "#fff1f2" }}
-                          onClick={archiveSelectedCampaign}
-                          disabled={busy}
-                        >
-                          {text.archiveCampaign}
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-
-                <div style={panelStyle}>
-                  <strong style={panelTitleStyle}>{text.recipients}</strong>
-                  {!selectedCampaignDetail ? <p style={hintStyle}>{isEs ? "Selecciona una campaña." : "Select a campaign."}</p> : null}
-
-                  {selectedCampaignDetail ? (
-                    <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 240, overflowY: "auto" }}>
-                      {(selectedCampaignDetail?.recipients || []).map((row) => (
-                        <div key={`${row.campaign_id}-${row.recipient_key}`} style={itemCardStyle}>
-                          <div style={rowBetweenStyle}>
-                            <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
-                            <span style={sendStatusChip(row.send_status)}>{row.send_status}</span>
+                        <div style={{ marginTop: "0.75rem" }}>
+                          <strong style={panelTitleStyle}>{text.recipients}</strong>
+                          <div style={{ marginTop: "0.45rem", display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 260, overflowY: "auto" }}>
+                            {detailRecipients.map((row) => (
+                              <div key={`${row.campaign_id}-${row.recipient_key}`} style={{ ...itemCardStyle, background: "#f8fafc" }}>
+                                <div style={rowBetweenStyle}>
+                                  <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                                  <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                    <span style={sendStatusChip(row.send_status)}>{row.send_status}</span>
+                                    <span style={interestStatusChip(row.response_status || "unknown")}>
+                                      {getAudienceCommercialStatusLabel({
+                                        interest_status: row.response_status,
+                                        selection_blocked_reason: row.response_status === "opt_out" ? "opt_out" : "",
+                                      })}
+                                    </span>
+                                  </div>
+                                </div>
+                                <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                                <div style={{ marginTop: "0.28rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                                  {row.sent_at ? <span style={badgeStyle}>{isEs ? "Enviado" : "Sent"}: {formatDateTime(row.sent_at)}</span> : null}
+                                  {row.response_at ? <span style={badgeStyle}>{isEs ? "Respuesta" : "Response"}: {formatDateTime(row.response_at)}</span> : null}
+                                </div>
+                              </div>
+                            ))}
+                            {detailRecipients.length === 0 ? (
+                              <p style={hintStyle}>{isEs ? "Aún no hay destinatarios enviados." : "No recipients sent yet."}</p>
+                            ) : null}
                           </div>
-                          <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
                         </div>
-                      ))}
-                      {(selectedCampaignDetail?.recipients || []).length === 0 ? (
-                        <p style={hintStyle}>{isEs ? "Aún no hay destinatarios enviados." : "No recipients sent yet."}</p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div style={{ ...panelStyle, marginTop: "0.9rem" }}>
-            <div style={rowBetweenStyle}>
-              <div>
-                <strong style={panelTitleStyle}>{text.audienceTitle}</strong>
-                <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.audienceSubtitle}</p>
-              </div>
-              <button type="button" className="ia-button ia-button-ghost" onClick={refreshAll} disabled={busy || loading}>
-                {text.refresh}
-              </button>
-            </div>
-
-            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginTop: "0.6rem", marginBottom: "0.55rem" }}>
-              <span style={badgeStyle}>Clients: {audienceCounts.clients || 0}</span>
-              <span style={badgeStyle}>Leads: {audienceCounts.leads || 0}</span>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.55rem", marginBottom: "0.55rem" }}>
-              <input
-                className="ia-form-input"
-                placeholder={text.searchAudience}
-                value={audienceSearch}
-                onChange={(e) => setAudienceSearch(e.target.value)}
-              />
-
-              <select className="ia-form-input" value={audienceSegment} onChange={(e) => setAudienceSegment(e.target.value)}>
-                <option value="all">{text.all}</option>
-                <option value="clients">Clients / Clientes</option>
-                <option value="leads">Leads</option>
-              </select>
-
-              <select className="ia-form-input" value={audienceInterest} onChange={(e) => setAudienceInterest(e.target.value)}>
-                <option value="all">{text.interestFilter}: {text.allInterest}</option>
-                <option value="unknown">{text.noResponse}</option>
-                <option value="interested">{text.interested}</option>
-                <option value="not_interested">{text.notInterested}</option>
-                <option value="opt_out">{text.optOutStatus}</option>
-              </select>
-            </div>
-
-            <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>
-              <button
-                type="button"
-                className="ia-button ia-button-ghost"
-                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                onClick={selectVisibleAudience}
-                disabled={busy || filteredAudience.length === 0}
-              >
-                {text.selectVisible}
-              </button>
-              <button
-                type="button"
-                className="ia-button ia-button-ghost"
-                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                onClick={() => selectAudienceBySegment("clients")}
-                disabled={busy}
-              >
-                {text.selectAllClients}
-              </button>
-              <button
-                type="button"
-                className="ia-button ia-button-ghost"
-                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                onClick={() => selectAudienceBySegment("leads")}
-                disabled={busy}
-              >
-                {text.selectAllLeads}
-              </button>
-              <button
-                type="button"
-                className="ia-button ia-button-ghost"
-                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                onClick={() => selectAudienceBySegment("all")}
-                disabled={busy}
-              >
-                {text.selectAllAudience}
-              </button>
-              <button
-                type="button"
-                className="ia-button ia-button-ghost"
-                style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                onClick={clearRecipientSelection}
-                disabled={busy || selectedRecipientKeys.length === 0}
-              >
-                {text.clearSelection}
-              </button>
-            </div>
-
-            {selectedCampaignChannel ? (
-              <div style={{ ...itemCardStyle, marginBottom: "0.55rem", background: "#f8fafc" }}>
-                <small style={smallStyle}>
-                  {selectedCampaignChannel === "email" ? text.channelRuleEmail : text.channelRuleWhatsapp}
-                </small>
-                <div style={{ marginTop: "0.3rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                  <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
-                  <span style={badgeStyle}>{text.excludedByChannel}: {excludedByChannelCount}</span>
-                </div>
-              </div>
-            ) : null}
-
-            {loading ? <p style={hintStyle}>{text.loading}</p> : null}
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.6rem" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 330, overflowY: "auto" }}>
-                {!loading && filteredAudience.length === 0 ? <p style={hintStyle}>{text.noAudience}</p> : null}
-                {filteredAudience.map((row) => {
-                  const isSelected = Boolean(selectedRecipients[row.recipient_key]);
-                  const blocked = isRecipientBlocked(row);
-                  const canSelect = !blocked && isRecipientCompatible(row);
-                  const incompatibleReason = blocked ? text.optedOutCannotSelect : getIncompatibleReason(row);
-                  const consentWarning = hasConsentPolicyWarning(row);
-                  const policyReason = getPolicyReasonForChannel(row);
-                  const consentWarningHelp = getConsentPolicyHelp(policyReason);
-                  return (
-                    <div key={row.recipient_key} style={{ ...itemCardStyle, opacity: canSelect ? 1 : 0.6 }}>
-                      <div style={rowBetweenStyle}>
-                        <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: 1 }}>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            disabled={!canSelect}
-                            onChange={() => toggleRecipientSelection(row)}
-                          />
-                          <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
-                        </label>
-                        <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
-                          <span style={segmentChip(row.segment)}>{row.label_en} / {row.label_es}</span>
-                          <span style={interestStatusChip(getAudienceCommercialStatus(row))}>
-                            {text.commercialStatus}: {getAudienceCommercialStatusLabel(row)}
-                          </span>
-                          {blocked ? (
-                            <span style={{ ...badgeStyle, background: "#fef2f2", color: "#b91c1c", borderColor: "#fecaca" }}>
-                              {row.opt_out_label_en || text.optedOut} / {row.opt_out_label_es || text.optedOut}
-                            </span>
-                          ) : null}
-                          {consentWarning ? (
-                            <span
-                              title={`${text.consentBadgeTitle}: ${consentWarningHelp}`}
-                              style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}
-                            >
-                              {getConsentPolicyBadgeLabel(policyReason)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
-                      <div style={{ marginTop: "0.28rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                        <span style={badgeStyle}>{text.campaignsSentCount}: {Number(row.campaigns_sent_count || 0)}</span>
-                        {row.last_campaign_sent_at ? (
-                          <span style={badgeStyle}>{text.lastCampaignSentAt}: {formatDateTime(row.last_campaign_sent_at)}</span>
-                        ) : null}
-                      </div>
-                      {consentWarning && consentWarningHelp ? (
-                        <div style={{ marginTop: "0.28rem" }}>
-                          <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>
-                            {consentWarningHelp}
-                          </span>
-                        </div>
-                      ) : null}
-                      {!canSelect && incompatibleReason ? (
-                        <div style={{ marginTop: "0.28rem" }}>
-                          <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>{incompatibleReason}</span>
-                        </div>
-                      ) : null}
-                      <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          className="ia-button ia-button-ghost"
-                          style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }}
-                          onClick={() => setSelectedRecipientKey(row.recipient_key)}
-                        >
-                          {text.history}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, background: "#f8fafc", padding: "0.55rem", maxHeight: 330, overflowY: "auto" }}>
-                <div style={rowBetweenStyle}>
-                  <strong>{text.selected}</strong>
-                  <span style={badgeStyle}>{text.selectedCount}: {selectedRecipientKeys.length}</span>
-                </div>
-                <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.45rem" }}>
-                  {sendableSelectedRecipients.map((row) => (
-                    <div key={row.recipient_key} style={{ ...itemCardStyle, background: "#ffffff" }}>
-                      <div style={rowBetweenStyle}>
-                        <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
-                        <button
-                          type="button"
-                          className="ia-button ia-button-ghost"
-                          style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }}
-                          onClick={() => removeRecipientFromSelection(row.recipient_key)}
-                        >
-                          {text.remove}
-                        </button>
-                      </div>
-                      <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
-                    </div>
-                  ))}
-                  {sendableSelectedRecipients.length === 0 ? <p style={hintStyle}>{text.selectedNone}</p> : null}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div style={sendBarStyle}>
-            <div>
-              <strong style={panelTitleStyle}>{text.sendSectionTitle}</strong>
-              <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.sendSectionSubtitle}</p>
-              <div style={{ marginTop: "0.35rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                {selectedCampaign ? <span style={badgeStyle}>{selectedCampaign.name}</span> : null}
-                <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
-              </div>
-              <p style={{ ...hintStyle, marginTop: "0.35rem" }}>
-                {!selectedCampaign
-                  ? text.sendActionNeedsCampaign
-                  : selectedRecipientsList.length === 0
-                    ? text.sendActionNeedsRecipients
-                    : text.sendActionReady}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="ia-button ia-button-warning"
-              disabled={busy || (selectedCampaignChannel === "whatsapp" && !whatsAppMetaConnected)}
-              onClick={handlePrimarySendAction}
-            >
-              {busy ? text.sending : text.openSendFlow}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.9rem" }}>
+            <button type="button" className="ia-button ia-button-warning" onClick={openRunCampaignModal} disabled={busy}>
+              {text.runCampaign}
             </button>
           </div>
 
@@ -1660,72 +1393,6 @@ export default function MarketingCampaigns() {
             </div>
           ) : null}
 
-          {campaignPickerOpen ? (
-            <div style={modalOverlayStyle} role="dialog" aria-modal="true">
-              <div style={{ ...modalCardStyle, width: "min(900px, 100%)" }}>
-                <div style={{ ...rowBetweenStyle, marginBottom: "0.55rem" }}>
-                  <div>
-                    <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{text.campaignPickerTitle}</strong>
-                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.campaignPickerSubtitle}</p>
-                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.campaignPickerHint}</p>
-                  </div>
-                  <button type="button" className="ia-button ia-button-ghost" onClick={() => setCampaignPickerOpen(false)} disabled={busy}>
-                    {text.close}
-                  </button>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.55rem", marginBottom: "0.6rem" }}>
-                  <input
-                    className="ia-form-input"
-                    placeholder={text.searchCampaigns}
-                    value={campaignSearch}
-                    onChange={(e) => setCampaignSearch(e.target.value)}
-                  />
-
-                  <select className="ia-form-input" value={campaignChannel} onChange={(e) => setCampaignChannel(e.target.value)}>
-                    <option value="all">{text.all}</option>
-                    <option value="email">Email</option>
-                    <option value="whatsapp">WhatsApp</option>
-                  </select>
-
-                  <select className="ia-form-input" value={campaignStatus} onChange={(e) => setCampaignStatus(e.target.value)}>
-                    <option value="all">{text.all}</option>
-                    <option value="draft">{text.draft}</option>
-                    <option value="active">Active</option>
-                    <option value="sent">Sent</option>
-                    <option value="paused">Paused</option>
-                  </select>
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 420, overflowY: "auto" }}>
-                  {campaigns.length === 0 ? <p style={hintStyle}>{text.noCampaigns}</p> : null}
-                  {campaigns.map((campaign) => {
-                    const metrics = getCampaignSummaryMetrics(campaign);
-                    return (
-                      <button
-                        type="button"
-                        key={`picker-${campaign.id}`}
-                        onClick={() => pickCampaign(campaign.id)}
-                        style={{ ...campaignBtnStyle, ...(selectedCampaignId === campaign.id ? campaignBtnActiveStyle : {}) }}
-                      >
-                        <div style={rowBetweenStyle}>
-                          <strong style={{ textAlign: "left" }}>{campaign.name}</strong>
-                          <span style={badgeStyle}>{campaign.channel}</span>
-                        </div>
-                        <small style={smallStyle}>{campaign.status}{campaign.subject ? ` · ${campaign.subject}` : ""}</small>
-                        <div style={{ marginTop: "0.35rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                          <span style={badgeStyle}>{text.campaignMetricsSent}: {metrics.sent}</span>
-                          <span style={badgeStyle}>{text.campaignMetricsResponses}: {metrics.responses}</span>
-                          <span style={badgeStyle}>{text.campaignMetricsOptOut}: {metrics.optOut}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
           {contentPreviewOpen && selectedCampaign ? (
             <div style={modalOverlayStyle} role="dialog" aria-modal="true">
               <div style={modalCardStyle}>
@@ -1808,128 +1475,305 @@ export default function MarketingCampaigns() {
             </div>
           ) : null}
 
-          {previewOpen && selectedCampaign ? (
+          {runCampaignOpen ? (
             <div style={modalOverlayStyle} role="dialog" aria-modal="true">
               <div style={modalCardStyle}>
                 <div style={{ ...rowBetweenStyle, marginBottom: "0.55rem" }}>
                   <div>
-                    <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{text.previewTitle}</strong>
-                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.previewSubtitle}</p>
+                    <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{text.runCampaignTitle}</strong>
+                    <p style={{ ...hintStyle, marginTop: "0.2rem" }}>{text.runCampaignSubtitle}</p>
                   </div>
-                  <button type="button" className="ia-button ia-button-ghost" onClick={() => setPreviewOpen(false)} disabled={busy}>
-                    {text.cancel}
+                  <button type="button" className="ia-button ia-button-ghost" onClick={closeRunCampaignModal} disabled={busy}>
+                    {runCampaignStep === "result" ? text.finish : text.cancel}
                   </button>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.7rem" }}>
-                  <div style={{ ...itemCardStyle, background: "#fff" }}>
-                    <strong style={panelTitleStyle}>{text.previewContent}</strong>
-                    <div style={{ marginTop: "0.55rem", border: "1px solid #E5E7EB", borderRadius: 10, padding: "0.65rem", background: "#ffffff" }}>
-                      <div style={{ ...rowBetweenStyle, marginBottom: "0.4rem" }}>
-                        <strong>{selectedCampaign.name}</strong>
-                        <span style={badgeStyle}>{selectedCampaign.channel}</span>
-                      </div>
-                      {selectedCampaign.channel === "email" ? (
-                        <small style={{ ...smallStyle, display: "block", marginBottom: "0.4rem" }}>
-                          {selectedCampaign.subject || selectedCampaign.name}
-                        </small>
-                      ) : null}
-                      <div style={{ whiteSpace: "pre-wrap", color: "#0f172a", fontSize: "0.9rem", lineHeight: 1.45 }}>
-                        {selectedCampaign.body || ""}
-                      </div>
-                      {selectedCampaign.image_url ? (
-                        <img
-                          src={selectedCampaign.image_url}
-                          alt="campaign"
-                          style={{ width: "100%", maxHeight: "44vh", objectFit: "contain", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB", background: "#f8fafc" }}
-                        />
-                      ) : null}
-                      {selectedCampaignCtaUrl ? (
-                        <a
-                          href={selectedCampaignCtaUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ display: "inline-block", marginTop: "0.55rem", padding: "0.45rem 0.7rem", borderRadius: 8, background: "#1d4ed8", color: "#fff", textDecoration: "none", fontSize: "0.82rem" }}
-                        >
-                          {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
-                        </a>
-                      ) : null}
-                      {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_interest_enabled ? (
-                        <span
-                          style={{
-                            display: "inline-block",
-                            marginTop: "0.45rem",
-                            marginLeft: selectedCampaignCtaUrl ? "0.45rem" : 0,
-                            padding: "0.38rem 0.62rem",
-                            borderRadius: 8,
-                            border: "1px solid #bfdbfe",
-                            background: "#eff6ff",
-                            color: "#1d4ed8",
-                            fontSize: "0.8rem",
-                          }}
-                        >
-                          {selectedCampaign.whatsapp_interest_label || text.whatsappInterestPlaceholder}
-                        </span>
-                      ) : null}
-                      {selectedCampaign.channel === "whatsapp" && selectedCampaign.whatsapp_opt_out_enabled ? (
-                        <span
-                          style={{
-                            display: "inline-block",
-                            marginTop: "0.45rem",
-                            marginLeft: selectedCampaignCtaUrl ? "0.45rem" : 0,
-                            padding: "0.38rem 0.62rem",
-                            borderRadius: 8,
-                            border: "1px solid #fecaca",
-                            background: "#fff1f2",
-                            color: "#9f1239",
-                            fontSize: "0.8rem",
-                          }}
-                        >
-                          {selectedCampaign.whatsapp_opt_out_label || text.whatsappOptOutPlaceholder}
-                        </span>
-                      ) : null}
+                <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+                  <span style={runFlowStepChip(runCampaignStep === "campaign")}>{text.runCampaignStepCampaign}</span>
+                  <span style={runFlowStepChip(runCampaignStep === "recipients")}>{text.runCampaignStepRecipients}</span>
+                  <span style={runFlowStepChip(runCampaignStep === "preview")}>{text.runCampaignStepPreview}</span>
+                  <span style={runFlowStepChip(runCampaignStep === "result")}>{text.runCampaignStepResult}</span>
+                </div>
+
+                {runCampaignStep === "campaign" ? (
+                  <div>
+                    <p style={{ ...hintStyle, marginBottom: "0.55rem" }}>{text.campaignPickerHint}</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.55rem", marginBottom: "0.6rem" }}>
+                      <input
+                        className="ia-form-input"
+                        placeholder={text.searchCampaigns}
+                        value={campaignSearch}
+                        onChange={(e) => setCampaignSearch(e.target.value)}
+                      />
+                      <select className="ia-form-input" value={campaignChannel} onChange={(e) => setCampaignChannel(e.target.value)}>
+                        <option value="all">{text.all}</option>
+                        <option value="email">Email</option>
+                        <option value="whatsapp">WhatsApp</option>
+                      </select>
+                      <select className="ia-form-input" value={campaignStatus} onChange={(e) => setCampaignStatus(e.target.value)}>
+                        <option value="all">{text.all}</option>
+                        <option value="draft">{text.draft}</option>
+                        <option value="active">Active</option>
+                        <option value="sent">Sent</option>
+                        <option value="paused">Paused</option>
+                      </select>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 420, overflowY: "auto" }}>
+                      {campaigns.length === 0 ? <p style={hintStyle}>{text.noCampaigns}</p> : null}
+                      {campaigns.map((campaign) => {
+                        const metrics = getCampaignSummaryMetrics(campaign);
+                        return (
+                          <button
+                            type="button"
+                            key={`run-campaign-${campaign.id}`}
+                            onClick={() => pickCampaign(campaign.id)}
+                            style={{ ...campaignBtnStyle, ...(selectedCampaignId === campaign.id ? campaignBtnActiveStyle : {}), textAlign: "left" }}
+                          >
+                            <div style={rowBetweenStyle}>
+                              <strong>{campaign.name}</strong>
+                              <span style={badgeStyle}>{campaign.channel}</span>
+                            </div>
+                            <small style={smallStyle}>{campaign.status}{campaign.subject ? ` · ${campaign.subject}` : ""}</small>
+                            <div style={{ marginTop: "0.35rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                              <span style={badgeStyle}>{text.campaignMetricsSent}: {metrics.sent}</span>
+                              <span style={badgeStyle}>{text.campaignMetricsResponses}: {metrics.responses}</span>
+                              <span style={badgeStyle}>{text.campaignMetricsOptOut}: {metrics.optOut}</span>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
+                ) : null}
 
-                  <div style={{ ...itemCardStyle, background: "#fff" }}>
-                    <strong style={panelTitleStyle}>{text.previewAudience}</strong>
-                    <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-                      <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
+                {runCampaignStep === "recipients" ? (
+                  <div>
+                    <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>
+                      <span style={badgeStyle}>Clients: {audienceCounts.clients || 0}</span>
+                      <span style={badgeStyle}>Leads: {audienceCounts.leads || 0}</span>
+                      {selectedCampaignChannel ? (
+                        <span style={badgeStyle}>
+                          {selectedCampaignChannel === "email" ? text.channelRuleEmail : text.channelRuleWhatsapp}
+                        </span>
+                      ) : null}
                     </div>
-                    <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 280, overflowY: "auto" }}>
-                      {sendableSelectedRecipients.map((row) => {
-                        const previewPolicyReason = getPolicyReasonForChannel(row);
-                        const previewConsentWarning = hasConsentPolicyWarning(row);
-                        const previewConsentHelp = getConsentPolicyHelp(previewPolicyReason);
-                        return (
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.55rem", marginBottom: "0.55rem" }}>
+                      <input
+                        className="ia-form-input"
+                        placeholder={text.searchAudience}
+                        value={audienceSearch}
+                        onChange={(e) => setAudienceSearch(e.target.value)}
+                      />
+                      <select className="ia-form-input" value={audienceSegment} onChange={(e) => setAudienceSegment(e.target.value)}>
+                        <option value="all">{text.all}</option>
+                        <option value="clients">Clients / Clientes</option>
+                        <option value="leads">Leads</option>
+                      </select>
+                      <select className="ia-form-input" value={audienceInterest} onChange={(e) => setAudienceInterest(e.target.value)}>
+                        <option value="all">{text.interestFilter}: {text.allInterest}</option>
+                        <option value="unknown">{text.noResponse}</option>
+                        <option value="interested">{text.interested}</option>
+                        <option value="not_interested">{text.notInterested}</option>
+                        <option value="opt_out">{text.optOutStatus}</option>
+                      </select>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>
+                      <button type="button" className="ia-button ia-button-ghost" style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }} onClick={selectVisibleAudience} disabled={busy || filteredAudience.length === 0}>
+                        {text.selectVisible}
+                      </button>
+                      <button type="button" className="ia-button ia-button-ghost" style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }} onClick={() => selectAudienceBySegment("clients")} disabled={busy}>
+                        {text.selectAllClients}
+                      </button>
+                      <button type="button" className="ia-button ia-button-ghost" style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }} onClick={() => selectAudienceBySegment("leads")} disabled={busy}>
+                        {text.selectAllLeads}
+                      </button>
+                      <button type="button" className="ia-button ia-button-ghost" style={{ padding: "0.28rem 0.5rem", fontSize: "0.76rem" }} onClick={clearRecipientSelection} disabled={busy || selectedRecipientKeys.length === 0}>
+                        {text.clearSelection}
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 1.35fr) minmax(280px, 1fr)", gap: "0.7rem" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 420, overflowY: "auto" }}>
+                        {!loading && filteredAudience.length === 0 ? <p style={hintStyle}>{text.noAudience}</p> : null}
+                        {filteredAudience.map((row) => {
+                          const isSelected = Boolean(selectedRecipients[row.recipient_key]);
+                          const blocked = isRecipientBlocked(row);
+                          const canSelect = !blocked && isRecipientCompatible(row);
+                          const incompatibleReason = blocked ? text.optedOutCannotSelect : getIncompatibleReason(row);
+                          return (
+                            <div key={row.recipient_key} style={{ ...itemCardStyle, opacity: canSelect ? 1 : 0.6 }}>
+                              <div style={rowBetweenStyle}>
+                                <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: 1 }}>
+                                  <input type="checkbox" checked={isSelected} disabled={!canSelect} onChange={() => toggleRecipientSelection(row)} />
+                                  <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                                </label>
+                                <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                  <span style={segmentChip(row.segment)}>{row.label_en} / {row.label_es}</span>
+                                  <span style={interestStatusChip(getAudienceCommercialStatus(row))}>
+                                    {getAudienceCommercialStatusLabel(row)}
+                                  </span>
+                                </div>
+                              </div>
+                              <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                              <div style={{ marginTop: "0.28rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                                <span style={badgeStyle}>{text.campaignsSentCount}: {Number(row.campaigns_sent_count || 0)}</span>
+                                {row.last_campaign_sent_at ? <span style={badgeStyle}>{text.lastCampaignSentAt}: {formatDateTime(row.last_campaign_sent_at)}</span> : null}
+                              </div>
+                              {!canSelect && incompatibleReason ? (
+                                <div style={{ marginTop: "0.28rem" }}>
+                                  <span style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}>{incompatibleReason}</span>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, background: "#f8fafc", padding: "0.6rem", maxHeight: 420, overflowY: "auto" }}>
+                        <div style={rowBetweenStyle}>
+                          <strong>{text.selected}</strong>
+                          <span style={badgeStyle}>{text.selectedCount}: {selectedRecipientKeys.length}</span>
+                        </div>
+                        <div style={{ marginTop: "0.45rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                          <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
+                          <span style={badgeStyle}>{text.excludedByChannel}: {excludedByChannelCount}</span>
+                        </div>
+                        <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                          {sendableSelectedRecipients.map((row) => (
+                            <div key={row.recipient_key} style={{ ...itemCardStyle, background: "#ffffff" }}>
+                              <div style={rowBetweenStyle}>
+                                <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
+                                <button type="button" className="ia-button ia-button-ghost" style={{ padding: "0.22rem 0.45rem", fontSize: "0.72rem" }} onClick={() => removeRecipientFromSelection(row.recipient_key)}>
+                                  {text.remove}
+                                </button>
+                              </div>
+                              <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                            </div>
+                          ))}
+                          {sendableSelectedRecipients.length === 0 ? <p style={hintStyle}>{text.selectedNone}</p> : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {runCampaignStep === "preview" && selectedCampaign ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "0.7rem" }}>
+                    <div style={{ ...itemCardStyle, background: "#fff" }}>
+                      <strong style={panelTitleStyle}>{text.previewContent}</strong>
+                      <div style={{ marginTop: "0.55rem", border: "1px solid #E5E7EB", borderRadius: 10, padding: "0.65rem", background: "#ffffff" }}>
+                        <div style={{ ...rowBetweenStyle, marginBottom: "0.4rem" }}>
+                          <strong>{selectedCampaign.name}</strong>
+                          <span style={badgeStyle}>{selectedCampaign.channel}</span>
+                        </div>
+                        {selectedCampaign.channel === "email" ? (
+                          <small style={{ ...smallStyle, display: "block", marginBottom: "0.4rem" }}>
+                            {selectedCampaign.subject || selectedCampaign.name}
+                          </small>
+                        ) : null}
+                        <div style={{ whiteSpace: "pre-wrap", color: "#0f172a", fontSize: "0.9rem", lineHeight: 1.45 }}>
+                          {selectedCampaign.body || ""}
+                        </div>
+                        {selectedCampaign.image_url ? (
+                          <img
+                            src={selectedCampaign.image_url}
+                            alt="campaign"
+                            style={{ width: "100%", maxHeight: "44vh", objectFit: "contain", borderRadius: 10, marginTop: "0.55rem", border: "1px solid #E5E7EB", background: "#f8fafc" }}
+                          />
+                        ) : null}
+                        {selectedCampaignCtaUrl ? (
+                          <a
+                            href={selectedCampaignCtaUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ display: "inline-block", marginTop: "0.55rem", padding: "0.45rem 0.7rem", borderRadius: 8, background: "#1d4ed8", color: "#fff", textDecoration: "none", fontSize: "0.82rem" }}
+                          >
+                            {selectedCampaign.cta_label || (isEs ? "Abrir sitio" : "Open site")}
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div style={{ ...itemCardStyle, background: "#fff" }}>
+                      <strong style={panelTitleStyle}>{text.previewAudience}</strong>
+                      <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                        <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
+                      </div>
+                      <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.45rem", maxHeight: 280, overflowY: "auto" }}>
+                        {sendableSelectedRecipients.map((row) => (
                           <div key={`preview-${row.recipient_key}`} style={{ ...itemCardStyle, background: "#f8fafc" }}>
                             <div style={rowBetweenStyle}>
                               <strong>{row.recipient_name || row.email || row.phone || row.recipient_key}</strong>
                               <span style={segmentChip(row.segment)}>{row.label_en}</span>
                             </div>
                             <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
-                            {previewConsentWarning ? (
-                              <div style={{ marginTop: "0.28rem" }}>
-                                <span
-                                  title={`${text.consentBadgeTitle}: ${previewConsentHelp}`}
-                                  style={{ ...badgeStyle, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" }}
-                                >
-                                  {getConsentPolicyBadgeLabel(previewPolicyReason)}
-                                </span>
-                              </div>
-                            ) : null}
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : null}
+
+                {runCampaignStep === "result" ? (
+                  <div style={{ ...itemCardStyle, background: "#fff" }}>
+                    <strong style={panelTitleStyle}>{text.runCampaignStepResultSubtitle}</strong>
+                    <p
+                      style={{
+                        ...hintStyle,
+                        marginTop: "0.45rem",
+                        color: runCampaignResult?.type === "success" ? "#065f46" : runCampaignResult?.type === "warning" ? "#92400e" : "#b91c1c",
+                      }}
+                    >
+                      {runCampaignResult?.message || text.sendSummaryFailed}
+                    </p>
+                    <div style={{ marginTop: "0.55rem", display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                      <span style={badgeStyle}>{text.sent}: {runCampaignResult?.sent || 0}</span>
+                      <span style={badgeStyle}>{text.failed}: {runCampaignResult?.failed || 0}</span>
+                      <span style={badgeStyle}>{text.blocked}: {runCampaignResult?.blocked || 0}</span>
+                      <span style={badgeStyle}>{text.skipped}: {runCampaignResult?.skipped || 0}</span>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div style={{ ...rowBetweenStyle, marginTop: "0.8rem" }}>
-                  <span style={smallStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span>
-                  <button type="button" className="ia-button ia-button-warning" disabled={busy || sendableSelectedRecipients.length === 0} onClick={confirmSendCampaign}>
-                    {busy ? text.sending : text.confirmSend}
-                  </button>
+                  <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                    {selectedCampaign ? <span style={badgeStyle}>{selectedCampaign.name}</span> : null}
+                    {runCampaignStep !== "campaign" ? <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span> : null}
+                  </div>
+                  <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {runCampaignStep === "campaign" ? (
+                      <button type="button" className="ia-button ia-button-warning" disabled={busy || !selectedCampaign} onClick={continueToRecipients}>
+                        {text.next}
+                      </button>
+                    ) : null}
+                    {runCampaignStep === "recipients" ? (
+                      <>
+                        <button type="button" className="ia-button ia-button-ghost" disabled={busy} onClick={() => setRunCampaignStep("campaign")}>
+                          {text.back}
+                        </button>
+                        <button type="button" className="ia-button ia-button-warning" disabled={busy || sendableSelectedRecipients.length === 0} onClick={continueToPreview}>
+                          {text.next}
+                        </button>
+                      </>
+                    ) : null}
+                    {runCampaignStep === "preview" ? (
+                      <>
+                        <button type="button" className="ia-button ia-button-ghost" disabled={busy} onClick={() => setRunCampaignStep("recipients")}>
+                          {text.back}
+                        </button>
+                        <button type="button" className="ia-button ia-button-warning" disabled={busy || sendableSelectedRecipients.length === 0} onClick={confirmRunCampaign}>
+                          {busy ? text.sending : text.confirmRunCampaign}
+                        </button>
+                      </>
+                    ) : null}
+                    {runCampaignStep === "result" ? (
+                      <button type="button" className="ia-button ia-button-warning" onClick={closeRunCampaignModal}>
+                        {text.finish}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2002,22 +1846,13 @@ const campaignBtnActiveStyle = {
   boxShadow: "0 0 0 1px rgba(39,68,114,0.15)",
 };
 
-const sendBarStyle = {
-  position: "sticky",
-  bottom: 0,
-  zIndex: 5,
-  marginTop: "0.9rem",
-  border: "1px solid #bfdbfe",
-  borderRadius: 14,
-  background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 70%)",
-  padding: "0.9rem",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: "0.8rem",
-  flexWrap: "wrap",
-  boxShadow: "0 16px 40px rgba(15,23,42,0.12)",
-};
+const runFlowStepChip = (active) => ({
+  ...badgeStyle,
+  background: active ? "#facc15" : "#f8fafc",
+  color: active ? "#713f12" : "#475569",
+  borderColor: active ? "#eab308" : "#e2e8f0",
+  fontWeight: active ? 700 : 500,
+});
 
 const modalOverlayStyle = {
   position: "fixed",

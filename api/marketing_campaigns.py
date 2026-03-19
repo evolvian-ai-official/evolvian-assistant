@@ -1624,6 +1624,17 @@ def _load_campaign_summary_map(client_id: str, campaign_ids: list[str]) -> dict[
     return cleaned
 
 
+def _response_status_from_event_type(event_type: Any) -> str:
+    normalized = str(event_type or "").strip().lower()
+    if normalized in {"interest", "interest_yes"}:
+        return "interested"
+    if normalized == "interest_no":
+        return "not_interested"
+    if normalized == "opt_out":
+        return "opt_out"
+    return "unknown"
+
+
 @router.get("/audience")
 def get_marketing_audience(
     request: Request,
@@ -1713,15 +1724,7 @@ def get_marketing_history_for_recipient(
             if not campaign:
                 continue
             response_event = latest_response_by_campaign.get(str(row.get("campaign_id")))
-            event_type = str((response_event or {}).get("event_type") or "").strip().lower()
-            if event_type in {"interest", "interest_yes"}:
-                response_status = "interested"
-            elif event_type == "interest_no":
-                response_status = "not_interested"
-            elif event_type == "opt_out":
-                response_status = "opt_out"
-            else:
-                response_status = "unknown"
+            response_status = _response_status_from_event_type((response_event or {}).get("event_type"))
             items.append(
                 {
                     "campaign_id": row.get("campaign_id"),
@@ -1826,10 +1829,35 @@ def get_campaign_detail(request: Request, campaign_id: str, client_id: str = Que
             .limit(2000)
             .execute()
         )
+        response_events_res = (
+            supabase.table("marketing_campaign_events")
+            .select("recipient_key,event_type,created_at")
+            .eq("client_id", client_id)
+            .eq("campaign_id", campaign_id)
+            .in_("event_type", ["interest", "interest_yes", "interest_no", "opt_out"])
+            .order("created_at", desc=True)
+            .limit(2000)
+            .execute()
+        )
+        latest_response_by_recipient: dict[str, dict[str, Any]] = {}
+        for event in response_events_res.data or []:
+            recipient_key = str((event or {}).get("recipient_key") or "").strip()
+            if not recipient_key or recipient_key in latest_response_by_recipient:
+                continue
+            latest_response_by_recipient[recipient_key] = event or {}
+
+        recipients = []
+        for row in recipients_res.data or []:
+            recipient_key = str((row or {}).get("recipient_key") or "").strip()
+            response_event = latest_response_by_recipient.get(recipient_key) or {}
+            enriched_row = dict(row or {})
+            enriched_row["response_status"] = _response_status_from_event_type(response_event.get("event_type"))
+            enriched_row["response_at"] = response_event.get("created_at")
+            recipients.append(enriched_row)
 
         return {
             "campaign": campaign,
-            "recipients": recipients_res.data or [],
+            "recipients": recipients,
         }
     except HTTPException:
         raise
