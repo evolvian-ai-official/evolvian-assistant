@@ -1046,6 +1046,51 @@ def _apply_marketing_contact_state(pool: dict[str, dict[str, Any]], *, client_id
         row["marketing_state_last_seen_at"] = (matched_state or {}).get("last_seen_at")
 
 
+def _load_campaign_delivery_stats(client_id: str) -> dict[str, dict[str, Any]]:
+    try:
+        rows = (
+            supabase.table("marketing_campaign_recipients")
+            .select("recipient_key,campaign_id,send_status,sent_at,updated_at")
+            .eq("client_id", client_id)
+            .limit(5000)
+            .execute()
+        ).data or []
+    except Exception:
+        return {}
+
+    stats: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        recipient_key = str((row or {}).get("recipient_key") or "").strip()
+        campaign_id = str((row or {}).get("campaign_id") or "").strip()
+        send_status = str((row or {}).get("send_status") or "").strip().lower()
+        if not recipient_key or not campaign_id:
+            continue
+        if send_status != "sent" and not (row or {}).get("sent_at"):
+            continue
+
+        entry = stats.get(recipient_key)
+        if not entry:
+            entry = {
+                "campaign_ids": set(),
+                "campaigns_sent_count": 0,
+                "last_campaign_sent_at": None,
+            }
+            stats[recipient_key] = entry
+
+        if campaign_id not in entry["campaign_ids"]:
+            entry["campaign_ids"].add(campaign_id)
+            entry["campaigns_sent_count"] += 1
+
+        candidate_ts = (row or {}).get("sent_at") or (row or {}).get("updated_at")
+        if _as_epoch(candidate_ts) >= _as_epoch(entry.get("last_campaign_sent_at")):
+            entry["last_campaign_sent_at"] = candidate_ts
+
+    for entry in stats.values():
+        entry.pop("campaign_ids", None)
+
+    return stats
+
+
 def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], email: Optional[str], phone: Optional[str], source: str,
                    last_activity_at: Optional[str], marketing_opt_in: bool, client_source: bool,
                    consent_at: Optional[str] = None, consent_terms_accepted: Optional[bool] = None,
@@ -1076,6 +1121,8 @@ def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], emai
             "email_unsubscribed": False,
             "whatsapp_unsubscribed": False,
             "marketing_state_last_seen_at": None,
+            "campaigns_sent_count": 0,
+            "last_campaign_sent_at": None,
         }
         pool[key] = row
 
@@ -1245,9 +1292,13 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
     candidate_emails = [_normalize_email((row or {}).get("email")) for row in pool.values()]
     opted_out_emails = _load_opted_out_emails_for_client(client_id, [e for e in candidate_emails if e])
     _apply_marketing_contact_state(pool, client_id=client_id)
+    delivery_stats_by_recipient = _load_campaign_delivery_stats(client_id)
 
     items: list[dict[str, Any]] = []
     for _, row in pool.items():
+        delivery_stats = delivery_stats_by_recipient.get(str(row.get("recipient_key") or "").strip()) or {}
+        row["campaigns_sent_count"] = int(delivery_stats.get("campaigns_sent_count") or 0)
+        row["last_campaign_sent_at"] = delivery_stats.get("last_campaign_sent_at")
         if row.get("has_client_source"):
             row["segment"] = "clients"
         elif row.get("marketing_opt_in"):
@@ -1486,6 +1537,93 @@ def _log_campaign_event(*, client_id: str, campaign_id: str, recipient_key: str,
         return
 
 
+def _load_campaign_summary_map(client_id: str, campaign_ids: list[str]) -> dict[str, dict[str, int]]:
+    normalized_ids = [str(campaign_id or "").strip() for campaign_id in campaign_ids if str(campaign_id or "").strip()]
+    if not normalized_ids:
+        return {}
+
+    summaries: dict[str, dict[str, Any]] = {
+        campaign_id: {
+            "sent_count": 0,
+            "failed_count": 0,
+            "blocked_policy_count": 0,
+            "skipped_count": 0,
+            "responses_count": 0,
+            "interested_count": 0,
+            "not_interested_count": 0,
+            "opt_out_count": 0,
+            "_response_keys": set(),
+            "_interested_keys": set(),
+            "_not_interested_keys": set(),
+            "_opt_out_keys": set(),
+        }
+        for campaign_id in normalized_ids
+    }
+
+    recipient_rows = (
+        supabase.table("marketing_campaign_recipients")
+        .select("campaign_id,send_status")
+        .eq("client_id", client_id)
+        .in_("campaign_id", normalized_ids)
+        .limit(5000)
+        .execute()
+    ).data or []
+    for row in recipient_rows:
+        campaign_id = str((row or {}).get("campaign_id") or "").strip()
+        summary = summaries.get(campaign_id)
+        if not summary:
+            continue
+        send_status = str((row or {}).get("send_status") or "").strip().lower()
+        if send_status == "sent":
+            summary["sent_count"] += 1
+        elif send_status == "failed":
+            summary["failed_count"] += 1
+        elif send_status == "blocked_policy":
+            summary["blocked_policy_count"] += 1
+        elif send_status == "skipped":
+            summary["skipped_count"] += 1
+
+    event_rows = (
+        supabase.table("marketing_campaign_events")
+        .select("campaign_id,recipient_key,event_type")
+        .eq("client_id", client_id)
+        .in_("campaign_id", normalized_ids)
+        .in_("event_type", ["interest", "interest_yes", "interest_no", "opt_out"])
+        .limit(5000)
+        .execute()
+    ).data or []
+    for row in event_rows:
+        campaign_id = str((row or {}).get("campaign_id") or "").strip()
+        recipient_key = str((row or {}).get("recipient_key") or "").strip()
+        event_type = str((row or {}).get("event_type") or "").strip().lower()
+        summary = summaries.get(campaign_id)
+        if not summary or not recipient_key:
+            continue
+
+        if event_type in {"interest", "interest_yes", "interest_no"}:
+            summary["_response_keys"].add(recipient_key)
+        if event_type in {"interest", "interest_yes"}:
+            summary["_interested_keys"].add(recipient_key)
+        elif event_type == "interest_no":
+            summary["_not_interested_keys"].add(recipient_key)
+        elif event_type == "opt_out":
+            summary["_opt_out_keys"].add(recipient_key)
+
+    cleaned: dict[str, dict[str, int]] = {}
+    for campaign_id, summary in summaries.items():
+        cleaned[campaign_id] = {
+            "sent_count": int(summary["sent_count"]),
+            "failed_count": int(summary["failed_count"]),
+            "blocked_policy_count": int(summary["blocked_policy_count"]),
+            "skipped_count": int(summary["skipped_count"]),
+            "responses_count": len(summary["_response_keys"]),
+            "interested_count": len(summary["_interested_keys"]),
+            "not_interested_count": len(summary["_not_interested_keys"]),
+            "opt_out_count": len(summary["_opt_out_keys"]),
+        }
+    return cleaned
+
+
 @router.get("/audience")
 def get_marketing_audience(
     request: Request,
@@ -1650,7 +1788,17 @@ def list_campaigns(
                 or q_value in str(row.get("body") or "").lower()
             ]
 
-        return {"items": [_enrich_campaign_for_ui(row) for row in rows]}
+        summary_map = _load_campaign_summary_map(
+            client_id,
+            [str((row or {}).get("id") or "").strip() for row in rows],
+        )
+        items = []
+        for row in rows:
+            enriched = _enrich_campaign_for_ui(row)
+            enriched.update(summary_map.get(str((row or {}).get("id") or "").strip(), {}))
+            items.append(enriched)
+
+        return {"items": items}
     except HTTPException:
         raise
     except Exception as exc:

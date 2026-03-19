@@ -121,6 +121,24 @@ def test_load_contacts_audience_applies_marketing_contact_state(monkeypatch):
         "public_privacy_requests": [],
         "client_settings": [{"client_id": "client_1", "consent_renewal_days": 90}],
         "client_profile": [{"client_id": "client_1", "country": "Mexico"}],
+        "marketing_campaign_recipients": [
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:condesa.spa@gmail.com",
+                "send_status": "sent",
+                "sent_at": "2026-03-17T17:00:00+00:00",
+                "updated_at": "2026-03-17T17:00:00+00:00",
+            },
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_2",
+                "recipient_key": "email:condesa.spa@gmail.com",
+                "send_status": "sent",
+                "sent_at": "2026-03-18T17:10:00+00:00",
+                "updated_at": "2026-03-18T17:10:00+00:00",
+            },
+        ],
         "marketing_contacts": [
             {
                 "client_id": "client_1",
@@ -145,3 +163,92 @@ def test_load_contacts_audience_applies_marketing_contact_state(monkeypatch):
     assert result[0]["interest_status"] == "interested"
     assert result[0]["email_unsubscribed"] is False
     assert result[0]["marketing_state_last_seen_at"] == "2026-03-18T17:06:00+00:00"
+    assert result[0]["campaigns_sent_count"] == 2
+    assert result[0]["last_campaign_sent_at"] == "2026-03-18T17:10:00+00:00"
+
+
+def test_list_campaigns_includes_summary_metrics(monkeypatch):
+    state = {
+        "marketing_campaigns": [
+            {
+                "id": "campaign_1",
+                "client_id": "client_1",
+                "name": "Seguimiento marzo",
+                "channel": "email",
+                "status": "sent",
+                "subject": "Promo marzo",
+                "body": "Hola",
+                "is_active": True,
+                "created_at": "2026-03-18T09:00:00+00:00",
+            }
+        ],
+        "marketing_campaign_recipients": [
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:one@example.com",
+                "send_status": "sent",
+            },
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:two@example.com",
+                "send_status": "failed",
+            },
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:three@example.com",
+                "send_status": "blocked_policy",
+            },
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:four@example.com",
+                "send_status": "skipped",
+            },
+        ],
+        "marketing_campaign_events": [
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:one@example.com",
+                "event_type": "interest_yes",
+            },
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:two@example.com",
+                "event_type": "interest_no",
+            },
+            {
+                "client_id": "client_1",
+                "campaign_id": "campaign_1",
+                "recipient_key": "email:three@example.com",
+                "event_type": "opt_out",
+            },
+        ],
+    }
+
+    monkeypatch.setattr(module, "supabase", _FakeSupabase(state))
+    monkeypatch.setattr(module, "authorize_client_request", lambda *_args, **_kwargs: "user_1")
+    monkeypatch.setattr(module, "_ensure_premium_access", lambda *_args, **_kwargs: None)
+
+    result = module.list_campaigns(
+        request=SimpleNamespace(),
+        client_id="client_1",
+        q=None,
+        channel=None,
+        status=None,
+        include_archived=False,
+    )
+
+    assert len(result["items"]) == 1
+    assert result["items"][0]["sent_count"] == 1
+    assert result["items"][0]["failed_count"] == 1
+    assert result["items"][0]["blocked_policy_count"] == 1
+    assert result["items"][0]["skipped_count"] == 1
+    assert result["items"][0]["responses_count"] == 2
+    assert result["items"][0]["interested_count"] == 1
+    assert result["items"][0]["not_interested_count"] == 1
+    assert result["items"][0]["opt_out_count"] == 1
