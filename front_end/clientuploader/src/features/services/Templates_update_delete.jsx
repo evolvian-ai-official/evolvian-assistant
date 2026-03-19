@@ -44,6 +44,7 @@ const BODY_EXTRA_VARIABLE_TOKENS = [
 const EMAIL_LINE_BREAK_TOKEN = "<br />";
 
 const MAX_FOOTER_IMAGE_BYTES = 1024 * 1024;
+const MAX_WHATSAPP_HEADER_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const insertTokenAtCursor = (currentValue, setValue, inputRef, token) => {
   const nextValue = currentValue || "";
@@ -124,6 +125,10 @@ export default function TemplatesUpdateDelete({
   const [includeFooterImage, setIncludeFooterImage] = useState(false);
   const [footerImageFile, setFooterImageFile] = useState(null);
   const [footerImageName, setFooterImageName] = useState("");
+  const [whatsappHeaderType, setWhatsappHeaderType] = useState("NONE");
+  const [whatsappHeaderImageUrl, setWhatsappHeaderImageUrl] = useState("");
+  const [whatsappHeaderImageName, setWhatsappHeaderImageName] = useState("");
+  const [uploadingWhatsAppHeader, setUploadingWhatsAppHeader] = useState(false);
   const [reminders, setReminders] = useState([{ value: 1, unit: "hours" }]);
 
   const [loading, setLoading] = useState(false);
@@ -135,12 +140,31 @@ export default function TemplatesUpdateDelete({
   const bodyTextareaRef = useRef(null);
   const reminderSectionRef = useRef(null);
   const firstReminderValueRef = useRef(null);
+  const whatsappHeaderFileInputRef = useRef(null);
 
   const isWhatsApp = initialData?.channel === "whatsapp";
   const isWidget = initialData?.channel === "widget";
   const isEmail = initialData?.channel === "email";
   const supportsReminderFrequency =
     !isWidget && initialData?.type === "appointment_reminder";
+  const whatsappHeaderCopy = {
+    title: isEs ? "Header del template" : "Template header",
+    typeLabel: isEs ? "Tipo de header" : "Header type",
+    none: isEs ? "Ninguno" : "None",
+    image: isEs ? "Imagen" : "Image",
+    video: isEs ? "Video (pronto)" : "Video (soon)",
+    document: isEs ? "Documento (pronto)" : "Document (soon)",
+    imageUrlLabel: isEs ? "URL publica de imagen" : "Public image URL",
+    imageUrlPlaceholder: isEs ? "https://dominio.com/imagen.png" : "https://domain.com/image.png",
+    helper: isEs ? "Solo JPG/PNG, maximo 5MB. Meta debe poder acceder a la URL publicamente." : "JPG/PNG only, max 5MB. Meta must be able to fetch the URL publicly.",
+    upload: isEs ? "Subir imagen" : "Upload image",
+    uploading: isEs ? "Subiendo..." : "Uploading...",
+    clear: isEs ? "Quitar imagen" : "Remove image",
+    missingUrl: isEs ? "Falta la URL de la imagen del header." : "Header image URL is required.",
+    invalidType: isEs ? "Solo se permiten JPG y PNG." : "Only JPG and PNG are allowed.",
+    tooLarge: isEs ? "La imagen excede 5MB." : "Image exceeds 5MB.",
+    uploadFailed: isEs ? "No se pudo subir la imagen del header." : "Could not upload the header image.",
+  };
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -168,6 +192,27 @@ export default function TemplatesUpdateDelete({
         setReminders([{ value: 1, unit: "hours" }]);
       }
     }
+    const resolvedButtons =
+      initialData.resolved_buttons_json && typeof initialData.resolved_buttons_json === "object"
+        ? initialData.resolved_buttons_json
+        : (initialData.buttons_json && typeof initialData.buttons_json === "object"
+          ? initialData.buttons_json
+          : {});
+    const resolvedHeader =
+      resolvedButtons && typeof resolvedButtons.header === "object"
+        ? resolvedButtons.header
+        : null;
+    const resolvedHeaderType =
+      String(resolvedHeader?.type || "").trim().toUpperCase() === "IMAGE"
+        ? "IMAGE"
+        : "NONE";
+    setWhatsappHeaderType(resolvedHeaderType);
+    setWhatsappHeaderImageUrl(
+      resolvedHeaderType === "IMAGE"
+        ? String(resolvedHeader?.image_url || resolvedHeader?.url || resolvedHeader?.link || "")
+        : ""
+    );
+    setWhatsappHeaderImageName("");
     setIncludeFooterImage(false);
     setFooterImageFile(null);
     setFooterImageName("");
@@ -216,6 +261,58 @@ export default function TemplatesUpdateDelete({
     setFooterImageName(file.name);
   };
 
+  const handleWhatsAppHeaderImageChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const contentType = String(file.type || "").toLowerCase();
+    if (!["image/jpeg", "image/jpg", "image/png"].includes(contentType)) {
+      setError(whatsappHeaderCopy.invalidType);
+      return;
+    }
+
+    if (file.size > MAX_WHATSAPP_HEADER_IMAGE_BYTES) {
+      setError(whatsappHeaderCopy.tooLarge);
+      return;
+    }
+
+    if (!clientId) return;
+
+    setUploadingWhatsAppHeader(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("client_id", clientId || "");
+      formData.append("file", file);
+
+      const uploadRes = await authFetch(`${import.meta.env.VITE_API_URL}/message_templates/whatsapp_header_image`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const uploadData = await uploadRes.json().catch(() => ({}));
+      if (!uploadRes.ok) {
+        throw new Error(uploadData?.detail || whatsappHeaderCopy.uploadFailed);
+      }
+
+      const uploadedUrl = String(uploadData?.url || "").trim();
+      if (!uploadedUrl) {
+        throw new Error(whatsappHeaderCopy.uploadFailed);
+      }
+
+      setWhatsappHeaderType("IMAGE");
+      setWhatsappHeaderImageUrl(uploadedUrl);
+      setWhatsappHeaderImageName(file.name || "");
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : whatsappHeaderCopy.uploadFailed);
+    } finally {
+      setUploadingWhatsAppHeader(false);
+      if (event.target) {
+        event.target.value = "";
+      }
+    }
+  };
+
   const handleSubmit = async () => {
     setLoading(true);
     setError(null);
@@ -233,7 +330,31 @@ export default function TemplatesUpdateDelete({
         ...(frequency ? { frequency } : {}),
       };
 
-      if (isEmail) {
+      if (isWhatsApp) {
+        const nextButtonsJson =
+          initialData?.buttons_json && typeof initialData.buttons_json === "object"
+            ? { ...initialData.buttons_json }
+            : {};
+        delete nextButtonsJson.header;
+
+        if (whatsappHeaderType === "IMAGE") {
+          const normalizedUrl = whatsappHeaderImageUrl.trim();
+          if (!normalizedUrl) {
+            throw new Error(whatsappHeaderCopy.missingUrl);
+          }
+          nextButtonsJson.header = {
+            type: "IMAGE",
+            image_url: normalizedUrl,
+          };
+        } else if (
+          (initialData?.resolved_buttons_json && typeof initialData.resolved_buttons_json === "object" && initialData.resolved_buttons_json.header)
+          || (initialData?.buttons_json && typeof initialData.buttons_json === "object" && initialData.buttons_json.header)
+        ) {
+          nextButtonsJson.header = { type: "NONE" };
+        }
+
+        payload.buttons_json = Object.keys(nextButtonsJson).length > 0 ? nextButtonsJson : null;
+      } else if (isEmail) {
         if (includeFooterImage && !footerImageFile) {
           throw new Error(t("create_template_modal_select_footer_image_or_disable"));
         }
@@ -283,7 +404,7 @@ export default function TemplatesUpdateDelete({
       onClose();
     } catch (err) {
       console.error(err);
-      setError(t("template_update_failed"));
+      setError(err instanceof Error && err.message ? err.message : t("template_update_failed"));
     } finally {
       setLoading(false);
     }
@@ -453,6 +574,105 @@ export default function TemplatesUpdateDelete({
           />
         </div>
 
+        {isWhatsApp && (
+          <div style={{ marginTop: "0.7rem" }}>
+            <div className="ia-form-label">{whatsappHeaderCopy.title}</div>
+            <div style={{ display: "grid", gap: "0.55rem" }}>
+              <div>
+                <div className="ia-form-label" style={{ marginBottom: "0.3rem" }}>
+                  {whatsappHeaderCopy.typeLabel}
+                </div>
+                <select
+                  className="ia-form-input"
+                  value={whatsappHeaderType}
+                  onChange={(e) => {
+                    const nextType = e.target.value;
+                    setWhatsappHeaderType(nextType);
+                    if (nextType !== "IMAGE") {
+                      setWhatsappHeaderImageUrl("");
+                      setWhatsappHeaderImageName("");
+                    }
+                  }}
+                >
+                  <option value="NONE">{whatsappHeaderCopy.none}</option>
+                  <option value="IMAGE">{whatsappHeaderCopy.image}</option>
+                  <option value="VIDEO" disabled>{whatsappHeaderCopy.video}</option>
+                  <option value="DOCUMENT" disabled>{whatsappHeaderCopy.document}</option>
+                </select>
+              </div>
+
+              {whatsappHeaderType === "IMAGE" && (
+                <>
+                  <div>
+                    <div className="ia-form-label" style={{ marginBottom: "0.3rem" }}>
+                      {whatsappHeaderCopy.imageUrlLabel}
+                    </div>
+                    <input
+                      className="ia-form-input"
+                      value={whatsappHeaderImageUrl}
+                      onChange={(e) => setWhatsappHeaderImageUrl(e.target.value)}
+                      placeholder={whatsappHeaderCopy.imageUrlPlaceholder}
+                    />
+                    <small style={{ color: "#667085", display: "block", marginTop: "0.35rem" }}>
+                      {whatsappHeaderCopy.helper}
+                    </small>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <input
+                      ref={whatsappHeaderFileInputRef}
+                      type="file"
+                      accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                      onChange={handleWhatsAppHeaderImageChange}
+                      style={{ display: "none" }}
+                    />
+                    <button
+                      type="button"
+                      className="ia-button ia-button-ghost"
+                      onClick={() => whatsappHeaderFileInputRef.current?.click()}
+                      disabled={uploadingWhatsAppHeader}
+                    >
+                      {uploadingWhatsAppHeader ? whatsappHeaderCopy.uploading : whatsappHeaderCopy.upload}
+                    </button>
+                    {whatsappHeaderImageUrl && (
+                      <button
+                        type="button"
+                        className="ia-button ia-button-ghost"
+                        onClick={() => {
+                          setWhatsappHeaderImageUrl("");
+                          setWhatsappHeaderImageName("");
+                        }}
+                      >
+                        {whatsappHeaderCopy.clear}
+                      </button>
+                    )}
+                  </div>
+
+                  {whatsappHeaderImageName && (
+                    <div style={{ fontSize: "0.78rem", color: "#5f6b7a" }}>
+                      {t("create_template_modal_selected_image")}: {whatsappHeaderImageName}
+                    </div>
+                  )}
+
+                  {whatsappHeaderImageUrl && (
+                    <img
+                      src={whatsappHeaderImageUrl}
+                      alt="whatsapp header preview"
+                      style={{
+                        width: "100%",
+                        maxWidth: 280,
+                        borderRadius: 12,
+                        border: "1px solid #E5E7EB",
+                        objectFit: "cover",
+                      }}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {isEmail && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.35rem" }}>
@@ -597,7 +817,7 @@ export default function TemplatesUpdateDelete({
           <button type="button" onClick={onClose} className="ia-button ia-button-ghost">
             {t("cancel")}
           </button>
-          <button type="button" onClick={handleSubmit} disabled={loading} className="ia-button ia-button-primary">
+          <button type="button" onClick={handleSubmit} disabled={loading || uploadingWhatsAppHeader} className="ia-button ia-button-primary">
             {loading ? t("saving") : t("save_changes")}
           </button>
         </div>

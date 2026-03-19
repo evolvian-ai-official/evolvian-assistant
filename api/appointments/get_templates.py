@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Any, Optional, List
 import uuid
 import logging
 
@@ -12,6 +12,7 @@ from api.modules.whatsapp.template_sync import (
     get_client_country_code,
     get_client_template_sync_map,
     infer_template_category,
+    resolve_effective_template_buttons_json,
     sync_canonical_templates_for_client,
 )
 
@@ -48,6 +49,8 @@ class MessageTemplateResponse(BaseModel):
 
     # Snapshot name (local)
     template_name: Optional[str] = None
+    buttons_json: Optional[dict[str, Any]] = None
+    resolved_buttons_json: Optional[dict[str, Any]] = None
 
     # Meta resolved
     meta_template_name: Optional[str] = None
@@ -104,7 +107,7 @@ def get_message_templates(
                 supabase
                 .table("message_templates")
                 .select(
-                    "id, channel, type, is_active, body, frequency, template_name, label, meta_template_id, "
+                    "id, channel, type, is_active, body, frequency, template_name, buttons_json, label, meta_template_id, "
                     "language_family, locale_code, variant_key, priority, is_default_for_language"
                 )
                 .eq("client_id", str(client_id))
@@ -169,7 +172,7 @@ def get_message_templates(
                         supabase
                         .table("meta_approved_templates")
                         .select(
-                            "template_name, parameter_count, language, preview_body"
+                            "template_name, parameter_count, language, preview_body, buttons_json"
                         )
                         .eq("id", t["meta_template_id"])
                         .eq("is_active", True)
@@ -235,6 +238,13 @@ def get_message_templates(
                 if sync_row and sync_row.get("pricing_source")
                 else pricing["pricing_source"]
             )
+            resolved_buttons_json = (
+                resolve_effective_template_buttons_json(
+                    canonical_buttons_json=meta.get("buttons_json") if meta else None,
+                    local_buttons_json=t.get("buttons_json"),
+                )
+                if is_whatsapp else None
+            )
 
             formatted_templates.append(
                 MessageTemplateResponse(
@@ -248,6 +258,8 @@ def get_message_templates(
                     body=None if is_whatsapp else t.get("body"),
 
                     template_name=t.get("template_name"),
+                    buttons_json=t.get("buttons_json") if is_whatsapp else None,
+                    resolved_buttons_json=resolved_buttons_json,
 
                     meta_template_name=meta.get("template_name") if meta else None,
                     meta_parameter_count=meta.get("parameter_count") if meta else None,
@@ -278,6 +290,7 @@ def get_message_templates(
                             build_client_template_name(
                                 meta.get("template_name") if meta else (t.get("template_name") or "template"),
                                 client_id_str,
+                                t.get("buttons_json"),
                             )
                             if is_whatsapp else None
                         )

@@ -8,6 +8,7 @@ from api.compliance.outbound_policy import (
     evaluate_outbound_policy,
     log_outbound_policy_event,
 )
+from api.modules.whatsapp.template_sync import resolve_effective_template_header_image_url
 from api.modules.assistant_rag.supabase_client import supabase
 from api.security.whatsapp_token_crypto import decrypt_whatsapp_token
 
@@ -228,6 +229,7 @@ async def send_meta_template(
     parameters: Optional[List[str]] = None,
     button_url_parameters: Optional[List[str]] = None,
     header_image_url: Optional[str] = None,
+    buttons_json: Optional[dict] = None,
     phone_number_id: str,
     access_token: str,
 ) -> dict:
@@ -290,7 +292,13 @@ async def send_meta_template(
     }
 
     template_components: list[dict] = []
-    normalized_header_image_url = str(header_image_url or "").strip()
+    normalized_header_image_url = (
+        resolve_effective_template_header_image_url(
+            local_buttons_json=buttons_json,
+            header_image_url=header_image_url,
+        )
+        or ""
+    ).strip()
     if normalized_header_image_url and (
         normalized_header_image_url.startswith("https://")
         or normalized_header_image_url.startswith("http://")
@@ -416,6 +424,7 @@ async def send_whatsapp_template_for_client(
     parameters: Optional[List[str]] = None,
     button_url_parameters: Optional[List[str]] = None,
     header_image_url: str | None = None,
+    buttons_json: Optional[dict] = None,
     language_code: str = "es_MX",
     purpose: str = "transactional",
     recipient_email: str | None = None,
@@ -512,6 +521,7 @@ async def send_whatsapp_template_for_client(
             parameters=parameters,
             button_url_parameters=button_url_parameters,
             header_image_url=header_image_url,
+            buttons_json=buttons_json,
             phone_number_id=channel["wa_phone_id"],
             access_token=channel["wa_token"],
         )

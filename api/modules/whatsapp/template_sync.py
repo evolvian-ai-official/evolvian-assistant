@@ -93,11 +93,91 @@ def _sanitize_template_name(value: str) -> str:
     return slug or "evolvian_template"
 
 
-def build_client_template_name(canonical_name: str, client_id: str) -> str:
+def decode_template_buttons_json(value: Any) -> dict[str, Any]:
+    raw = value
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = None
+    if isinstance(raw, list):
+        return {"buttons": raw}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _buttons_override_fingerprint(value: Any) -> Optional[str]:
+    decoded = decode_template_buttons_json(value)
+    if not decoded:
+        return None
+
+    try:
+        encoded = json.dumps(decoded, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return None
+
+    if not encoded or encoded == "{}":
+        return None
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:10]
+
+
+def build_client_template_name(
+    canonical_name: str,
+    client_id: str,
+    local_buttons_json: Any = None,
+) -> str:
     # Canonical names from meta_approved_templates are the only WhatsApp templates
     # Evolvian should use across accounts. Keep name stable per canonical record.
     _ = client_id  # kept for backwards-compatible signature
-    return (canonical_name or "").strip() or _sanitize_template_name(canonical_name)
+    base_name = (canonical_name or "").strip() or _sanitize_template_name(canonical_name)
+    override_fingerprint = _buttons_override_fingerprint(local_buttons_json)
+    if not override_fingerprint:
+        return base_name
+    return f"{base_name}_cfg_{override_fingerprint}"
+
+
+def merge_template_buttons_json(
+    *,
+    canonical_buttons_json: Any = None,
+    local_buttons_json: Any = None,
+) -> Optional[dict[str, Any]]:
+    canonical = decode_template_buttons_json(canonical_buttons_json)
+    local = decode_template_buttons_json(local_buttons_json)
+
+    if not canonical and not local:
+        return None
+
+    merged: dict[str, Any] = dict(canonical or {})
+
+    if "buttons" in local:
+        buttons = local.get("buttons")
+        if isinstance(buttons, list):
+            merged["buttons"] = buttons
+        else:
+            merged.pop("buttons", None)
+
+    if "header" in local:
+        header = local.get("header")
+        if isinstance(header, dict):
+            header_type = str(header.get("type") or "").strip().upper()
+            if header_type and header_type != "NONE":
+                merged["header"] = header
+            else:
+                merged.pop("header", None)
+        else:
+            merged.pop("header", None)
+
+    return merged or None
+
+
+def resolve_effective_template_buttons_json(
+    *,
+    canonical_buttons_json: Any = None,
+    local_buttons_json: Any = None,
+) -> Optional[dict[str, Any]]:
+    return merge_template_buttons_json(
+        canonical_buttons_json=canonical_buttons_json,
+        local_buttons_json=local_buttons_json,
+    )
 
 
 def _is_campaign_meta_type(template_type: Optional[str]) -> bool:
@@ -934,12 +1014,7 @@ def _normalize_template_buttons(
     template_type: Optional[str],
     language: Optional[str],
 ) -> list[dict]:
-    raw = buttons_json
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            raw = None
+    raw = decode_template_buttons_json(buttons_json)
 
     if isinstance(raw, dict):
         raw = raw.get("buttons")
@@ -992,12 +1067,7 @@ def _normalize_template_header_image_url(
     if _looks_like_media_handle(direct):
         return direct[:2000]
 
-    raw = buttons_json
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            raw = None
+    raw = decode_template_buttons_json(buttons_json)
 
     if not isinstance(raw, dict):
         return None
@@ -1030,12 +1100,7 @@ def _extract_template_header_image_url(
     if direct.startswith("https://") or direct.startswith("http://"):
         return direct[:2000]
 
-    raw = buttons_json
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            raw = None
+    raw = decode_template_buttons_json(buttons_json)
 
     if not isinstance(raw, dict):
         return None
@@ -1053,6 +1118,22 @@ def _extract_template_header_image_url(
     if candidate.startswith("https://") or candidate.startswith("http://"):
         return candidate[:2000]
     return None
+
+
+def resolve_effective_template_header_image_url(
+    *,
+    canonical_buttons_json: Any = None,
+    local_buttons_json: Any = None,
+    header_image_url: Optional[str] = None,
+) -> Optional[str]:
+    effective_buttons_json = resolve_effective_template_buttons_json(
+        canonical_buttons_json=canonical_buttons_json,
+        local_buttons_json=local_buttons_json,
+    )
+    return _extract_template_header_image_url(
+        buttons_json=effective_buttons_json,
+        header_image_url=header_image_url,
+    )
 
 
 def _download_template_header_image(image_url: str) -> tuple[bytes, str, str]:
@@ -1886,11 +1967,42 @@ def _find_existing_whatsapp_message_template(
     return None
 
 
+def _load_local_whatsapp_buttons_overrides(*, client_id: str) -> dict[str, Any]:
+    try:
+        response = (
+            supabase
+            .table("message_templates")
+            .select("meta_template_id,buttons_json,updated_at")
+            .eq("client_id", client_id)
+            .eq("channel", "whatsapp")
+            .not_.is_("meta_template_id", None)
+            .order("updated_at", desc=True)
+            .execute()
+        )
+    except Exception:
+        logger.warning(
+            "⚠️ Failed loading local WhatsApp template buttons_json overrides | client_id=%s",
+            client_id,
+        )
+        return {}
+
+    overrides: dict[str, Any] = {}
+    for row in response.data or []:
+        meta_template_id = str((row or {}).get("meta_template_id") or "").strip()
+        if not meta_template_id or meta_template_id in overrides:
+            continue
+        decoded = decode_template_buttons_json((row or {}).get("buttons_json"))
+        if decoded:
+            overrides[meta_template_id] = decoded
+    return overrides
+
+
 def _ensure_whatsapp_template_binding(
     *,
     client_id: str,
     meta_template_id: str,
     canonical_template_name: str,
+    client_template_name: str,
     template_type: Optional[str],
     language: Optional[str],
     meta_status_active: bool,
@@ -1915,7 +2027,7 @@ def _ensure_whatsapp_template_binding(
         existing_frequency = existing.get("frequency")
         update_payload = {
             "meta_template_id": meta_template_id,
-            "template_name": canonical_template_name,
+            "template_name": client_template_name,
             "type": template_type,
             "channel": "whatsapp",
             "language_family": language_family,
@@ -1951,7 +2063,7 @@ def _ensure_whatsapp_template_binding(
         "channel": "whatsapp",
         "type": template_type,
         "meta_template_id": meta_template_id,
-        "template_name": canonical_template_name,
+        "template_name": client_template_name,
         "label": canonical_template_name,
         "language_family": language_family,
         "locale_code": locale_code,
@@ -2009,7 +2121,7 @@ def _ensure_whatsapp_template_binding(
             existing_frequency = candidate.get("frequency")
             update_payload = {
                 "meta_template_id": meta_template_id,
-                "template_name": canonical_template_name,
+                "template_name": client_template_name,
                 "label": canonical_template_name,
                 "channel": "whatsapp",
                 "type": template_type,
@@ -2051,7 +2163,7 @@ def _reconcile_whatsapp_message_bindings_from_sync_rows(*, client_id: str) -> No
         rows_res = (
             supabase
             .table("client_whatsapp_templates")
-            .select("meta_template_id, canonical_template_name, template_type, language, status, is_active")
+            .select("meta_template_id, canonical_template_name, meta_template_name, template_type, language, status, is_active")
             .eq("client_id", client_id)
             .execute()
         )
@@ -2090,6 +2202,7 @@ def _reconcile_whatsapp_message_bindings_from_sync_rows(*, client_id: str) -> No
             client_id=client_id,
             meta_template_id=meta_template_id,
             canonical_template_name=str(row.get("canonical_template_name") or ""),
+            client_template_name=str(row.get("meta_template_name") or row.get("canonical_template_name") or ""),
             template_type=template_type,
             language=language,
             meta_status_active=meta_status_active,
@@ -2132,6 +2245,7 @@ def sync_canonical_templates_for_client(
     if not canonical_templates:
         result["success"] = True
         return result
+    local_buttons_overrides = _load_local_whatsapp_buttons_overrides(client_id=client_id)
 
     preferred_meta_by_type_language: dict[tuple[str, str], str] = {}
     for row in canonical_templates:
@@ -2153,7 +2267,17 @@ def sync_canonical_templates_for_client(
         parameter_count = int(canonical.get("parameter_count") or 0)
         template_type = canonical.get("type")
         category = infer_template_category(template_type)
-        client_template_name = build_client_template_name(canonical_name, client_id)
+        canonical_id_str = str(canonical_id or "").strip()
+        local_buttons_json = local_buttons_overrides.get(canonical_id_str)
+        effective_buttons_json = resolve_effective_template_buttons_json(
+            canonical_buttons_json=canonical.get("buttons_json"),
+            local_buttons_json=local_buttons_json,
+        )
+        client_template_name = build_client_template_name(
+            canonical_name,
+            client_id,
+            local_buttons_json=local_buttons_json,
+        )
 
         remote = existing_remote.get(client_template_name.lower())
         status = None
@@ -2165,12 +2289,12 @@ def sync_canonical_templates_for_client(
             remote_id = remote.get("id")
         else:
             resolved_header_handle = _normalize_template_header_image_url(
-                buttons_json=canonical.get("buttons_json"),
+                buttons_json=effective_buttons_json,
                 header_image_url=canonical.get("header_example_media_url"),
             )
             if not resolved_header_handle:
                 header_image_url = _extract_template_header_image_url(
-                    buttons_json=canonical.get("buttons_json"),
+                    buttons_json=effective_buttons_json,
                     header_image_url=canonical.get("header_example_media_url"),
                 )
                 if header_image_url:
@@ -2190,7 +2314,7 @@ def sync_canonical_templates_for_client(
                 parameter_count=parameter_count,
                 template_type=template_type,
                 language=language,
-                buttons_json=canonical.get("buttons_json"),
+                buttons_json=effective_buttons_json,
                 header_image_url=resolved_header_handle,
             )
             created = _create_meta_template(
@@ -2309,12 +2433,12 @@ def sync_canonical_templates_for_client(
         }
         _upsert_client_template_record(row)
 
-        canonical_id_str = str(canonical_id or "")
         if canonical_id_str:
             _ensure_whatsapp_template_binding(
                 client_id=client_id,
                 meta_template_id=canonical_id_str,
                 canonical_template_name=canonical_name,
+                client_template_name=client_template_name,
                 template_type=template_type,
                 language=language,
                 meta_status_active=(status == "active"),

@@ -47,6 +47,9 @@ export default function MarketingCampaigns() {
     campaignsSentCount: isEs ? "Campañas enviadas" : "Campaigns sent",
     emailCampaignsSentCount: isEs ? "Email" : "Email",
     whatsappCampaignsSentCount: isEs ? "WhatsApp" : "WhatsApp",
+    emailCampaignsFilter: isEs ? "Envíos Email" : "Email sends",
+    whatsappCampaignsFilter: isEs ? "Envíos WhatsApp" : "WhatsApp sends",
+    countFilterPlaceholder: isEs ? "Cualquiera" : "Any",
     lastCampaignSentAt: isEs ? "Último envío" : "Last campaign sent",
     searchAudience: isEs ? "Buscar audiencia" : "Search audience",
     searchCampaigns: isEs ? "Buscar campañas" : "Search campaigns",
@@ -135,6 +138,12 @@ export default function MarketingCampaigns() {
     whatsappNotConnected: isEs
       ? "WhatsApp no está conectado. Conéctalo antes de enviar campañas por WhatsApp."
       : "WhatsApp is not connected. Connect it before sending WhatsApp campaigns.",
+    whatsappSyncSuccess: isEs
+      ? "Template de WhatsApp sincronizado con Meta automáticamente."
+      : "WhatsApp template synced with Meta automatically.",
+    whatsappSyncWarning: isEs
+      ? "La campaña se guardó, pero el sync con Meta requiere revisión."
+      : "Campaign saved, but Meta sync needs review.",
     sendSummarySuccess: isEs ? "Campaña enviada correctamente." : "Campaign sent successfully.",
     sendSummaryPartial: isEs ? "Campaña enviada parcialmente." : "Campaign sent partially.",
     sendSummaryFailed: isEs ? "No se pudo enviar la campaña." : "Campaign could not be sent.",
@@ -230,6 +239,8 @@ export default function MarketingCampaigns() {
   const [audienceSearch, setAudienceSearch] = useState("");
   const [audienceSegment, setAudienceSegment] = useState("all");
   const [audienceInterest, setAudienceInterest] = useState("all");
+  const [audienceEmailCountFilter, setAudienceEmailCountFilter] = useState("");
+  const [audienceWhatsappCountFilter, setAudienceWhatsappCountFilter] = useState("");
 
   const [campaignSearch, setCampaignSearch] = useState("");
   const [campaignChannel, setCampaignChannel] = useState("all");
@@ -497,6 +508,26 @@ export default function MarketingCampaigns() {
     return getAudienceCommercialStatus(row) === filterValue;
   };
 
+  const matchesCampaignCountFilters = (
+    row,
+    emailFilterValue = audienceEmailCountFilter,
+    whatsappFilterValue = audienceWhatsappCountFilter,
+  ) => {
+    const normalizedEmailFilter = String(emailFilterValue || "").trim();
+    const normalizedWhatsappFilter = String(whatsappFilterValue || "").trim();
+    if (normalizedEmailFilter) {
+      const expectedEmailCount = Number(normalizedEmailFilter);
+      if (!Number.isFinite(expectedEmailCount) || expectedEmailCount < 0) return false;
+      if (Number(row?.email_campaigns_sent_count || 0) !== expectedEmailCount) return false;
+    }
+    if (normalizedWhatsappFilter) {
+      const expectedWhatsappCount = Number(normalizedWhatsappFilter);
+      if (!Number.isFinite(expectedWhatsappCount) || expectedWhatsappCount < 0) return false;
+      if (Number(row?.whatsapp_campaigns_sent_count || 0) !== expectedWhatsappCount) return false;
+    }
+    return true;
+  };
+
   const formatDateTime = (value) => {
     try {
       const d = new Date(value);
@@ -515,8 +546,10 @@ export default function MarketingCampaigns() {
 
   const selectedRecipientKeys = useMemo(() => Object.keys(selectedRecipients), [selectedRecipients]);
   const filteredAudience = useMemo(
-    () => (audience || []).filter((row) => matchesAudienceInterest(row, audienceInterest)),
-    [audience, audienceInterest],
+    () => (audience || []).filter(
+      (row) => matchesAudienceInterest(row, audienceInterest) && matchesCampaignCountFilters(row)
+    ),
+    [audience, audienceInterest, audienceEmailCountFilter, audienceWhatsappCountFilter],
   );
   const selectedRecipientsList = useMemo(
     () => selectedRecipientKeys.map((key) => selectedRecipients[key]).filter(Boolean),
@@ -587,7 +620,11 @@ export default function MarketingCampaigns() {
       const result = await fetchAudience({ segment, q: "" });
       addRecipientsToSelection(
         result.items.filter(
-          (row) => matchesAudienceInterest(row) && !isRecipientBlocked(row) && isRecipientCompatible(row)
+          (row) =>
+            matchesAudienceInterest(row) &&
+            matchesCampaignCountFilters(row) &&
+            !isRecipientBlocked(row) &&
+            isRecipientCompatible(row)
         )
       );
     } catch (err) {
@@ -813,11 +850,21 @@ export default function MarketingCampaigns() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail || `Failed ${method === "POST" ? "creating" : "updating"} campaign`);
+      const whatsappSync = data?.whatsapp_sync;
+      const hasSyncErrors = Array.isArray(whatsappSync?.errors) && whatsappSync.errors.length > 0;
 
       if (isEditing && String(form.channel || "").toLowerCase() === "whatsapp") {
-        setNotice({ type: "warning", message: text.whatsappEditVersions });
+        setNotice({
+          type: hasSyncErrors ? "warning" : "success",
+          message: `${text.whatsappEditVersions} ${hasSyncErrors ? text.whatsappSyncWarning : text.whatsappSyncSuccess}`.trim(),
+        });
       } else if (isEditing) {
         setNotice({ type: "success", message: isEs ? "Campaña actualizada." : "Campaign updated." });
+      } else if (String(form.channel || "").toLowerCase() === "whatsapp") {
+        setNotice({
+          type: hasSyncErrors ? "warning" : "success",
+          message: hasSyncErrors ? text.whatsappSyncWarning : text.whatsappSyncSuccess,
+        });
       }
 
       resetCampaignForm();
@@ -1579,6 +1626,22 @@ export default function MarketingCampaigns() {
                         <option value="not_interested">{text.notInterested}</option>
                         <option value="opt_out">{text.optOutStatus}</option>
                       </select>
+                      <input
+                        className="ia-form-input"
+                        type="number"
+                        min="0"
+                        placeholder={`${text.emailCampaignsFilter}: ${text.countFilterPlaceholder}`}
+                        value={audienceEmailCountFilter}
+                        onChange={(e) => setAudienceEmailCountFilter(e.target.value)}
+                      />
+                      <input
+                        className="ia-form-input"
+                        type="number"
+                        min="0"
+                        placeholder={`${text.whatsappCampaignsFilter}: ${text.countFilterPlaceholder}`}
+                        value={audienceWhatsappCountFilter}
+                        onChange={(e) => setAudienceWhatsappCountFilter(e.target.value)}
+                      />
                     </div>
 
                     <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.55rem" }}>

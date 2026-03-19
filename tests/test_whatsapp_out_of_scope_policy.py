@@ -225,3 +225,44 @@ def test_whatsapp_institutional_auto_reply_is_suppressed(monkeypatch):
     metadata = history_calls[0]["kwargs"].get("metadata") or {}
     policy = metadata.get("message_policy") or {}
     assert policy.get("event") == "institutional_auto_reply_detected"
+
+
+def test_whatsapp_campaign_auto_greetings_are_suppressed(monkeypatch):
+    from api.modules.assistant_rag import intent_router as module
+
+    history_calls = []
+
+    monkeypatch.setattr(module, "save_history", _capture_save_history(history_calls))
+    monkeypatch.setattr(
+        module,
+        "route_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("route_message should not run")),
+    )
+
+    examples = [
+        (
+            "Gracias por comunicarte con Nemiia Spa. "
+            "¿Cómo podemos ayudarte? Restauración, belleza y magia para tu relajación. "
+            "Can I help You?🪻"
+        ),
+        "Gracias por comunicarse con Nidra Spa. En breve nos comunicaremos con usted 😊",
+    ]
+
+    for message in examples:
+        result = asyncio.run(
+            module.process_user_message(
+                client_id="client_1",
+                session_id="whatsapp-5215512345678",
+                message=message,
+                channel="whatsapp",
+                provider="meta",
+            )
+        )
+
+        assert result is None
+
+    assert [c["role"] for c in history_calls] == ["user", "user"]
+    for call in history_calls:
+        metadata = call["kwargs"].get("metadata") or {}
+        policy = metadata.get("message_policy") or {}
+        assert policy.get("event") == "institutional_auto_reply_detected"

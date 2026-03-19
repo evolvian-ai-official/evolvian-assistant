@@ -14,6 +14,7 @@ from api.appointments.template_language_resolution import (
     resolve_locale_for_rendering,
     resolve_template_for_appointment,
 )
+from api.modules.whatsapp.template_sync import resolve_effective_template_buttons_json
 logger = logging.getLogger(__name__)
 
 
@@ -214,7 +215,7 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         meta_res = (
             supabase
             .table("meta_approved_templates")
-            .select("template_name, language, parameter_count")
+            .select("template_name, language, parameter_count, buttons_json")
             .eq("id", meta_template_id)
             .eq("is_active", True)
             .single()
@@ -228,7 +229,7 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         )
         return await _send_fallback_cancellation_text()
 
-    template_name = (meta.get("template_name") or "").strip()
+    template_name = (template.get("template_name") or meta.get("template_name") or "").strip()
     if not template_name:
         logger.warning("⚠️ Cancellation meta template missing template_name")
         return await _send_fallback_cancellation_text()
@@ -255,6 +256,10 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         appointment_date=appointment_date,
         appointment_time=appointment_time,
     )
+    effective_buttons_json = resolve_effective_template_buttons_json(
+        canonical_buttons_json=meta.get("buttons_json") if isinstance(meta, dict) else None,
+        local_buttons_json=template.get("buttons_json"),
+    )
 
     send_result = await send_whatsapp_template_for_client(
         client_id=client_id,
@@ -262,6 +267,7 @@ async def send_appointment_cancellation_notification(appointment: dict) -> bool:
         template_name=template_name,
         language_code=language_code,
         parameters=parameters,
+        buttons_json=effective_buttons_json,
         purpose="transactional",
         recipient_email=appointment.get("user_email"),
         policy_source="appointments_cancellation",

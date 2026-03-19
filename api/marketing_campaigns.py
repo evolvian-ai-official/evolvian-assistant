@@ -20,6 +20,7 @@ from api.compliance.email_marketing_standard import (
 )
 from api.config.config import supabase
 from api.modules.whatsapp.whatsapp_sender import send_whatsapp_template_for_client
+from api.modules.whatsapp.template_sync import sync_canonical_templates_for_client
 from api.modules.assistant_rag.llm import openai_chat
 from api.privacy_dsr import split_details_and_metadata
 from api.utils.feature_access import get_client_plan_id
@@ -847,6 +848,26 @@ def _create_whatsapp_template_for_campaign(
         "meta_template_name": meta_template_name,
         "locale_code": locale_code,
     }
+
+
+def _auto_sync_whatsapp_campaign_templates(client_id: str) -> dict[str, Any]:
+    try:
+        return sync_canonical_templates_for_client(
+            client_id=client_id,
+            force_refresh=False,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {
+            "success": False,
+            "client_id": client_id,
+            "synced": 0,
+            "active": 0,
+            "inactive": 0,
+            "pending": 0,
+            "errors": [f"unexpected_sync_error:{exc}"],
+        }
 
 
 def _as_epoch(value: Optional[str]) -> float:
@@ -1910,6 +1931,7 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
     try:
         auth_user_id = authorize_client_request(request, payload.client_id)
         _ensure_premium_access(payload.client_id)
+        whatsapp_sync_summary: Optional[dict[str, Any]] = None
         raw_cta_url = str(payload.cta_url or "").strip()
         normalized_cta_url = _normalize_redirect_url(raw_cta_url)
         if raw_cta_url and not normalized_cta_url:
@@ -1991,6 +2013,7 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
                 normalized_payload,
                 campaign_id=campaign_id,
             )
+            whatsapp_sync_summary = _auto_sync_whatsapp_campaign_templates(payload.client_id)
             template_updates["template_id"] = wa_templates["message_template"].get("id")
             template_updates["meta_template_id"] = wa_templates["meta"].get("id")
             template_updates["meta_template_name"] = wa_templates.get("meta_template_name")
@@ -2008,7 +2031,10 @@ def create_campaign(request: Request, payload: CampaignCreatePayload):
             if updated_row:
                 row = updated_row
 
-        return {"campaign": _enrich_campaign_for_ui(row)}
+        response_payload = {"campaign": _enrich_campaign_for_ui(row)}
+        if whatsapp_sync_summary is not None:
+            response_payload["whatsapp_sync"] = whatsapp_sync_summary
+        return response_payload
     except HTTPException:
         raise
     except Exception as exc:
@@ -2043,6 +2069,7 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
     try:
         authorize_client_request(request, payload.client_id)
         _ensure_premium_access(payload.client_id)
+        whatsapp_sync_summary: Optional[dict[str, Any]] = None
 
         campaign = _load_campaign(payload.client_id, campaign_id)
 
@@ -2180,6 +2207,7 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
                 merged,
                 campaign_id=campaign_id,
             )
+            whatsapp_sync_summary = _auto_sync_whatsapp_campaign_templates(payload.client_id)
             updates["template_id"] = wa_templates["message_template"].get("id")
             updates["meta_template_id"] = wa_templates["meta"].get("id")
             updates["meta_template_name"] = wa_templates.get("meta_template_name")
@@ -2245,7 +2273,10 @@ def update_campaign(request: Request, campaign_id: str, payload: CampaignUpdateP
         if not row:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-        return {"campaign": _enrich_campaign_for_ui(row)}
+        response_payload = {"campaign": _enrich_campaign_for_ui(row)}
+        if whatsapp_sync_summary is not None:
+            response_payload["whatsapp_sync"] = whatsapp_sync_summary
+        return response_payload
     except HTTPException:
         raise
     except Exception as exc:

@@ -31,6 +31,7 @@ from api.appointments.template_language_resolution import (
     resolve_locale_for_rendering,
     resolve_template_for_appointment,
 )
+from api.modules.whatsapp.template_sync import resolve_effective_template_buttons_json
 from api.utils.babel_compat import format_datetime
 
 router = APIRouter()
@@ -624,7 +625,7 @@ async def send_appointment_confirmation(appointment: dict) -> bool:
         meta_res = (
             supabase
             .table("meta_approved_templates")
-            .select("template_name, language, parameter_count")
+            .select("template_name, language, parameter_count, buttons_json")
             .eq("id", meta_template_id)
             .eq("is_active", True)
             .single()
@@ -639,7 +640,7 @@ async def send_appointment_confirmation(appointment: dict) -> bool:
         )
         return await _send_fallback_confirmation_text()
 
-    template_name = meta.get("template_name")
+    template_name = (template.get("template_name") or meta.get("template_name") or "").strip()
     _, language_code = resolve_locale_for_rendering(
         client_id=str(client_id),
         appointment=appointment,
@@ -647,6 +648,10 @@ async def send_appointment_confirmation(appointment: dict) -> bool:
         meta_row=meta,
     )
     expected_params = int(meta.get("parameter_count") or 2)
+    effective_buttons_json = resolve_effective_template_buttons_json(
+        canonical_buttons_json=meta.get("buttons_json") if isinstance(meta, dict) else None,
+        local_buttons_json=template.get("buttons_json"),
+    )
 
     if not template_name:
         logger.warning("⚠️ Meta template missing template_name")
@@ -693,6 +698,7 @@ async def send_appointment_confirmation(appointment: dict) -> bool:
         template_name=template_name,
         language_code=language_code,
         parameters=parameters,
+        buttons_json=effective_buttons_json,
         purpose="transactional",
         recipient_email=appointment.get("user_email"),
         policy_source="appointments_confirmation",

@@ -4,7 +4,7 @@ import unicodedata
 import requests
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, Request
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, List
+from typing import Any, Optional, Literal, List
 import uuid
 import logging
 from postgrest.exceptions import APIError
@@ -17,10 +17,12 @@ from api.authz import authorize_client_request, get_current_user_id
 from api.config.config import supabase
 from api.modules.whatsapp.template_sync import (
     build_client_template_name,
+    decode_template_buttons_json,
     estimate_template_pricing,
     get_client_country_code,
     get_client_template_sync_map,
     infer_template_category,
+    resolve_effective_template_buttons_json,
     sync_canonical_templates_for_client,
 )
 from api.appointments.template_language_resolution import (
@@ -37,6 +39,7 @@ router = APIRouter(
 
 BUCKET_NAME = "evolvian-documents"
 MAX_FOOTER_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_WHATSAPP_HEADER_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 def sanitize_filename(filename: str) -> str:
@@ -49,7 +52,7 @@ def _load_template_with_auth(request: Request, template_id: uuid.UUID) -> dict:
     template_row = (
         supabase
         .table("message_templates")
-        .select("id, client_id, channel, type")
+        .select("id, client_id, channel, type, meta_template_id, buttons_json")
         .eq("id", str(template_id))
         .maybe_single()
         .execute()
@@ -64,6 +67,57 @@ def _load_template_with_auth(request: Request, template_id: uuid.UUID) -> dict:
 
     authorize_client_request(request, client_id)
     return template_row.data
+
+
+def _normalize_public_http_url(value: Any) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if not (raw.startswith("https://") or raw.startswith("http://")):
+        raise HTTPException(status_code=400, detail="Header image URL must start with http:// or https://")
+    lowered = raw.lower()
+    if lowered.endswith(".gif"):
+        raise HTTPException(status_code=400, detail="GIF is not supported for WhatsApp template headers")
+    return raw[:2000]
+
+
+def _normalize_whatsapp_buttons_json(value: Any) -> Optional[dict[str, Any]]:
+    decoded = decode_template_buttons_json(value)
+    if not decoded:
+        return None
+
+    normalized: dict[str, Any] = {}
+
+    header = decoded.get("header")
+    if header is not None:
+        if not isinstance(header, dict):
+            raise HTTPException(status_code=400, detail="buttons_json.header must be an object")
+        header_type = str(header.get("type") or "").strip().upper()
+        if header_type not in {"NONE", "IMAGE"}:
+            raise HTTPException(
+                status_code=400,
+                detail="WhatsApp header type currently supports only NONE or IMAGE",
+            )
+        if header_type == "IMAGE":
+            image_url = _normalize_public_http_url(
+                header.get("image_url") or header.get("url") or header.get("link")
+            )
+            if not image_url:
+                raise HTTPException(status_code=400, detail="IMAGE header requires image_url")
+            normalized["header"] = {
+                "type": "IMAGE",
+                "image_url": image_url,
+            }
+        else:
+            normalized["header"] = {"type": "NONE"}
+
+    buttons = decoded.get("buttons")
+    if buttons is not None:
+        if not isinstance(buttons, list):
+            raise HTTPException(status_code=400, detail="buttons_json.buttons must be an array")
+        normalized["buttons"] = buttons
+
+    return normalized or None
 
 
 def _clear_default_for_language(
@@ -151,6 +205,7 @@ class CreateTemplatePayload(BaseModel):
     is_default_for_language: Optional[bool] = True
     frequency: Optional[List[ReminderRule]] = None
     is_active: bool = True
+    buttons_json: Optional[dict[str, Any]] = None
 
 
 
@@ -164,6 +219,7 @@ class UpdateTemplatePayload(BaseModel):
     priority: Optional[int] = None
     is_default_for_language: Optional[bool] = None
     is_active: Optional[bool] = None
+    buttons_json: Optional[dict[str, Any]] = None
 
 
 # =====================================================
@@ -230,6 +286,58 @@ async def upload_footer_image(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@router.post("/whatsapp_header_image")
+async def upload_whatsapp_header_image(
+    request: Request,
+    client_id: uuid.UUID = Form(...),
+    file: UploadFile = File(...),
+):
+    try:
+        authorize_client_request(request, str(client_id))
+
+        content_type = (file.content_type or "").lower().strip()
+        if content_type not in {"image/jpeg", "image/jpg", "image/png"}:
+            raise HTTPException(status_code=400, detail="Only JPG and PNG files are allowed")
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        if len(content) > MAX_WHATSAPP_HEADER_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (max 5MB)")
+
+        supabase_url = os.getenv("SUPABASE_URL")
+        service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_url or not service_key:
+            raise HTTPException(status_code=500, detail="Storage is not configured")
+
+        safe_name = sanitize_filename(file.filename or ("header.png" if content_type == "image/png" else "header.jpg"))
+        storage_path = f"{client_id}/whatsapp_template_headers/{uuid.uuid4()}_{safe_name}"
+
+        upload_url = f"{supabase_url}/storage/v1/object/{BUCKET_NAME}/{storage_path}?upsert=true"
+        upload_headers = {
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "image/jpeg" if content_type == "image/jpg" else content_type,
+        }
+
+        upload_res = requests.put(upload_url, headers=upload_headers, data=content, timeout=20)
+        if upload_res.status_code >= 400:
+            logger.error("WhatsApp header image upload failed: %s", upload_res.text)
+            raise HTTPException(status_code=500, detail="Failed to upload WhatsApp header image")
+
+        public_url = f"{supabase_url}/storage/v1/object/public/{BUCKET_NAME}/{storage_path}"
+        return {
+            "success": True,
+            "url": public_url,
+            "storage_path": storage_path,
+        }
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error uploading WhatsApp header image")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 # =====================================================
 # CREATE TEMPLATE
 # =====================================================
@@ -238,6 +346,14 @@ async def upload_footer_image(
 def create_message_template(payload: CreateTemplatePayload, request: Request):
     try:
         authorize_client_request(request, str(payload.client_id))
+        normalized_buttons_json = None
+        if payload.buttons_json is not None:
+            if payload.channel != "whatsapp":
+                raise HTTPException(
+                    status_code=400,
+                    detail="buttons_json is supported only for WhatsApp templates",
+                )
+            normalized_buttons_json = _normalize_whatsapp_buttons_json(payload.buttons_json)
 
 
         # =====================================================
@@ -319,12 +435,24 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
                         ),
                     )
                 meta_template_name = (
-                    synced_template.get("meta_template_name")
-                    or build_client_template_name(canonical_template_name, client_id_str)
+                    build_client_template_name(
+                        canonical_template_name,
+                        client_id_str,
+                        local_buttons_json=normalized_buttons_json,
+                    )
+                    if normalized_buttons_json
+                    else (
+                        synced_template.get("meta_template_name")
+                        or build_client_template_name(canonical_template_name, client_id_str)
+                    )
                 )
             else:
                 # Graceful fallback for environments that still need migration rollout.
-                meta_template_name = canonical_template_name
+                meta_template_name = build_client_template_name(
+                    canonical_template_name,
+                    client_id_str,
+                    local_buttons_json=normalized_buttons_json,
+                )
 
         # --------------------------
         # EMAIL
@@ -426,6 +554,7 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
                 if payload.frequency else None
             ),
             "is_active": payload.is_active,
+            "buttons_json": normalized_buttons_json if payload.channel == "whatsapp" else None,
         }
 
         if template_data.get("is_default_for_language") and template_data.get("language_family"):
@@ -448,6 +577,19 @@ def create_message_template(payload: CreateTemplatePayload, request: Request):
                 status_code=500,
                 detail="Failed to create message template"
             )
+
+        if payload.channel == "whatsapp":
+            try:
+                sync_canonical_templates_for_client(
+                    client_id=str(payload.client_id),
+                    force_refresh=False,
+                )
+            except Exception:
+                logger.warning(
+                    "⚠️ Failed syncing WhatsApp template after create | client_id=%s | meta_template_id=%s",
+                    payload.client_id,
+                    payload.meta_template_id,
+                )
 
         return {
             "success": True,
@@ -591,6 +733,13 @@ def update_message_template(
                 status_code=400,
                 detail="WhatsApp template language is managed by Meta"
             )
+        if channel != "whatsapp" and "buttons_json" in update_data:
+            raise HTTPException(
+                status_code=400,
+                detail="buttons_json is supported only for WhatsApp templates",
+            )
+        if channel == "whatsapp" and "buttons_json" in update_data:
+            update_data["buttons_json"] = _normalize_whatsapp_buttons_json(update_data.get("buttons_json"))
 
         if channel == "email" and "body" in update_data and is_marketing_template_type(template_type):
             valid_body, missing_tokens = validate_marketing_template_body(update_data.get("body"))
@@ -698,6 +847,18 @@ def update_message_template(
                 detail="Template not found"
             )
 
+        if channel == "whatsapp" and "buttons_json" in update_data:
+            try:
+                sync_canonical_templates_for_client(
+                    client_id=str(existing.get("client_id") or ""),
+                    force_refresh=False,
+                )
+            except Exception:
+                logger.warning(
+                    "⚠️ Failed syncing WhatsApp template after update | template_id=%s",
+                    template_id,
+                )
+
         return {
             "success": True,
             "template": res.data[0],
@@ -776,6 +937,7 @@ def get_message_templates(
                 label,
                 body,
                 template_name,
+                buttons_json,
                 is_active,
                 frequency,
                 meta_template_id,
@@ -788,7 +950,8 @@ def get_message_templates(
                     template_name,
                     parameter_count,
                     language,
-                    preview_body
+                    preview_body,
+                    buttons_json
                 )
             """)
             .eq("client_id", str(client_id))
@@ -867,6 +1030,13 @@ def get_message_templates(
                 if sync_row and sync_row.get("pricing_source")
                 else pricing["pricing_source"]
             )
+            resolved_buttons_json = (
+                resolve_effective_template_buttons_json(
+                    canonical_buttons_json=meta.get("buttons_json") if meta else None,
+                    local_buttons_json=t.get("buttons_json"),
+                )
+                if is_whatsapp else None
+            )
 
             formatted.append({
                 "id": t["id"],
@@ -883,6 +1053,8 @@ def get_message_templates(
                 "is_active": bool(t.get("is_active", True)),
                 "body": None if is_whatsapp else t.get("body"),
                 "template_name": t.get("template_name"),
+                "buttons_json": t.get("buttons_json") if is_whatsapp else None,
+                "resolved_buttons_json": resolved_buttons_json,
                 "meta_template_name": meta.get("template_name") if meta else None,
                 "meta_parameter_count": meta.get("parameter_count") if meta else None,
                 "meta_language": meta.get("language") if meta else None,
@@ -903,6 +1075,7 @@ def get_message_templates(
                         build_client_template_name(
                             meta.get("template_name") if meta else (t.get("template_name") or "template"),
                             client_id_str,
+                            t.get("buttons_json"),
                         )
                         if is_whatsapp else None
                     )

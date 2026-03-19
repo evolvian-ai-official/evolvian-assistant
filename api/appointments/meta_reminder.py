@@ -6,6 +6,7 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
     send_whatsapp_template_for_client,
 )
+from api.modules.whatsapp.template_sync import resolve_effective_template_buttons_json
 from api.internal_auth import require_internal_request
 
 router = APIRouter(
@@ -133,7 +134,7 @@ async def send_meta_reminder(reminder_id: str, request: Request):
     template_res = (
         supabase
         .table("message_templates")
-        .select("meta_template_id, template_name")
+        .select("meta_template_id, template_name, buttons_json")
         .eq("id", template_id)
         .eq("client_id", reminder["client_id"])
         .eq("channel", "whatsapp")
@@ -155,7 +156,7 @@ async def send_meta_reminder(reminder_id: str, request: Request):
     meta_res = (
         supabase
         .table("meta_approved_templates")
-        .select("template_name, language")
+        .select("template_name, language, buttons_json")
         .eq("id", meta_template_id)
         .eq("is_active", True)
         .single()
@@ -165,10 +166,14 @@ async def send_meta_reminder(reminder_id: str, request: Request):
     if not meta:
         raise HTTPException(status_code=404, detail="Canonical Meta template not found")
 
-    template_name = meta.get("template_name") or template.get("template_name")
+    template_name = template.get("template_name") or meta.get("template_name")
     language_code = meta.get("language") or "es_MX"
     if not template_name:
         raise HTTPException(status_code=500, detail="Canonical template name missing")
+    effective_buttons_json = resolve_effective_template_buttons_json(
+        canonical_buttons_json=meta.get("buttons_json") if isinstance(meta, dict) else None,
+        local_buttons_json=template.get("buttons_json"),
+    )
 
     # -------------------------------------------------
     # 5️⃣ Send via Multi-Tenant Wrapper
@@ -182,6 +187,7 @@ async def send_meta_reminder(reminder_id: str, request: Request):
             user_name,
             appointment_details,
         ],
+        buttons_json=effective_buttons_json,
         purpose="reminder",
         recipient_email=appointment.get("user_email"),
         policy_source="appointments_meta_reminder",

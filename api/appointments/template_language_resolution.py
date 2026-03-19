@@ -131,6 +131,7 @@ def _safe_select_templates_with_language(client_id: str, channel: str, template_
                 created_at,
                 updated_at,
                 template_name,
+                buttons_json,
                 label,
                 meta_template_id,
                 language_family,
@@ -143,6 +144,7 @@ def _safe_select_templates_with_language(client_id: str, channel: str, template_
                     parameter_count,
                     language,
                     preview_body,
+                    buttons_json,
                     is_active
                 )
                 """
@@ -178,6 +180,7 @@ def _safe_select_templates_with_language(client_id: str, channel: str, template_
                 created_at,
                 updated_at,
                 template_name,
+                buttons_json,
                 label,
                 meta_template_id,
                 meta_approved_templates (
@@ -185,6 +188,7 @@ def _safe_select_templates_with_language(client_id: str, channel: str, template_
                     parameter_count,
                     language,
                     preview_body,
+                    buttons_json,
                     is_active
                 )
                 """

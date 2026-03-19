@@ -319,3 +319,25 @@ def test_get_campaign_detail_includes_recipient_response_status(monkeypatch):
     assert result["recipients"][0]["send_status"] == "sent"
     assert result["recipients"][0]["response_status"] == "interested"
     assert result["recipients"][0]["response_at"] == "2026-03-18T10:05:00+00:00"
+
+
+def test_auto_sync_whatsapp_campaign_templates_returns_summary(monkeypatch):
+    monkeypatch.setattr(
+        module,
+        "sync_canonical_templates_for_client",
+        lambda **_kwargs: {
+            "success": True,
+            "client_id": "client_1",
+            "synced": 1,
+            "active": 0,
+            "inactive": 0,
+            "pending": 1,
+            "errors": [],
+        },
+    )
+
+    result = module._auto_sync_whatsapp_campaign_templates("client_1")
+
+    assert result["success"] is True
+    assert result["synced"] == 1
+    assert result["pending"] == 1

@@ -7,6 +7,7 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.whatsapp.whatsapp_sender import (
     send_whatsapp_template_for_client,
 )
+from api.modules.whatsapp.template_sync import resolve_effective_template_buttons_json
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.appointments.cancel_link_tokens import build_cancel_link, generate_cancel_token
 from api.appointments.template_language_resolution import resolve_locale_for_rendering
@@ -436,7 +437,7 @@ async def execute_pending_reminders(request: Request):
                 meta_res = (
                     supabase
                     .table("meta_approved_templates")
-                    .select("parameter_count, language, is_active")
+                    .select("parameter_count, language, is_active, buttons_json")
                     .eq("id", meta_template_id)
                     .eq("is_active", True)
                     .single()
@@ -497,6 +498,10 @@ async def execute_pending_reminders(request: Request):
                     template_name,
                     parameters,
                 )
+                effective_buttons_json = resolve_effective_template_buttons_json(
+                    canonical_buttons_json=meta_template.get("buttons_json") if isinstance(meta_template, dict) else None,
+                    local_buttons_json=template.get("buttons_json"),
+                )
 
                 send_result = await send_whatsapp_template_for_client(
                     client_id=client_id,
@@ -504,6 +509,7 @@ async def execute_pending_reminders(request: Request):
                     template_name=template_name,
                     language_code=language_code,
                     parameters=parameters,
+                    buttons_json=effective_buttons_json,
                     purpose="reminder",
                     recipient_email=appointment.get("user_email"),
                     policy_source="appointments_execute_reminders",
