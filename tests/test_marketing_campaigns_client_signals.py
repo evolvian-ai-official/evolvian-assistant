@@ -139,6 +139,18 @@ def test_load_contacts_audience_applies_marketing_contact_state(monkeypatch):
                 "updated_at": "2026-03-18T17:10:00+00:00",
             },
         ],
+        "marketing_campaigns": [
+            {
+                "id": "campaign_1",
+                "client_id": "client_1",
+                "channel": "email",
+            },
+            {
+                "id": "campaign_2",
+                "client_id": "client_1",
+                "channel": "whatsapp",
+            },
+        ],
         "marketing_contacts": [
             {
                 "client_id": "client_1",
@@ -164,7 +176,10 @@ def test_load_contacts_audience_applies_marketing_contact_state(monkeypatch):
     assert result[0]["email_unsubscribed"] is False
     assert result[0]["marketing_state_last_seen_at"] == "2026-03-18T17:06:00+00:00"
     assert result[0]["campaigns_sent_count"] == 2
+    assert result[0]["email_campaigns_sent_count"] == 1
+    assert result[0]["whatsapp_campaigns_sent_count"] == 1
     assert result[0]["last_campaign_sent_at"] == "2026-03-18T17:10:00+00:00"
+    assert result[0]["last_campaign_channel"] == "whatsapp"
 
 
 def test_list_campaigns_includes_summary_metrics(monkeypatch):

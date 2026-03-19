@@ -1058,6 +1058,26 @@ def _load_campaign_delivery_stats(client_id: str) -> dict[str, dict[str, Any]]:
     except Exception:
         return {}
 
+    campaign_ids = sorted({str((row or {}).get("campaign_id") or "").strip() for row in rows if (row or {}).get("campaign_id")})
+    campaign_channel_by_id: dict[str, str] = {}
+    if campaign_ids:
+        try:
+            campaign_rows = (
+                supabase.table("marketing_campaigns")
+                .select("id,channel")
+                .eq("client_id", client_id)
+                .in_("id", campaign_ids)
+                .limit(5000)
+                .execute()
+            ).data or []
+            campaign_channel_by_id = {
+                str((row or {}).get("id") or "").strip(): str((row or {}).get("channel") or "").strip().lower()
+                for row in campaign_rows
+                if str((row or {}).get("id") or "").strip()
+            }
+        except Exception:
+            campaign_channel_by_id = {}
+
     stats: dict[str, dict[str, Any]] = {}
     for row in rows:
         recipient_key = str((row or {}).get("recipient_key") or "").strip()
@@ -1073,17 +1093,26 @@ def _load_campaign_delivery_stats(client_id: str) -> dict[str, dict[str, Any]]:
             entry = {
                 "campaign_ids": set(),
                 "campaigns_sent_count": 0,
+                "email_campaigns_sent_count": 0,
+                "whatsapp_campaigns_sent_count": 0,
                 "last_campaign_sent_at": None,
+                "last_campaign_channel": None,
             }
             stats[recipient_key] = entry
 
         if campaign_id not in entry["campaign_ids"]:
             entry["campaign_ids"].add(campaign_id)
             entry["campaigns_sent_count"] += 1
+            campaign_channel = campaign_channel_by_id.get(campaign_id)
+            if campaign_channel == "email":
+                entry["email_campaigns_sent_count"] += 1
+            elif campaign_channel == "whatsapp":
+                entry["whatsapp_campaigns_sent_count"] += 1
 
         candidate_ts = (row or {}).get("sent_at") or (row or {}).get("updated_at")
         if _as_epoch(candidate_ts) >= _as_epoch(entry.get("last_campaign_sent_at")):
             entry["last_campaign_sent_at"] = candidate_ts
+            entry["last_campaign_channel"] = campaign_channel_by_id.get(campaign_id)
 
     for entry in stats.values():
         entry.pop("campaign_ids", None)
@@ -1122,7 +1151,10 @@ def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], emai
             "whatsapp_unsubscribed": False,
             "marketing_state_last_seen_at": None,
             "campaigns_sent_count": 0,
+            "email_campaigns_sent_count": 0,
+            "whatsapp_campaigns_sent_count": 0,
             "last_campaign_sent_at": None,
+            "last_campaign_channel": None,
         }
         pool[key] = row
 
@@ -1298,7 +1330,10 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
     for _, row in pool.items():
         delivery_stats = delivery_stats_by_recipient.get(str(row.get("recipient_key") or "").strip()) or {}
         row["campaigns_sent_count"] = int(delivery_stats.get("campaigns_sent_count") or 0)
+        row["email_campaigns_sent_count"] = int(delivery_stats.get("email_campaigns_sent_count") or 0)
+        row["whatsapp_campaigns_sent_count"] = int(delivery_stats.get("whatsapp_campaigns_sent_count") or 0)
         row["last_campaign_sent_at"] = delivery_stats.get("last_campaign_sent_at")
+        row["last_campaign_channel"] = delivery_stats.get("last_campaign_channel")
         if row.get("has_client_source"):
             row["segment"] = "clients"
         elif row.get("marketing_opt_in"):

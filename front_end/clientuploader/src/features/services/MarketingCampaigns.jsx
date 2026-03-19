@@ -45,6 +45,8 @@ export default function MarketingCampaigns() {
     optOutStatus: isEs ? "Opt-out" : "Opt-out",
     commercialStatus: isEs ? "Status comercial" : "Commercial status",
     campaignsSentCount: isEs ? "Campañas enviadas" : "Campaigns sent",
+    emailCampaignsSentCount: isEs ? "Email" : "Email",
+    whatsappCampaignsSentCount: isEs ? "WhatsApp" : "WhatsApp",
     lastCampaignSentAt: isEs ? "Último envío" : "Last campaign sent",
     searchAudience: isEs ? "Buscar audiencia" : "Search audience",
     searchCampaigns: isEs ? "Buscar campañas" : "Search campaigns",
@@ -1618,8 +1620,8 @@ export default function MarketingCampaigns() {
                               </div>
                               <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
                               <div style={{ marginTop: "0.28rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                                <span style={badgeStyle}>{text.campaignsSentCount}: {Number(row.campaigns_sent_count || 0)}</span>
-                                {row.last_campaign_sent_at ? <span style={badgeStyle}>{text.lastCampaignSentAt}: {formatDateTime(row.last_campaign_sent_at)}</span> : null}
+                                <span style={badgeStyle}>{text.emailCampaignsSentCount}: {Number(row.email_campaigns_sent_count || 0)}</span>
+                                <span style={badgeStyle}>{text.whatsappCampaignsSentCount}: {Number(row.whatsapp_campaigns_sent_count || 0)}</span>
                               </div>
                               {!canSelect && incompatibleReason ? (
                                 <div style={{ marginTop: "0.28rem" }}>
@@ -1650,6 +1652,10 @@ export default function MarketingCampaigns() {
                                 </button>
                               </div>
                               <small style={smallStyle}>{row.email || ""} {row.phone ? ` · ${row.phone}` : ""}</small>
+                              <div style={{ marginTop: "0.28rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                                <span style={badgeStyle}>{text.emailCampaignsSentCount}: {Number(row.email_campaigns_sent_count || 0)}</span>
+                                <span style={badgeStyle}>{text.whatsappCampaignsSentCount}: {Number(row.whatsapp_campaigns_sent_count || 0)}</span>
+                              </div>
                             </div>
                           ))}
                           {sendableSelectedRecipients.length === 0 ? <p style={hintStyle}>{text.selectedNone}</p> : null}
@@ -1740,6 +1746,7 @@ export default function MarketingCampaigns() {
                 <div style={{ ...rowBetweenStyle, marginTop: "0.8rem" }}>
                   <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
                     {selectedCampaign ? <span style={badgeStyle}>{selectedCampaign.name}</span> : null}
+                    {selectedCampaign?.channel ? <span style={badgeStyle}>{selectedCampaign.channel}</span> : null}
                     {runCampaignStep !== "campaign" ? <span style={badgeStyle}>{text.selectedForSend}: {sendableSelectedRecipients.length}</span> : null}
                   </div>
                   <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
