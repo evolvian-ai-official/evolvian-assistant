@@ -92,8 +92,29 @@ export default function AppointmentClients({
       ? "Marketing Campaigns no está disponible todavía para este cliente."
       : "Marketing Campaigns is not available yet for this client.",
     campaignLabel: isEs ? "Campaña" : "Campaign",
+    campaignFilterLabel: isEs ? "Filtrar por campaña" : "Filter by campaign",
+    allCampaigns: isEs ? "Todas las campañas" : "All campaigns",
+    interestFilterLabel: isEs ? "Filtrar por interés" : "Filter by interest",
+    allInterestStatuses: isEs ? "Todos los intereses" : "All interests",
+    interestInterested: isEs ? "Interesado" : "Interested",
+    interestNotInterested: isEs ? "No interesado" : "Not interested",
+    interestUnknown: isEs ? "Sin señal" : "No signal",
+    interestOptOut: isEs ? "Opt-out" : "Opt-out",
+    channelFilterLabel: isEs ? "Canal" : "Channel",
+    allChannels: isEs ? "Todos los canales" : "All channels",
+    commercialStatusLabel: isEs ? "Status comercial" : "Commercial status",
+    channelEmail: "Email",
+    channelWhatsapp: "WhatsApp",
+    responseStatusLabel: isEs ? "Respuesta" : "Response",
+    responseAtLabel: isEs ? "Respuesta registrada" : "Response at",
+    marketingSignalsLoadFailed: isEs
+      ? "No se pudieron cargar los estados comerciales y campañas para filtros avanzados."
+      : "Could not load commercial states and campaigns for advanced filters.",
+    campaignRecipientsLoading: isEs ? "Cargando destinatarios de campaña..." : "Loading campaign recipients...",
+    noClientsFiltered: isEs ? "No hay clientes con esos filtros." : "No clients match those filters.",
     sentAtLabel: isEs ? "Enviado" : "Sent at",
     lastUpdateLabel: isEs ? "Actualización" : "Updated",
+    lastSignalLabel: isEs ? "Última señal" : "Last signal",
     sendErrorLabel: isEs ? "Error" : "Error",
     goToAppointments: isEs ? "Ir a Appointments" : "Go to Appointments",
   };
@@ -103,7 +124,15 @@ export default function AppointmentClients({
   const [directoryWarning, setDirectoryWarning] = useState("");
   const [clients, setClients] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  const [marketingAudience, setMarketingAudience] = useState([]);
+  const [marketingCampaigns, setMarketingCampaigns] = useState([]);
+  const [marketingSignalsError, setMarketingSignalsError] = useState("");
   const [search, setSearch] = useState("");
+  const [interestFilter, setInterestFilter] = useState("all");
+  const [campaignFilter, setCampaignFilter] = useState("all");
+  const [channelFilter, setChannelFilter] = useState("all");
+  const [campaignRecipientKeys, setCampaignRecipientKeys] = useState(null);
+  const [campaignRecipientsLoading, setCampaignRecipientsLoading] = useState(false);
   const [showNewClient, setShowNewClient] = useState(false);
   const [ownerDefaultCode, setOwnerDefaultCode] = useState("+1");
   const [newClient, setNewClient] = useState({
@@ -145,11 +174,41 @@ export default function AppointmentClients({
 
       setClients(Array.isArray(clientsPayload?.clients) ? clientsPayload.clients : []);
       setAppointments(Array.isArray(appointmentsPayload) ? appointmentsPayload : []);
+
+      if (showCampaignHistory) {
+        const [audienceRes, campaignsRes] = await Promise.all([
+          authFetch(`${API_BASE_URL}/marketing/audience?client_id=${clientId}`),
+          authFetch(`${API_BASE_URL}/marketing/campaigns?client_id=${clientId}`),
+        ]);
+
+        const audiencePayload = await audienceRes.json().catch(() => ({}));
+        const campaignsPayload = await campaignsRes.json().catch(() => ({}));
+
+        if (!audienceRes.ok || !campaignsRes.ok) {
+          setMarketingSignalsError(
+            audiencePayload?.detail ||
+              campaignsPayload?.detail ||
+              ui.marketingSignalsLoadFailed
+          );
+          setMarketingAudience([]);
+          setMarketingCampaigns([]);
+        } else {
+          setMarketingSignalsError("");
+          setMarketingAudience(Array.isArray(audiencePayload?.items) ? audiencePayload.items : []);
+          setMarketingCampaigns(Array.isArray(campaignsPayload?.items) ? campaignsPayload.items : []);
+        }
+      } else {
+        setMarketingAudience([]);
+        setMarketingCampaigns([]);
+        setMarketingSignalsError("");
+      }
     } catch (e) {
       console.error("Failed loading appointment clients", e);
       setError(ui.loadClientsError);
       setClients([]);
       setAppointments([]);
+      setMarketingAudience([]);
+      setMarketingCampaigns([]);
     } finally {
       setLoading(false);
     }
@@ -173,26 +232,126 @@ export default function AppointmentClients({
     return map;
   }, [appointments]);
 
+  const audienceByRecipientKey = useMemo(() => {
+    const map = new Map();
+    for (const row of marketingAudience || []) {
+      const key = String(row?.recipient_key || "").trim();
+      if (!key) continue;
+      map.set(key, row);
+    }
+    return map;
+  }, [marketingAudience]);
+
+  useEffect(() => {
+    if (!showCampaignHistory || !clientId || campaignFilter === "all") {
+      setCampaignRecipientKeys(null);
+      setCampaignRecipientsLoading(false);
+      return;
+    }
+
+    let active = true;
+    const loadCampaignRecipients = async () => {
+      setCampaignRecipientsLoading(true);
+      try {
+        const params = new URLSearchParams({ client_id: String(clientId) });
+        const res = await authFetch(`${API_BASE_URL}/marketing/campaigns/${campaignFilter}?${params.toString()}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.detail || ui.marketingSignalsLoadFailed);
+        if (!active) return;
+        const nextKeys = new Set(
+          (Array.isArray(data?.recipients) ? data.recipients : [])
+            .map((row) => String(row?.recipient_key || "").trim())
+            .filter(Boolean)
+        );
+        setMarketingSignalsError("");
+        setCampaignRecipientKeys(nextKeys);
+      } catch (e) {
+        if (!active) return;
+        setCampaignRecipientKeys(new Set());
+        setMarketingSignalsError(e?.message || ui.marketingSignalsLoadFailed);
+      } finally {
+        if (active) setCampaignRecipientsLoading(false);
+      }
+    };
+
+    loadCampaignRecipients();
+    return () => {
+      active = false;
+    };
+  }, [showCampaignHistory, clientId, campaignFilter, ui.marketingSignalsLoadFailed]);
+
   const filteredClients = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (clients || [])
       .map((row) => {
         const matchKey = row.match_key || buildContactMatchKey(row);
+        const recipientKey = buildMarketingRecipientKey({ ...row, match_key: matchKey });
+        const marketingRow = audienceByRecipientKey.get(recipientKey) || {};
         return {
           ...row,
           match_key: matchKey,
+          recipient_key: recipientKey,
           history: historyByKey.get(matchKey) || [],
+          interest_status: normalizeInterestStatus(marketingRow?.interest_status),
+          email_unsubscribed: Boolean(marketingRow?.email_unsubscribed),
+          whatsapp_unsubscribed: Boolean(marketingRow?.whatsapp_unsubscribed),
+          is_opted_out: Boolean(marketingRow?.is_opted_out),
+          selection_blocked_reason: String(marketingRow?.selection_blocked_reason || ""),
+          channels: Array.isArray(marketingRow?.channels) ? marketingRow.channels : [],
+          marketing_state_last_seen_at: marketingRow?.marketing_state_last_seen_at || null,
         };
       })
       .filter((row) => {
-        if (!q) return true;
-        return (
+        const matchesSearch =
+          !q ||
           String(row.user_name || "").toLowerCase().includes(q) ||
           String(row.user_email || "").toLowerCase().includes(q) ||
-          String(row.user_phone || "").toLowerCase().includes(q)
-        );
+          String(row.user_phone || "").toLowerCase().includes(q);
+        if (!matchesSearch) return false;
+
+        if (interestFilter !== "all") {
+          const commercialStatus = resolveCommercialStatus(row);
+          if (interestFilter === "opt_out") {
+            if (commercialStatus !== "opt_out") return false;
+          } else if (normalizeInterestStatus(row.interest_status) !== interestFilter) {
+            return false;
+          }
+        }
+
+        if (channelFilter !== "all") {
+          const channels = Array.isArray(row.channels) && row.channels.length
+            ? row.channels
+            : [
+                row.user_email ? "email" : null,
+                row.user_phone ? "whatsapp" : null,
+              ].filter(Boolean);
+          if (!channels.includes(channelFilter)) return false;
+        }
+
+        if (
+          showCampaignHistory &&
+          campaignFilter !== "all" &&
+          !campaignRecipientsLoading &&
+          campaignRecipientKeys instanceof Set &&
+          !campaignRecipientKeys.has(String(row.recipient_key || ""))
+        ) {
+          return false;
+        }
+
+        return true;
       });
-  }, [clients, historyByKey, search]);
+  }, [
+    audienceByRecipientKey,
+    campaignFilter,
+    campaignRecipientKeys,
+    campaignRecipientsLoading,
+    channelFilter,
+    clients,
+    historyByKey,
+    interestFilter,
+    search,
+    showCampaignHistory,
+  ]);
 
   const canCreateNewClient = (() => {
     const email = normalizeAppointmentEmail(newClient.user_email);
@@ -280,8 +439,41 @@ export default function AppointmentClients({
         </button>
       </div>
 
+      {showCampaignHistory ? (
+        <div style={filtersBox}>
+          <div style={filtersGrid}>
+            <select style={{ ...input, marginBottom: 0 }} value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
+              <option value="all">{ui.interestFilterLabel}: {ui.allInterestStatuses}</option>
+              <option value="interested">{ui.interestInterested}</option>
+              <option value="not_interested">{ui.interestNotInterested}</option>
+              <option value="unknown">{ui.interestUnknown}</option>
+              <option value="opt_out">{ui.interestOptOut}</option>
+            </select>
+
+            <select style={{ ...input, marginBottom: 0 }} value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)}>
+              <option value="all">{ui.campaignFilterLabel}: {ui.allCampaigns}</option>
+              {(marketingCampaigns || []).map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>
+                  {campaign.name}
+                </option>
+              ))}
+            </select>
+
+            <select style={{ ...input, marginBottom: 0 }} value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}>
+              <option value="all">{ui.channelFilterLabel}: {ui.allChannels}</option>
+              <option value="email">{ui.channelEmail}</option>
+              <option value="whatsapp">{ui.channelWhatsapp}</option>
+            </select>
+          </div>
+          {campaignFilter !== "all" && campaignRecipientsLoading ? (
+            <p style={{ ...subtleText, marginTop: "0.55rem" }}>{ui.campaignRecipientsLoading}</p>
+          ) : null}
+        </div>
+      ) : null}
+
       {directoryWarning && <div style={warningBox}>{directoryWarning}</div>}
       {error && <div style={errorBox}>{error}</div>}
+      {marketingSignalsError && showCampaignHistory ? <div style={warningBox}>{marketingSignalsError}</div> : null}
 
       {showNewClient && (
         <div style={panel}>
@@ -327,7 +519,11 @@ export default function AppointmentClients({
       {loading && <p style={hint}>{t("appointments_loading") || "Loading..."}</p>}
 
       {!loading && filteredClients.length === 0 && (
-        <div style={emptyBox}>{ui.noClients}</div>
+        <div style={emptyBox}>
+          {search || interestFilter !== "all" || campaignFilter !== "all" || channelFilter !== "all"
+            ? ui.noClientsFiltered
+            : ui.noClients}
+        </div>
       )}
 
       {!loading && filteredClients.length > 0 && (
@@ -491,9 +687,17 @@ function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved, showCa
             {client.user_email && <span style={contactChip}>✉️ {client.user_email}</span>}
             {client.user_phone && <span style={contactChip}>📞 {client.user_phone}</span>}
             <span style={badge}>{ui.appointmentsCount(client.history?.length || client.appointments_count || 0)}</span>
+            {showCampaignHistory ? (
+              <span style={interestStatusPill(resolveCommercialStatus(client))}>
+                {ui.commercialStatusLabel}: {interestStatusLabel(resolveCommercialStatus(client), ui)}
+              </span>
+            ) : null}
             {client.last_appointment_time && (
               <span style={subtleText}>{ui.lastLabel}: {formatDateTime(client.last_appointment_time, uiLocale)}</span>
             )}
+            {showCampaignHistory && client.marketing_state_last_seen_at ? (
+              <span style={subtleText}>{ui.lastSignalLabel}: {formatDateTime(client.marketing_state_last_seen_at, uiLocale)}</span>
+            ) : null}
             {!client.id && <span style={ghostBadge}>{ui.derivedFromAppointments}</span>}
           </div>
         </div>
@@ -610,10 +814,18 @@ function AppointmentClientCard({ clientId, client, ui, uiLocale, onSaved, showCa
                         </strong>
                         <span style={contactChip}>{String(item.campaign_channel || "—").toUpperCase()}</span>
                         <span style={campaignStatusPill}>{String(item.send_status || "unknown")}</span>
+                        <span style={interestStatusPill(item.response_status || "unknown")}>
+                          {ui.responseStatusLabel}: {interestStatusLabel(item.response_status, ui)}
+                        </span>
                       </div>
                       <div style={campaignMetaText}>
                         {ui.sentAtLabel}: {formatDateTime(item.sent_at, uiLocale)}
                       </div>
+                      {item.response_status && item.response_status !== "unknown" ? (
+                        <div style={campaignMetaText}>
+                          {ui.responseAtLabel}: {formatDateTime(item.response_at, uiLocale)}
+                        </div>
+                      ) : null}
                       <div style={campaignMetaText}>
                         {ui.lastUpdateLabel}: {formatDateTime(item.updated_at, uiLocale)}
                       </div>
@@ -649,6 +861,34 @@ function buildMarketingRecipientKey(client) {
   if (isValidAppointmentPhone(normalizedPhone)) return `phone:${normalizedPhone}`;
 
   return "";
+}
+
+function normalizeInterestStatus(value) {
+  const normalized = String(value || "unknown").trim().toLowerCase();
+  if (normalized === "interested" || normalized === "not_interested" || normalized === "opt_out") {
+    return normalized;
+  }
+  return "unknown";
+}
+
+function resolveCommercialStatus(client) {
+  if (
+    client?.is_opted_out ||
+    client?.email_unsubscribed ||
+    client?.whatsapp_unsubscribed ||
+    String(client?.selection_blocked_reason || "").toLowerCase() === "opt_out"
+  ) {
+    return "opt_out";
+  }
+  return normalizeInterestStatus(client?.interest_status);
+}
+
+function interestStatusLabel(status, ui) {
+  if (String(status || "").trim().toLowerCase() === "opt_out") return ui.interestOptOut;
+  const normalized = normalizeInterestStatus(status);
+  if (normalized === "interested") return ui.interestInterested;
+  if (normalized === "not_interested") return ui.interestNotInterested;
+  return ui.interestUnknown;
 }
 
 function PhoneInputRow({ countryCode, localPhone, onCountryCodeChange, onLocalPhoneChange, phonePlaceholder = "Phone" }) {
@@ -717,6 +957,20 @@ const searchRow = {
   flexWrap: "wrap",
   marginTop: "0.9rem",
   marginBottom: "0.9rem",
+};
+
+const filtersBox = {
+  border: "1px solid #EDEDED",
+  backgroundColor: "#FAFBFC",
+  borderRadius: 12,
+  padding: "0.8rem",
+  marginBottom: "0.9rem",
+};
+
+const filtersGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: "0.6rem",
 };
 
 const input = {
@@ -985,4 +1239,50 @@ const campaignErrorText = {
   fontSize: "0.8rem",
   color: "#BE123C",
   whiteSpace: "pre-wrap",
+};
+
+const interestStatusPill = (status) => {
+  const normalized = normalizeInterestStatus(status);
+  if (normalized === "interested") {
+    return {
+      backgroundColor: "#EAF7F0",
+      border: "1px solid #CDEBDB",
+      color: "#1F6B4A",
+      borderRadius: 999,
+      padding: "0.2rem 0.55rem",
+      fontSize: "0.78rem",
+      fontWeight: 700,
+    };
+  }
+  if (normalized === "not_interested") {
+    return {
+      backgroundColor: "#FFF7EA",
+      border: "1px solid #FFD8A8",
+      color: "#9A6700",
+      borderRadius: 999,
+      padding: "0.2rem 0.55rem",
+      fontSize: "0.78rem",
+      fontWeight: 700,
+    };
+  }
+  if (status === "opt_out") {
+    return {
+      backgroundColor: "#FFF1F2",
+      border: "1px solid #FECACA",
+      color: "#BE123C",
+      borderRadius: 999,
+      padding: "0.2rem 0.55rem",
+      fontSize: "0.78rem",
+      fontWeight: 700,
+    };
+  }
+  return {
+    backgroundColor: "#F8FAFC",
+    border: "1px solid #E5E7EB",
+    color: "#475569",
+    borderRadius: 999,
+    padding: "0.2rem 0.55rem",
+    fontSize: "0.78rem",
+    fontWeight: 700,
+  };
 };

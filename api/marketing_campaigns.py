@@ -172,6 +172,38 @@ def _normalize_phone(value: Any, *, client_id: Optional[str] = None) -> Optional
     return f"+{digits}"
 
 
+def _marketing_phone_lookup_aliases(value: Any, *, client_id: Optional[str] = None) -> list[str]:
+    normalized = _normalize_phone(value, client_id=client_id)
+    raw = str(normalized or value or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    aliases: set[str] = set()
+
+    if normalized:
+        aliases.add(normalized)
+
+    if not digits:
+        return []
+
+    aliases.add(digits)
+    aliases.add(f"+{digits}")
+
+    if digits.startswith("52") and len(digits) == 12:
+        local_digits = digits[2:]
+        aliases.add(local_digits)
+        aliases.add(f"+{local_digits}")
+        aliases.add(f"521{local_digits}")
+        aliases.add(f"+521{local_digits}")
+    elif digits.startswith("521") and len(digits) == 13:
+        mx_digits = f"52{digits[3:]}"
+        aliases.add(mx_digits)
+        aliases.add(f"+{mx_digits}")
+        local_digits = mx_digits[2:]
+        aliases.add(local_digits)
+        aliases.add(f"+{local_digits}")
+
+    return sorted(alias for alias in aliases if alias)
+
+
 def _normalize_name(value: Any) -> Optional[str]:
     cleaned = " ".join(str(value or "").strip().split())
     return cleaned or None
@@ -256,6 +288,13 @@ def _is_missing_marketing_tables(exc: Exception) -> bool:
         "marketing_campaign_events",
     ]
     return any(marker in msg for marker in markers) and (
+        "does not exist" in msg or "relation" in msg or "schema cache" in msg or "not found" in msg
+    )
+
+
+def _is_missing_marketing_contacts_table(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "marketing_contacts" in msg and (
         "does not exist" in msg or "relation" in msg or "schema cache" in msg or "not found" in msg
     )
 
@@ -950,6 +989,63 @@ def _resolve_marketing_policy_reason(
     return None
 
 
+def _load_marketing_contact_state_maps(client_id: str) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    try:
+        rows = (
+            supabase.table("marketing_contacts")
+            .select(
+                "normalized_email,normalized_phone,interest_status,"
+                "email_unsubscribed,whatsapp_unsubscribed,last_seen_at"
+            )
+            .eq("client_id", client_id)
+            .limit(5000)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        if _is_missing_marketing_contacts_table(exc):
+            return {}, {}
+        raise
+
+    by_email: dict[str, dict[str, Any]] = {}
+    by_phone: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        normalized_email = _normalize_email((row or {}).get("normalized_email"))
+        if normalized_email:
+            by_email[normalized_email] = row or {}
+
+        normalized_phone = _normalize_phone((row or {}).get("normalized_phone"), client_id=client_id)
+        if not normalized_phone:
+            continue
+        for alias in _marketing_phone_lookup_aliases(normalized_phone, client_id=client_id):
+            by_phone[alias] = row or {}
+
+    return by_email, by_phone
+
+
+def _apply_marketing_contact_state(pool: dict[str, dict[str, Any]], *, client_id: str) -> None:
+    by_email, by_phone = _load_marketing_contact_state_maps(client_id)
+    if not by_email and not by_phone:
+        return
+
+    for row in pool.values():
+        matched_state = None
+        normalized_email = _normalize_email(row.get("email"))
+        if normalized_email:
+            matched_state = by_email.get(normalized_email)
+        if not matched_state:
+            for alias in _marketing_phone_lookup_aliases(row.get("phone"), client_id=client_id):
+                matched_state = by_phone.get(alias)
+                if matched_state:
+                    break
+        if not matched_state:
+            continue
+
+        row["interest_status"] = str((matched_state or {}).get("interest_status") or "unknown").strip().lower() or "unknown"
+        row["email_unsubscribed"] = bool((matched_state or {}).get("email_unsubscribed"))
+        row["whatsapp_unsubscribed"] = bool((matched_state or {}).get("whatsapp_unsubscribed"))
+        row["marketing_state_last_seen_at"] = (matched_state or {}).get("last_seen_at")
+
+
 def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], email: Optional[str], phone: Optional[str], source: str,
                    last_activity_at: Optional[str], marketing_opt_in: bool, client_source: bool,
                    consent_at: Optional[str] = None, consent_terms_accepted: Optional[bool] = None,
@@ -976,6 +1072,10 @@ def _merge_contact(pool: dict[str, dict], *, key: str, name: Optional[str], emai
             "consent_email_present": False,
             "consent_phone_present": False,
             "entity_type": "contact",
+            "interest_status": "unknown",
+            "email_unsubscribed": False,
+            "whatsapp_unsubscribed": False,
+            "marketing_state_last_seen_at": None,
         }
         pool[key] = row
 
@@ -1144,6 +1244,7 @@ def _load_contacts_audience(client_id: str) -> list[dict[str, Any]]:
 
     candidate_emails = [_normalize_email((row or {}).get("email")) for row in pool.values()]
     opted_out_emails = _load_opted_out_emails_for_client(client_id, [e for e in candidate_emails if e])
+    _apply_marketing_contact_state(pool, client_id=client_id)
 
     items: list[dict[str, Any]] = []
     for _, row in pool.items():
@@ -1450,12 +1551,39 @@ def get_marketing_history_for_recipient(
             .execute()
         )
         campaigns = {str(row.get("id")): row for row in (campaigns_res.data or []) if row.get("id")}
+        response_events_res = (
+            supabase.table("marketing_campaign_events")
+            .select("campaign_id,recipient_key,event_type,created_at")
+            .eq("client_id", client_id)
+            .eq("recipient_key", recipient_key)
+            .in_("campaign_id", campaign_ids)
+            .in_("event_type", ["interest", "interest_yes", "interest_no", "opt_out"])
+            .order("created_at", desc=True)
+            .limit(2000)
+            .execute()
+        )
+        latest_response_by_campaign: dict[str, dict[str, Any]] = {}
+        for event in response_events_res.data or []:
+            campaign_key = str((event or {}).get("campaign_id") or "").strip()
+            if not campaign_key or campaign_key in latest_response_by_campaign:
+                continue
+            latest_response_by_campaign[campaign_key] = event or {}
 
         items = []
         for row in rows:
             campaign = campaigns.get(str(row.get("campaign_id")))
             if not campaign:
                 continue
+            response_event = latest_response_by_campaign.get(str(row.get("campaign_id")))
+            event_type = str((response_event or {}).get("event_type") or "").strip().lower()
+            if event_type in {"interest", "interest_yes"}:
+                response_status = "interested"
+            elif event_type == "interest_no":
+                response_status = "not_interested"
+            elif event_type == "opt_out":
+                response_status = "opt_out"
+            else:
+                response_status = "unknown"
             items.append(
                 {
                     "campaign_id": row.get("campaign_id"),
@@ -1463,6 +1591,8 @@ def get_marketing_history_for_recipient(
                     "campaign_channel": campaign.get("channel"),
                     "campaign_status": campaign.get("status"),
                     "send_status": row.get("send_status"),
+                    "response_status": response_status,
+                    "response_at": (response_event or {}).get("created_at"),
                     "provider_message_id": row.get("provider_message_id"),
                     "policy_proof_id": row.get("policy_proof_id"),
                     "send_error": row.get("send_error"),
