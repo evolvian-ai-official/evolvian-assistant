@@ -9,10 +9,6 @@ services:
       npm run build
     staticPublishPath: front_end/clientuploader/dist
     routes:
-      # Rutas explícitas del widget
-      - type: rewrite
-        source: /chat-widget.html
-        destination: /chat-widget.html
       # SPA fallback
       - type: rewrite
         source: /*
