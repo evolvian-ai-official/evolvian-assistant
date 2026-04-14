@@ -24,6 +24,7 @@ class ProfileData(BaseModel):
     company_name: Optional[str] = None
     phone: Optional[str] = None
     industry: Optional[str] = None
+    discovery_source: Optional[str] = None
     role: Optional[str] = None
     country: Optional[str] = None
     company_size: Optional[str] = None
@@ -78,6 +79,7 @@ async def complete_onboarding(
                 "company_name": payload.profile.company_name,
                 "phone": payload.profile.phone,
                 "industry": payload.profile.industry,
+                "discovery_source": (payload.profile.discovery_source or "").strip() or None,
                 "role": payload.profile.role,
                 "country": payload.profile.country,
                 "company_size": payload.profile.company_size,

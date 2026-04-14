@@ -292,12 +292,12 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
     },
     {
       id: "documents",
-      label: t("documents") || "Documents",
+      label: t("plan_feature_1_document") || "Upload documents",
       values: {
-        free: t("plan_feature_1_document"),
-        starter: t("plan_feature_1_document"),
-        premium: t("plan_feature_3_documents"),
-        white_label: t("unlimited"),
+        free: "✅",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {

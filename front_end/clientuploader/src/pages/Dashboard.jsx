@@ -110,25 +110,26 @@ export default function Dashboard() {
   useEffect(() => {
     if (!clientId) return;
 
-    const checkTermsAcceptance = async () => {
+    const checkWelcomeRequirements = async () => {
       try {
         const res = await authFetch(
-          `${import.meta.env.VITE_API_URL}/accepted_terms?client_id=${clientId}`
+          `${import.meta.env.VITE_API_URL}/should_show_welcome?client_id=${clientId}`
         );
         const data = await res.json();
 
-        if (!data.has_accepted) {
-          console.log("⚠️ Terms missing or expired:", data.reason);
+        if (data.show) {
+          console.log("⚠️ Showing onboarding modal:", data.reason, data.missing_fields || []);
           setShowWelcome(true);
         } else {
-          console.log("✅ Terms are up to date");
+          console.log("✅ Welcome modal not required");
+          setShowWelcome(false);
         }
       } catch (err) {
-        console.error("❌ Error checking accepted terms:", err);
+        console.error("❌ Error checking welcome requirements:", err);
       }
     };
 
-    checkTermsAcceptance();
+    checkWelcomeRequirements();
   }, [clientId]);
 
   const {
@@ -465,11 +466,6 @@ export default function Dashboard() {
       name: t("messages"),
       used: usage.messages_used || 0,
       max: plan.is_unlimited ? usage.messages_used : plan.max_messages,
-    },
-    {
-      name: t("documents"),
-      used: usage.documents_uploaded || 0,
-      max: plan.max_documents,
     },
   ];
 
@@ -924,9 +920,7 @@ export default function Dashboard() {
           <p>
             {t("messages")}: {plan.is_unlimited ? "∞" : plan.max_messages}
           </p>
-          <p>
-            {t("documents")}: {plan.max_documents}
-          </p>
+          <p>{t("plan_feature_1_document") || "Upload documents"}</p>
 
           {subscription_start && subscription_end && (
             <p className="ia-dashboard-subtext">
@@ -995,11 +989,6 @@ export default function Dashboard() {
               </>
             )}
           </p>
-          <p>
-            {t("documents_uploaded")}: <strong style={{ color: "#2EB39A" }}>{usage.documents_uploaded}</strong> / {" "}
-            {plan.max_documents}
-          </p>
-
           <div className="ia-dashboard-chart">
             <ResponsiveContainer>
               <BarChart data={chartData}>

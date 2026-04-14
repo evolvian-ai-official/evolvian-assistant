@@ -5,44 +5,18 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import countries from "../../assets/countries.json";
 import { authFetch, getAuthHeaders } from "../../lib/authFetch";
 import { supabase } from "../../lib/supabaseClient";
+import {
+  BUSINESS_SECTOR_OPTIONS,
+  COMPANY_SIZE_OPTIONS,
+  DISCOVERY_SOURCE_OPTIONS,
+  ROLE_OPTIONS,
+  getLocalizedOptions,
+} from "../../lib/onboardingOptions";
 import "../../components/ui/internal-admin-responsive.css";
 
 /* =========================
    Static Dropdown Options
 ========================= */
-
-const industries = [
-  "Software",
-  "Education",
-  "Healthcare",
-  "Finance",
-  "Retail",
-  "Manufacturing",
-  "Consulting",
-  "Other",
-];
-
-const roles = [
-  "Founder / CEO",
-  "CMO / Marketing Manager",
-  "Customer Support",
-  "Operations Manager",
-  "Sales Executive",
-  "IT Manager",
-  "Product Manager",
-  "Developer / Engineer",
-  "HR / People",
-  "Other",
-];
-
-const companySizes = [
-  "1-10 employees",
-  "11-50 employees",
-  "51-200 employees",
-  "201-500 employees",
-  "501-1000 employees",
-  "More than 1000 employees",
-];
 
 
 
@@ -141,6 +115,7 @@ export default function MyProfile() {
     company_name: "",
     phone: "",
     industry: "",
+    discovery_source: "",
     role: "",
     country: "",
     company_size: "",
@@ -158,6 +133,16 @@ export default function MyProfile() {
       .map((c) => (typeof c === "string" ? c : c.name))
       .sort((a, b) => a.localeCompare(b));
   }, []);
+
+  const sectorOptions = useMemo(
+    () => getLocalizedOptions(BUSINESS_SECTOR_OPTIONS, lang),
+    [lang]
+  );
+
+  const discoverySourceOptions = useMemo(
+    () => getLocalizedOptions(DISCOVERY_SOURCE_OPTIONS, lang),
+    [lang]
+  );
 
   useEffect(() => {
     const fetchAuthProfile = async () => {
@@ -208,6 +193,7 @@ export default function MyProfile() {
             company_name: data.profile?.company_name || "",
             phone: data.profile?.phone || "",
             industry: data.profile?.industry || "",
+            discovery_source: data.profile?.discovery_source || "",
             role: data.profile?.role || "",
             country: data.profile?.country || "",
             company_size: data.profile?.company_size || "",
@@ -267,9 +253,21 @@ export default function MyProfile() {
     setStatus(null);
 
     try {
+      const cleanedProfile = {
+        ...formData,
+        company_name: formData.company_name?.trim() || null,
+        phone: formData.phone?.trim() || null,
+        industry: formData.industry || null,
+        discovery_source: formData.discovery_source || null,
+        role: formData.role || null,
+        country: formData.country || null,
+        company_size: formData.company_size || null,
+        timezone: formData.timezone || "UTC",
+      };
+
       const payload = {
         client_id: clientId,
-        profile: formData,
+        profile: cleanedProfile,
         terms: {
           accepted: true,
           accepted_marketing: false,
@@ -460,7 +458,15 @@ export default function MyProfile() {
           label={t("industry")}
           name="industry"
           value={formData.industry}
-          options={industries}
+          options={sectorOptions}
+          onChange={handleChange}
+        />
+
+        <Select
+          label={t("how_did_you_find_us")}
+          name="discovery_source"
+          value={formData.discovery_source}
+          options={discoverySourceOptions}
           onChange={handleChange}
         />
 
@@ -468,7 +474,7 @@ export default function MyProfile() {
           label={t("role")}
           name="role"
           value={formData.role}
-          options={roles}
+          options={ROLE_OPTIONS}
           onChange={handleChange}
         />
 
@@ -484,7 +490,7 @@ export default function MyProfile() {
           label={t("company_size")}
           name="company_size"
           value={formData.company_size}
-          options={companySizes}
+          options={COMPANY_SIZE_OPTIONS}
           onChange={handleChange}
         />
 

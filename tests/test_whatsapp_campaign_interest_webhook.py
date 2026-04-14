@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 import os
 import sys
 
@@ -293,3 +294,248 @@ def test_whatsapp_no_reply_policy_skips_send(monkeypatch):
     asyncio.run(module.process_whatsapp_payload(payload))
 
     assert len(send_calls) == 0
+
+
+def test_whatsapp_campaign_free_text_reply_creates_handoff_and_skips_rag(monkeypatch):
+    from api.modules.assistant_rag import intent_router
+    from api.modules.whatsapp import webhook as module
+
+    handoff_calls = []
+    send_calls = []
+    reply_events = []
+    state_updates = []
+
+    monkeypatch.setattr(module, "get_channel_by_wa_phone_id", lambda *_args, **_kwargs: {"client_id": "client_1"})
+    monkeypatch.setattr(module, "is_duplicate_wa_message", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(module, "register_wa_message", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "_load_recent_marketing_recipient",
+        lambda **_kwargs: {
+            "campaign_id": "campaign_1",
+            "recipient_key": "phone:+5215512345678",
+            "provider_message_id": "wamid.sent_campaign",
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    monkeypatch.setattr(module, "_load_campaign_opt_out_labels", lambda *_args, **_kwargs: set())
+    monkeypatch.setattr(
+        module,
+        "_log_marketing_reply_event",
+        lambda **kwargs: reply_events.append(kwargs),
+    )
+    monkeypatch.setattr(
+        module,
+        "_log_marketing_interest_event",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("Explicit interest event should not be logged")),
+    )
+    monkeypatch.setattr(
+        module,
+        "upsert_marketing_contact_state",
+        lambda **kwargs: state_updates.append(kwargs) or True,
+    )
+
+    async def _fake_send_whatsapp_message(*, to_number, text, channel):
+        send_calls.append({"to_number": to_number, "text": text, "channel": channel})
+        return True
+
+    async def _fail_handle_message(**_kwargs):
+        raise AssertionError("RAG should not run for generic campaign reply handoff flow")
+
+    monkeypatch.setattr(module, "send_whatsapp_message", _fake_send_whatsapp_message)
+    monkeypatch.setattr(module, "handle_message", _fail_handle_message)
+    monkeypatch.setattr(
+        intent_router,
+        "_upsert_whatsapp_handoff",
+        lambda **kwargs: handoff_calls.append(kwargs)
+        or {"feature_enabled": True, "handoff_id": "handoff_456", "alert_created": True, "reused": False},
+    )
+
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"phone_number_id": "wa_phone_1"},
+                            "messages": [
+                                {
+                                    "id": "wamid.inbound_campaign_text_1",
+                                    "from": "5215512345678",
+                                    "type": "text",
+                                    "text": {
+                                        "body": (
+                                            "Hola, soy Sam de Clínica de Terapia Física y Funcional Norte. "
+                                            "Para poder ayudarte mejor, ¿podrías indicarme cuál es la molestia "
+                                            "o síntoma principal que presentas actualmente?"
+                                        )
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    asyncio.run(module.process_whatsapp_payload(payload))
+
+    assert len(handoff_calls) == 1
+    assert handoff_calls[0]["reason"] == "campaign_interest"
+    assert handoff_calls[0]["trigger"] == "campaign_reply"
+    assert handoff_calls[0]["metadata_extra"]["reply_type"] == "reply"
+    assert len(reply_events) == 1
+    assert reply_events[0]["campaign_id"] == "campaign_1"
+    assert len(state_updates) == 1
+    assert state_updates[0]["interest_status"] == "interested"
+    assert len(send_calls) == 1
+    assert "asesor humano" in send_calls[0]["text"].lower()
+
+
+def test_whatsapp_campaign_reply_reused_handoff_skips_duplicate_ack(monkeypatch):
+    from api.modules.assistant_rag import intent_router
+    from api.modules.whatsapp import webhook as module
+
+    handoff_calls = []
+    send_calls = []
+    reply_events = []
+    state_updates = []
+
+    monkeypatch.setattr(module, "get_channel_by_wa_phone_id", lambda *_args, **_kwargs: {"client_id": "client_1"})
+    monkeypatch.setattr(module, "is_duplicate_wa_message", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(module, "register_wa_message", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "_load_recent_marketing_recipient",
+        lambda **_kwargs: {
+            "campaign_id": "campaign_1",
+            "recipient_key": "phone:+5215512345678",
+            "provider_message_id": "wamid.sent_campaign",
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    monkeypatch.setattr(module, "_load_campaign_opt_out_labels", lambda *_args, **_kwargs: set())
+    monkeypatch.setattr(
+        module,
+        "_log_marketing_reply_event",
+        lambda **kwargs: reply_events.append(kwargs),
+    )
+    monkeypatch.setattr(
+        module,
+        "upsert_marketing_contact_state",
+        lambda **kwargs: state_updates.append(kwargs) or True,
+    )
+
+    async def _fake_send_whatsapp_message(*, to_number, text, channel):
+        send_calls.append({"to_number": to_number, "text": text, "channel": channel})
+        return True
+
+    async def _fail_handle_message(**_kwargs):
+        raise AssertionError("RAG should not run while campaign handoff is active")
+
+    monkeypatch.setattr(module, "send_whatsapp_message", _fake_send_whatsapp_message)
+    monkeypatch.setattr(module, "handle_message", _fail_handle_message)
+    monkeypatch.setattr(
+        intent_router,
+        "_upsert_whatsapp_handoff",
+        lambda **kwargs: handoff_calls.append(kwargs)
+        or {"feature_enabled": True, "handoff_id": "handoff_456", "alert_created": True, "reused": True},
+    )
+
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"phone_number_id": "wa_phone_1"},
+                            "messages": [
+                                {
+                                    "id": "wamid.inbound_campaign_text_2",
+                                    "from": "5215512345678",
+                                    "type": "text",
+                                    "text": {"body": "Seguimos atentos para ayudarte con cualquier duda."},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    asyncio.run(module.process_whatsapp_payload(payload))
+
+    assert len(handoff_calls) == 1
+    assert handoff_calls[0]["trigger"] == "campaign_reply"
+    assert len(send_calls) == 0
+    assert len(reply_events) == 0
+    assert len(state_updates) == 0
+
+
+def test_whatsapp_old_campaign_generic_reply_still_reaches_rag(monkeypatch):
+    from api.modules.assistant_rag import intent_router
+    from api.modules.whatsapp import webhook as module
+
+    send_calls = []
+    handle_calls = []
+
+    monkeypatch.setattr(module, "get_channel_by_wa_phone_id", lambda *_args, **_kwargs: {"client_id": "client_1"})
+    monkeypatch.setattr(module, "is_duplicate_wa_message", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(module, "register_wa_message", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "_load_recent_marketing_recipient",
+        lambda **_kwargs: {
+            "campaign_id": "campaign_1",
+            "recipient_key": "phone:+5215512345678",
+            "provider_message_id": "wamid.sent_campaign",
+            "sent_at": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
+        },
+    )
+    monkeypatch.setattr(module, "_load_campaign_opt_out_labels", lambda *_args, **_kwargs: set())
+    monkeypatch.setattr(
+        intent_router,
+        "_upsert_whatsapp_handoff",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("Old campaign reply should not auto-open handoff")),
+    )
+
+    async def _fake_send_whatsapp_message(*, to_number, text, channel):
+        send_calls.append({"to_number": to_number, "text": text, "channel": channel})
+        return True
+
+    async def _fake_handle_message(**kwargs):
+        handle_calls.append(kwargs)
+        return "RAG_OK"
+
+    monkeypatch.setattr(module, "send_whatsapp_message", _fake_send_whatsapp_message)
+    monkeypatch.setattr(module, "handle_message", _fake_handle_message)
+
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"phone_number_id": "wa_phone_1"},
+                            "messages": [
+                                {
+                                    "id": "wamid.inbound_campaign_text_3",
+                                    "from": "5215512345678",
+                                    "type": "text",
+                                    "text": {"body": "Quiero saber precios"},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    asyncio.run(module.process_whatsapp_payload(payload))
+
+    assert len(handle_calls) == 1
+    assert len(send_calls) == 1
+    assert send_calls[0]["text"] == "RAG_OK"

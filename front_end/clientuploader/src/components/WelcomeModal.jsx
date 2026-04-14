@@ -3,28 +3,20 @@ import { useNavigate } from "react-router-dom";
 import { useLanguage } from "../contexts/LanguageContext";
 import countries from "../assets/countries.json";
 import { authFetch, getAuthHeaders } from "../lib/authFetch";
+import {
+  BUSINESS_SECTOR_OPTIONS,
+  CHANNEL_OPTIONS,
+  COMPANY_SIZE_OPTIONS,
+  DISCOVERY_SOURCE_OPTIONS,
+  ROLE_OPTIONS,
+  WELCOME_INDUSTRY_TEMPLATES,
+  findTemplateByIndustry,
+  getLocalizedOptions,
+} from "../lib/onboardingOptions";
 
 /* ================================
    Data
 ================================ */
-
-const industries = [
-  "Software","Education","Healthcare","Finance","Retail",
-  "Manufacturing","Consulting","Other",
-];
-
-const roles = [
-  "Founder / CEO","CMO / Marketing Manager","Customer Support",
-  "Operations Manager","Sales Executive","IT Manager",
-  "Product Manager","Developer / Engineer","HR / People","Other",
-];
-
-const channels = ["Chat Widget","WhatsApp","Email","Others"];
-
-const companySizes = [
-  "1-10 employees","11-50 employees","51-200 employees",
-  "201-500 employees","501-1000 employees","More than 1000 employees",
-];
 
 /* ================================
    Styles
@@ -142,6 +134,8 @@ export default function WelcomeModal({ onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [selectedLanguage, setSelectedLanguage] = useState(lang || "en");
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
 
   const clientId = localStorage.getItem("client_id");
 
@@ -152,11 +146,22 @@ export default function WelcomeModal({ onClose }) {
       .sort((a, b) => a.localeCompare(b));
   }, []);
 
+  const localizedSectorOptions = useMemo(
+    () => getLocalizedOptions(BUSINESS_SECTOR_OPTIONS, selectedLanguage),
+    [selectedLanguage]
+  );
+
+  const localizedDiscoverySourceOptions = useMemo(
+    () => getLocalizedOptions(DISCOVERY_SOURCE_OPTIONS, selectedLanguage),
+    [selectedLanguage]
+  );
+
   const [formData, setFormData] = useState({
     contact_name: "",
     company_name: "",
     phone: "",
     industry: "",
+    discovery_source: "",
     role: "",
     country: "",
     company_size: "",
@@ -166,7 +171,6 @@ export default function WelcomeModal({ onClose }) {
 
   const [agreeTerms, setAgreeTerms] = useState(true);
   const [agreeMarketing, setAgreeMarketing] = useState(true);
-  const [selectedLanguage, setSelectedLanguage] = useState(lang || "en");
 
   /* ================================
      Load Plan + Verify Onboarding
@@ -204,12 +208,15 @@ export default function WelcomeModal({ onClose }) {
             company_name: profile.company_name || prev.company_name,
             phone: profile.phone || prev.phone,
             industry: profile.industry || prev.industry,
+            discovery_source: profile.discovery_source || prev.discovery_source,
             role: profile.role || prev.role,
             country: profile.country || prev.country,
             company_size: profile.company_size || prev.company_size,
             channels: Array.isArray(profile.channels) ? profile.channels : prev.channels,
             timezone: profilePayload?.timezone || prev.timezone,
           }));
+
+          setSelectedTemplate(findTemplateByIndustry(profile.industry)?.id || null);
 
           if (typeof terms.accepted === "boolean") {
             setAgreeTerms(Boolean(terms.accepted));
@@ -233,6 +240,10 @@ export default function WelcomeModal({ onClose }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === "industry") {
+      setSelectedTemplate(findTemplateByIndustry(value)?.id || null);
+    }
+    setError(null);
     setFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -256,8 +267,31 @@ export default function WelcomeModal({ onClose }) {
     return true;
   };
 
+  const validateBusinessSetup = () => {
+    if (!formData.industry) {
+      setError(
+        selectedLanguage === "es"
+          ? "Selecciona el sector de tu negocio."
+          : "Please select your business sector."
+      );
+      return false;
+    }
+
+    if (!formData.discovery_source) {
+      setError(
+        selectedLanguage === "es"
+          ? "Selecciona por cual medio nos encontraste."
+          : "Please select how you found us."
+      );
+      return false;
+    }
+
+    return true;
+  };
+
   const handleNext = () => {
     setError(null);
+    if (step === 1 && !validateBusinessSetup()) return;
     if (step === 2 && !validateProfile()) return;
     setStep((prev) => prev + 1);
   };
@@ -274,6 +308,7 @@ export default function WelcomeModal({ onClose }) {
         company_name: formData.company_name?.trim() || null,
         phone: formData.phone?.trim() || null,
         industry: formData.industry || null,
+        discovery_source: formData.discovery_source || null,
         role: formData.role || null,
         country: formData.country || null,
         company_size: formData.company_size || null,
@@ -352,6 +387,98 @@ export default function WelcomeModal({ onClose }) {
                 <option value="es">{t("spanish")}</option>
               </select>
             </div>
+
+            <div style={{ marginTop: "2rem", textAlign: "left" }}>
+              <p style={{ ...textStyle, fontWeight: 600, marginBottom: "1rem" }}>
+                {selectedLanguage === "es" ? "¿En qué sector trabajas?" : "What sector are you in?"}
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.75rem" }}>
+                {WELCOME_INDUSTRY_TEMPLATES.map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    onClick={() => {
+                      setError(null);
+                      setSelectedTemplate(template.id);
+                      setFormData((prev) => ({
+                        ...prev,
+                        industry: template.industry,
+                        channels: template.channels,
+                      }));
+                    }}
+                    style={{
+                      background: selectedTemplate === template.id ? "#2eb39a" : "#0f1c2e",
+                      border: `2px solid ${selectedTemplate === template.id ? "#2eb39a" : "#274472"}`,
+                      borderRadius: "12px",
+                      padding: "1rem",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      color: "#fff",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <div style={{ fontSize: "1.5rem", marginBottom: "0.4rem" }}>{template.icon}</div>
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
+                      {selectedLanguage === "es" ? template.labelEs : template.labelEn}
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: selectedTemplate === template.id ? "#e0f5ef" : "#b0c4d8", marginTop: "0.25rem" }}>
+                      {selectedLanguage === "es" ? template.descEs : template.descEn}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div style={{ ...formGrid, marginTop: "1rem" }}>
+                <div>
+                  <label style={{ ...checkboxLabel, marginBottom: "0.5rem" }}>
+                    {selectedLanguage === "es" ? "Sector de tu negocio" : "Business sector"}
+                  </label>
+                  <select
+                    name="industry"
+                    value={formData.industry}
+                    onChange={handleChange}
+                    style={inputStyle}
+                  >
+                    <option value="">
+                      {selectedLanguage === "es" ? "Selecciona tu sector" : "Select your sector"}
+                    </option>
+                    {localizedSectorOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ ...checkboxLabel, marginBottom: "0.5rem" }}>
+                    {selectedLanguage === "es" ? "¿Cómo nos encontraste?" : "How did you find us?"}
+                  </label>
+                  <select
+                    name="discovery_source"
+                    value={formData.discovery_source}
+                    onChange={handleChange}
+                    style={inputStyle}
+                  >
+                    <option value="">
+                      {selectedLanguage === "es" ? "Selecciona un medio" : "Select a source"}
+                    </option>
+                    {localizedDiscoverySourceOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {selectedTemplate && (
+                <p style={{ marginTop: "0.75rem", fontSize: "0.82rem", color: "#a3d9b1", textAlign: "center" }}>
+                  {selectedLanguage === "es"
+                    ? "✓ Perfecto — configuraremos Evolvian para tu negocio"
+                    : "✓ Great — we'll configure Evolvian for your business"}
+                </p>
+              )}
+              {error && <p style={{ color: "#f87171", marginTop: "1rem" }}>{error}</p>}
+            </div>
           </>
         );
 
@@ -367,12 +494,16 @@ export default function WelcomeModal({ onClose }) {
               
               <select name="industry" value={formData.industry} onChange={handleChange} style={inputStyle}>
                 <option value="">{t("industry")}</option>
-                {industries.map((i) => <option key={i}>{i}</option>)}
+                {localizedSectorOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
 
               <select name="role" value={formData.role} onChange={handleChange} style={inputStyle}>
                 <option value="">{t("role")}</option>
-                {roles.map((r) => <option key={r}>{r}</option>)}
+                {ROLE_OPTIONS.map((role) => <option key={role}>{role}</option>)}
               </select>
 
               <select name="country" value={formData.country} onChange={handleChange} style={inputStyle}>
@@ -382,21 +513,21 @@ export default function WelcomeModal({ onClose }) {
 
               <select name="company_size" value={formData.company_size} onChange={handleChange} style={inputStyle}>
                 <option value="">{t("company_size")}</option>
-                {companySizes.map((c) => <option key={c}>{c}</option>)}
+                {COMPANY_SIZE_OPTIONS.map((companySize) => <option key={companySize}>{companySize}</option>)}
               </select>
             </div>
 
             <div style={{ marginTop: "1.5rem", textAlign: "left" }}>
               <p style={{ marginBottom: "0.5rem" }}>{t("interested_channels")}</p>
-              {channels.map((c) => (
-                <label key={c} style={checkboxLabel}>
+              {CHANNEL_OPTIONS.map((channel) => (
+                <label key={channel} style={checkboxLabel}>
                   <input
                     type="checkbox"
-                    checked={formData.channels.includes(c)}
-                    onChange={() => toggleChannel(c)}
+                    checked={formData.channels.includes(channel)}
+                    onChange={() => toggleChannel(channel)}
                     style={{ marginRight: "0.5rem" }}
                   />
-                  {c}
+                  {channel}
                 </label>
               ))}
             </div>
@@ -432,10 +563,45 @@ export default function WelcomeModal({ onClose }) {
       case 4:
         return settings && (
           <>
-            <h2 style={titleStyle}>{t("your_plan")}</h2>
+            <img src="/logo-evolvian.svg" style={{ width: "60px", marginBottom: "1rem" }} />
+            <h2 style={titleStyle}>
+              {lang === "es" ? "¡Todo listo! Tu recepcionista AI está configurada" : "All set! Your AI receptionist is ready"}
+            </h2>
             <p style={textStyle}>
-              {t("you_are_on_plan")} <strong>{settings.plan?.name}</strong>.
+              {lang === "es"
+                ? "Estás en el plan"
+                : "You are on the"}{" "}
+              <strong style={{ color: "#a3d9b1" }}>{settings.plan?.name}</strong>
+              {lang === "es" ? "." : " plan."}
             </p>
+            <div style={{ marginTop: "1rem", display: "grid", gap: "0.6rem" }}>
+              {[
+                lang === "es"
+                  ? "📄 Sube los documentos de tu clínica (servicios, precios, FAQ)"
+                  : "📄 Upload your clinic documents (services, pricing, FAQ)",
+                lang === "es"
+                  ? "📱 Conecta tu WhatsApp Business en Configuración → Meta Apps"
+                  : "📱 Connect your WhatsApp Business in Settings → Meta Apps",
+                lang === "es"
+                  ? "🗓️ Activa el agendamiento de citas en Configuración → Citas"
+                  : "🗓️ Enable appointment booking in Settings → Appointments",
+              ].map((step, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: "#0f1c2e",
+                    border: "1px solid #274472",
+                    borderRadius: "10px",
+                    padding: "0.75rem 1rem",
+                    fontSize: "0.88rem",
+                    color: "#ededed",
+                    textAlign: "left",
+                  }}
+                >
+                  {step}
+                </div>
+              ))}
+            </div>
           </>
         );
 

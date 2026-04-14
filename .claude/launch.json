@@ -1,0 +1,31 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Backend API",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["main.py"],
+      "port": 10000
+    },
+    {
+      "name": "Frontend - Public Page",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173,
+      "cwd": "front_end/publicpage"
+    },
+    {
+      "name": "Frontend - Client Uploader",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 4223,
+      "cwd": "front_end/clientuploader"
+    },
+    {
+      "name": "N8N (Docker)",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "up", "n8n"],
+      "port": 5678
+    }
+  ]
+}

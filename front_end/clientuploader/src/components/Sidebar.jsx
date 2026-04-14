@@ -40,29 +40,29 @@ const marketingCopyById = (id, isEs, requiredPlanLabel) => {
   const tier = requiredPlanLabel || (isEs ? "un plan superior" : "a higher plan");
   const map = {
     "inbox-handoff": isEs
-      ? `Convierte conversaciones perdidas en ventas y soporte resuelto: IA + agente humano, alertas, notas y seguimiento desde un solo inbox. Disponible en ${tier}.`
-      : `Turn unresolved chats into resolved support and revenue: AI + human agent handoff, alerts, notes, and follow-up in one inbox. Available on ${tier}.`,
+      ? `Cuando un paciente necesita atención humana, el AI escala la conversación con contexto completo. Nunca pierdas una consulta importante. Disponible en ${tier}.`
+      : `When a patient needs human attention, the AI escalates with full context. Never miss an important inquiry. Available on ${tier}.`,
     "/services/meta-apps": isEs
-      ? `Conecta WhatsApp desde Meta Apps. Disponible en ${tier}.`
-      : `Connect WhatsApp from Meta Apps. Available on ${tier}.`,
+      ? `Conecta tu WhatsApp Business y atiende pacientes las 24 horas. El canal preferido de LATAM para consultas y citas. Disponible en ${tier}.`
+      : `Connect your WhatsApp Business and attend patients 24/7. LATAM's preferred channel for inquiries and bookings. Available on ${tier}.`,
     "/services/email": isEs
-      ? `Haz seguimiento profesional por email con historial y automatización. Ideal para tickets y leads de mayor intención. Disponible en ${tier}.`
-      : `Deliver professional email follow-up with history and automation. Ideal for tickets and high-intent leads. Available on ${tier}.`,
+      ? `Complementa tu atención con seguimiento profesional por email — ideal para confirmaciones, resultados y comunicación formal. Disponible en ${tier}.`
+      : `Complement your care with professional email follow-up — ideal for confirmations, results, and formal communication. Available on ${tier}.`,
     "/services/calendar": isEs
-      ? `Convierte preguntas en citas agendadas automáticamente. Menos fricción, más reservas. Disponible en ${tier}.`
-      : `Convert conversations into booked appointments automatically. Less friction, more bookings. Available on ${tier}.`,
+      ? `Deja que el AI agende citas directamente desde WhatsApp, sincronizado con tu Google Calendar. Menos llamadas, más citas confirmadas. Disponible en ${tier}.`
+      : `Let the AI book appointments directly from WhatsApp, synced with your Google Calendar. Fewer calls, more confirmed bookings. Available on ${tier}.`,
     "/services/templates": isEs
-      ? `Escala respuestas consistentes con templates reutilizables por canal y caso de uso. Disponible en ${tier}.`
-      : `Scale consistent replies with reusable templates by channel and use case. Available on ${tier}.`,
+      ? `Crea mensajes reutilizables para confirmaciones, recordatorios y respuestas frecuentes de tu clínica. Disponible en ${tier}.`
+      : `Create reusable messages for confirmations, reminders, and frequent clinic responses. Available on ${tier}.`,
     "/services/marketing-campaigns": isEs
-      ? `Lanza campañas de email y WhatsApp con segmentación y tracking de envíos. Disponible en ${tier}.`
-      : `Launch Email and WhatsApp campaigns with segmentation and delivery tracking. Available on ${tier}.`,
+      ? `Reactiva pacientes inactivos con campañas de WhatsApp segmentadas. Envía promociones, recordatorios de chequeos y más. Disponible en ${tier}.`
+      : `Re-engage inactive patients with targeted WhatsApp campaigns. Send promotions, check-up reminders, and more. Available on ${tier}.`,
     "/services/clients": isEs
-      ? `Centraliza clientes, citas agendadas y campañas enviadas en una sola vista operativa. Disponible en ${tier}.`
-      : `Centralize clients, booked appointments, and sent campaigns in one operational view. Available on ${tier}.`,
+      ? `Consulta el historial completo de cada paciente: citas, conversaciones y contacto en una sola vista. Disponible en ${tier}.`
+      : `View each patient's full history: appointments, conversations, and contact info in one place. Available on ${tier}.`,
     "/services/chat": isEs
-      ? `Activa un asistente en tu web para captar y responder 24/7. Disponible en ${tier}.`
-      : `Launch a web assistant to capture and answer leads 24/7. Available on ${tier}.`,
+      ? `Activa el asistente AI en tu sitio web para captar consultas y resolver preguntas frecuentes las 24 horas. Disponible en ${tier}.`
+      : `Activate the AI assistant on your website to capture inquiries and resolve FAQs around the clock. Available on ${tier}.`,
   };
   return map[id] || (isEs ? `Disponible en ${tier}.` : `Available on ${tier}.`);
 };

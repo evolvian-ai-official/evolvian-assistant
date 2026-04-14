@@ -8,6 +8,7 @@ from api.modules.assistant_rag.supabase_client import supabase  # ✅ import cor
 from api.authz import authorize_client_request
 
 router = APIRouter()
+REQUIRED_ONBOARDING_PROFILE_FIELDS = ("industry", "discovery_source")
 
 
 def _parse_accepted_at(raw_value: str | None) -> datetime | None:
@@ -29,6 +30,36 @@ def _terms_valid_days() -> int:
     except ValueError:
         return 0
     return max(0, days)
+
+
+def _missing_required_onboarding_fields(profile_row: dict | None) -> list[str]:
+    if not profile_row:
+        return list(REQUIRED_ONBOARDING_PROFILE_FIELDS)
+
+    missing_fields = []
+    for field in REQUIRED_ONBOARDING_PROFILE_FIELDS:
+        value = profile_row.get(field)
+        if value is None:
+            missing_fields.append(field)
+            continue
+        if isinstance(value, str) and not value.strip():
+            missing_fields.append(field)
+    return missing_fields
+
+
+def _get_client_profile_row(client_id: str) -> dict | None:
+    response = (
+        supabase.table("client_profile")
+        .select("industry, discovery_source")
+        .eq("client_id", client_id)
+        .maybe_single()
+        .execute()
+    )
+
+    data = response.data
+    if isinstance(data, list):
+        return data[0] if data else None
+    return data or None
 
 # 📦 Modelo para payload de aceptación
 class AcceptTermsPayload(BaseModel):
@@ -158,6 +189,18 @@ def should_show_welcome(request: Request, client_id: str = Query(...)):
     """
     try:
         authorize_client_request(request, client_id)
+        def profile_gate_response():
+            missing_fields = _missing_required_onboarding_fields(
+                _get_client_profile_row(client_id)
+            )
+            if missing_fields:
+                return {
+                    "show": True,
+                    "reason": "missing_profile_fields",
+                    "missing_fields": missing_fields,
+                }
+            return None
+
         response = (
             supabase.table("client_terms_acceptance")
             .select("accepted_at, version, accepted")
@@ -185,15 +228,24 @@ def should_show_welcome(request: Request, client_id: str = Query(...)):
             return {"show": True, "reason": "missing_accepted_at"}
 
         if validity_days <= 0:
+            profile_gate = profile_gate_response()
+            if profile_gate:
+                return profile_gate
             return {"show": False, "reason": "accepted_no_expiry"}
 
         accepted_dt = _parse_accepted_at(accepted_at)
         if not accepted_dt:
+            profile_gate = profile_gate_response()
+            if profile_gate:
+                return profile_gate
             return {"show": False, "reason": "accepted_unparseable_timestamp"}
 
         days_since = (now - accepted_dt).days
         if days_since >= validity_days:
             return {"show": True, "reason": "expired", "days_since": days_since, "valid_days": validity_days}
+        profile_gate = profile_gate_response()
+        if profile_gate:
+            return profile_gate
         return {"show": False, "days_remaining": max(0, validity_days - days_since)}
 
     except HTTPException:

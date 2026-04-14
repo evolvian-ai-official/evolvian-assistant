@@ -529,7 +529,7 @@ def get_client_settings(
             plan = {
                 "id": "free",
                 "name": "Free",
-                "max_messages": 100,
+                "max_messages": 500,
                 "max_documents": 3,
                 "supports_chat": True,
                 "supports_email": False,

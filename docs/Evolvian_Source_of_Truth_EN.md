@@ -28,7 +28,7 @@ It's a great fit if you are:
 - A sales or support team that wants consistent answers at scale without hiring more staff
 - An operations team that needs a reliable, always-available assistant across multiple channels
 
-Whether you handle 100 or 5,000 customer conversations a month, Evolvian grows with you.
+Whether you handle a few hundred or thousands of customer conversations a month, Evolvian grows with you.
 
 ---
 
@@ -64,8 +64,8 @@ Your assistant can collect customer names, emails, phone numbers, and inquiry de
 
 | Plan | Price | Messages/month | Documents | What's included |
 |---|---|---:|---:|---|
-| Free | $0 USD/mo | 100 | 1 | Dashboard access, website chat widget |
-| Starter | $19 USD/mo | 1,000 | 1 | Everything in Free + WhatsApp integration setup support |
+| Free | $0 USD/mo | 500 | 3 | Dashboard access, website chat widget |
+| Starter | $19 USD/mo | 2,000 | 3 | Everything in Free + WhatsApp integration setup support |
 | Premium | $49 USD/mo | 5,000 | 3 | Everything in Starter + custom assistant name & prompt + advanced widget settings + WhatsApp appointment booking & reminders |
 | White Label | Custom pricing | Unlimited | Unlimited | Everything in Premium + dedicated setup support + priority assistance + enterprise-scale rollout |
 
@@ -111,7 +111,7 @@ After setting up your assistant, your dashboard gives you a code snippet to past
 PDF and TXT files are supported.
 
 **How many documents can I upload?**
-It depends on your plan. Free and Starter plans include 1 document. Premium includes 3 documents. White Label has no limit.
+Free, Starter, and Premium include up to 3 documents. White Label has no limit.
 
 **Does Evolvian work in English and Spanish?**
 Yes. Evolvian supports both English and Spanish. The assistant automatically detects the language the customer is writing in and responds in the same language.
@@ -124,7 +124,7 @@ Yes. Evolvian supports both English and Spanish. The assistant automatically det
 Plans start at $0/month (Free). Starter is $19/month, Premium is $49/month. White Label has custom pricing based on your needs. You can upgrade at any time from your dashboard.
 
 **Can I try Evolvian for free?**
-Yes. The Free plan lets you test the platform with up to 100 messages per month and 1 document. No credit card is needed to get started.
+Yes. The Free plan lets you test the platform with up to 500 messages per month and 3 documents. No credit card is needed to get started.
 
 **Can I upgrade or downgrade my plan at any time?**
 Yes. You can change your plan from your dashboard whenever you want. There are no long-term contracts.

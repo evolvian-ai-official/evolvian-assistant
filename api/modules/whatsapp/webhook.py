@@ -6,7 +6,7 @@ import re
 import hashlib
 import uuid
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from api.modules.assistant_rag.rag_pipeline import handle_message
@@ -450,6 +450,42 @@ def _log_marketing_interest_event(
         )
 
 
+def _log_marketing_reply_event(
+    *,
+    client_id: str,
+    campaign_id: Optional[str],
+    recipient_key: Optional[str],
+    provider_message_id: Optional[str],
+    handoff_id: Optional[str],
+) -> None:
+    normalized_campaign_id = str(campaign_id or "").strip()
+    normalized_recipient_key = str(recipient_key or "").strip()
+    if not normalized_campaign_id:
+        return
+    metadata: dict[str, Any] = {"reply_source": "whatsapp_campaign"}
+    if provider_message_id:
+        metadata["provider_message_id"] = provider_message_id
+    if handoff_id:
+        metadata["handoff_id"] = handoff_id
+    try:
+        supabase.table("marketing_campaign_events").insert(
+            {
+                "client_id": client_id,
+                "campaign_id": normalized_campaign_id,
+                "recipient_key": normalized_recipient_key or None,
+                "event_type": "interest",
+                "metadata": metadata,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+    except Exception:
+        logger.exception(
+            "❌ Failed logging marketing reply event | client_id=%s | campaign_id=%s",
+            client_id,
+            normalized_campaign_id,
+        )
+
+
 def _compact_meta_status_error(status_item: dict) -> Optional[str]:
     errors = status_item.get("errors")
     if not isinstance(errors, list) or not errors:
@@ -580,6 +616,28 @@ def _phone_candidates(from_number: str) -> list[str]:
 
     # Orden estable para facilitar debugging
     return sorted(candidates, key=lambda x: (len(x), x))
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _is_recent_campaign_reply_window(row: Optional[dict], *, max_age_hours: int = 24) -> bool:
+    if not isinstance(row, dict) or not row:
+        return False
+    reference_ts = _parse_iso_datetime(row.get("sent_at")) or _parse_iso_datetime(row.get("updated_at"))
+    if not reference_ts:
+        return False
+    return (datetime.now(timezone.utc) - reference_ts) <= timedelta(hours=max_age_hours)
 
 
 def _is_cancel_action(message_type: str, message: dict, user_text: str | None) -> bool:
@@ -937,10 +995,16 @@ async def process_whatsapp_payload(payload: dict):
                 from_number=from_number,
                 context_message_id=context_message_id,
             )
+            active_campaign_reply_row = (
+                recent_marketing_row
+                if recent_marketing_row and (context_message_id or _is_recent_campaign_reply_window(recent_marketing_row))
+                else None
+            )
             logger.info(
-                "Meta marketing context resolved | message_fp=%s | has_recent_campaign=%s | campaign_ref=%s",
+                "Meta marketing context resolved | message_fp=%s | has_recent_campaign=%s | active_reply_window=%s | campaign_ref=%s",
                 _safe_hash(wa_message_id),
                 bool(recent_marketing_row),
+                bool(active_campaign_reply_row),
                 _safe_tail((recent_marketing_row or {}).get("campaign_id")),
             )
             known_opt_out_labels = _load_campaign_opt_out_labels(
@@ -1005,86 +1069,6 @@ async def process_whatsapp_payload(payload: dict):
                     )
                 continue
 
-            if recent_marketing_row and _is_marketing_interest_action(
-                message_type=message_type,
-                user_text=user_text,
-                known_opt_out_labels=known_opt_out_labels,
-            ):
-                handoff_info: dict[str, Any] = {}
-                try:
-                    # Local import keeps webhook load fast and avoids startup coupling.
-                    from api.modules.assistant_rag import intent_router as _intent_router
-
-                    handoff_info = _intent_router._upsert_whatsapp_handoff(
-                        client_id=client_id,
-                        session_id=session_id,
-                        user_message=user_text,
-                        ai_message="",
-                        trigger="campaign_interest_button",
-                        reason="campaign_interest",
-                        language=_resolve_interest_language(user_text),
-                        metadata_origin="marketing_campaign",
-                        metadata_extra={
-                            "campaign_id": (recent_marketing_row or {}).get("campaign_id"),
-                            "recipient_key": (recent_marketing_row or {}).get("recipient_key"),
-                        },
-                        alert_type="human_intervention",
-                        alert_priority="high",
-                        alert_title="Prospect interested in campaign",
-                    )
-                    logger.info(
-                        "Meta campaign-interest handoff result | message_fp=%s | campaign_ref=%s | handoff_ref=%s | reused=%s | alert_created=%s | feature_enabled=%s",
-                        _safe_hash(wa_message_id),
-                        _safe_tail((recent_marketing_row or {}).get("campaign_id")),
-                        _safe_tail((handoff_info or {}).get("handoff_id")),
-                        bool((handoff_info or {}).get("reused")),
-                        bool((handoff_info or {}).get("alert_created")),
-                        bool((handoff_info or {}).get("feature_enabled")),
-                    )
-                except Exception as handoff_error:
-                    logger.exception(
-                        "❌ Failed creating campaign-interest handoff | client_ref=%s | session_fp=%s | err=%s",
-                        _safe_tail(client_id),
-                        _safe_hash(session_id),
-                        handoff_error,
-                    )
-
-                _log_marketing_interest_event(
-                    client_id=client_id,
-                    campaign_id=(recent_marketing_row or {}).get("campaign_id"),
-                    recipient_key=(recent_marketing_row or {}).get("recipient_key"),
-                    provider_message_id=context_message_id or (recent_marketing_row or {}).get("provider_message_id"),
-                    handoff_id=(handoff_info or {}).get("handoff_id"),
-                )
-                upsert_marketing_contact_state(
-                    supabase_client=supabase,
-                    client_id=client_id,
-                    email=(recent_marketing_row or {}).get("email"),
-                    phone=(recent_marketing_row or {}).get("phone") or from_number,
-                    whatsapp_opt_in=True,
-                    interest_status="interested",
-                )
-
-                if (handoff_info or {}).get("handoff_id"):
-                    interest_ack = (
-                        "Thanks for your interest. A human advisor will continue with you here."
-                        if _resolve_interest_language(user_text) == "en"
-                        else "Gracias por tu interés. Un asesor humano continuará contigo por este mismo chat."
-                    )
-                else:
-                    interest_ack = (
-                        "Thanks, we got your message. Our team will follow up shortly."
-                        if _resolve_interest_language(user_text) == "en"
-                        else "Gracias, recibimos tu mensaje. Nuestro equipo te dará seguimiento en breve."
-                    )
-
-                await send_whatsapp_message(
-                    to_number=from_number,
-                    text=interest_ack,
-                    channel=channel,
-                )
-                continue
-
             # ---------------------------------------------------------
             # Cancelación directa desde botón rápido
             # ---------------------------------------------------------
@@ -1112,6 +1096,114 @@ async def process_whatsapp_payload(payload: dict):
                     await send_whatsapp_message(
                         to_number=from_number,
                         text=cancel_msg,
+                        channel=channel,
+                    )
+                continue
+
+            explicit_interest = bool(recent_marketing_row) and _is_marketing_interest_action(
+                message_type=message_type,
+                user_text=user_text,
+                known_opt_out_labels=known_opt_out_labels,
+            )
+            campaign_reply_row = recent_marketing_row if explicit_interest else active_campaign_reply_row
+            if campaign_reply_row:
+                handoff_info: dict[str, Any] = {}
+                reply_language = _resolve_interest_language(user_text)
+                trigger = "campaign_reply"
+                if explicit_interest and message_type in {"interactive", "button"}:
+                    trigger = "campaign_interest_button"
+                elif explicit_interest:
+                    trigger = "campaign_interest_text"
+
+                try:
+                    # Local import keeps webhook load fast and avoids startup coupling.
+                    from api.modules.assistant_rag import intent_router as _intent_router
+
+                    handoff_info = _intent_router._upsert_whatsapp_handoff(
+                        client_id=client_id,
+                        session_id=session_id,
+                        user_message=user_text,
+                        ai_message="",
+                        trigger=trigger,
+                        reason="campaign_interest",
+                        language=reply_language,
+                        metadata_origin="marketing_campaign",
+                        metadata_extra={
+                            "campaign_id": (campaign_reply_row or {}).get("campaign_id"),
+                            "recipient_key": (campaign_reply_row or {}).get("recipient_key"),
+                            "reply_type": "explicit_interest" if explicit_interest else "reply",
+                        },
+                        alert_type="human_intervention",
+                        alert_priority="high",
+                        alert_title="Prospect interested in campaign",
+                    )
+                    logger.info(
+                        "Meta campaign reply handoff result | message_fp=%s | campaign_ref=%s | trigger=%s | handoff_ref=%s | reused=%s | alert_created=%s | feature_enabled=%s",
+                        _safe_hash(wa_message_id),
+                        _safe_tail((campaign_reply_row or {}).get("campaign_id")),
+                        trigger,
+                        _safe_tail((handoff_info or {}).get("handoff_id")),
+                        bool((handoff_info or {}).get("reused")),
+                        bool((handoff_info or {}).get("alert_created")),
+                        bool((handoff_info or {}).get("feature_enabled")),
+                    )
+                except Exception as handoff_error:
+                    logger.exception(
+                        "❌ Failed creating campaign reply handoff | client_ref=%s | session_fp=%s | err=%s",
+                        _safe_tail(client_id),
+                        _safe_hash(session_id),
+                        handoff_error,
+                    )
+
+                if not bool((handoff_info or {}).get("reused")):
+                    if explicit_interest:
+                        _log_marketing_interest_event(
+                            client_id=client_id,
+                            campaign_id=(campaign_reply_row or {}).get("campaign_id"),
+                            recipient_key=(campaign_reply_row or {}).get("recipient_key"),
+                            provider_message_id=context_message_id or (campaign_reply_row or {}).get("provider_message_id"),
+                            handoff_id=(handoff_info or {}).get("handoff_id"),
+                        )
+                    else:
+                        _log_marketing_reply_event(
+                            client_id=client_id,
+                            campaign_id=(campaign_reply_row or {}).get("campaign_id"),
+                            recipient_key=(campaign_reply_row or {}).get("recipient_key"),
+                            provider_message_id=context_message_id or (campaign_reply_row or {}).get("provider_message_id"),
+                            handoff_id=(handoff_info or {}).get("handoff_id"),
+                        )
+                    upsert_marketing_contact_state(
+                        supabase_client=supabase,
+                        client_id=client_id,
+                        email=(campaign_reply_row or {}).get("email"),
+                        phone=(campaign_reply_row or {}).get("phone") or from_number,
+                        whatsapp_opt_in=True,
+                        interest_status="interested",
+                    )
+
+                if bool((handoff_info or {}).get("reused")):
+                    logger.info(
+                        "Meta campaign reply handoff already active; skipping auto-ack | message_fp=%s | campaign_ref=%s",
+                        _safe_hash(wa_message_id),
+                        _safe_tail((campaign_reply_row or {}).get("campaign_id")),
+                    )
+                else:
+                    if (handoff_info or {}).get("handoff_id"):
+                        interest_ack = (
+                            "Thanks for your interest. A human advisor will continue with you here."
+                            if reply_language == "en"
+                            else "Gracias por tu interés. Un asesor humano continuará contigo por este mismo chat."
+                        )
+                    else:
+                        interest_ack = (
+                            "Thanks, we got your message. Our team will follow up shortly."
+                            if reply_language == "en"
+                            else "Gracias, recibimos tu mensaje. Nuestro equipo te dará seguimiento en breve."
+                        )
+
+                    await send_whatsapp_message(
+                        to_number=from_number,
+                        text=interest_ack,
                         channel=channel,
                     )
                 continue

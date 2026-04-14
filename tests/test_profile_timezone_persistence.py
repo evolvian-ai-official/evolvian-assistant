@@ -138,6 +138,35 @@ def test_complete_onboarding_with_timezone_upserts_timezone(monkeypatch):
     assert timezone_writes[0]["payload"]["timezone"] == "America/New_York"
 
 
+def test_complete_onboarding_persists_business_sector_and_discovery_source(monkeypatch):
+    from api.routes import onboarding
+
+    fake_supabase = _FakeSupabase()
+    monkeypatch.setattr(onboarding, "supabase", fake_supabase)
+    monkeypatch.setattr(onboarding, "authorize_client_request", lambda _request, _client_id: None)
+
+    payload = onboarding.CompleteOnboardingRequest(
+        client_id="client-1",
+        profile=onboarding.ProfileData(
+            contact_name="Alice Doe",
+            industry="Healthcare",
+            discovery_source="Instagram",
+        ),
+        terms=onboarding.TermsData(accepted=True, accepted_marketing=False),
+    )
+
+    result = asyncio.run(onboarding.complete_onboarding(payload, _DummyRequest()))
+    assert result["success"] is True
+
+    profile_writes = [
+        call for call in fake_supabase.state["calls"]
+        if call["table"] == "client_profile" and call["op"] == "upsert"
+    ]
+    assert len(profile_writes) == 1
+    assert profile_writes[0]["payload"]["industry"] == "Healthcare"
+    assert profile_writes[0]["payload"]["discovery_source"] == "Instagram"
+
+
 def test_client_settings_language_update_does_not_apply_model_defaults(monkeypatch):
     import api.client_settings_api as client_settings_api
 
