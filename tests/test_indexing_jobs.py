@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
+import os
 
 
 class _FakeTable:
@@ -78,7 +80,7 @@ def test_reindex_stale_clients_returns_locked_status(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr(indexing_jobs, "_reindex_lock", lambda: _LockedContext())
+    monkeypatch.setattr(indexing_jobs, "_reindex_lock", lambda **_kwargs: _LockedContext())
 
     result = indexing_jobs.reindex_stale_clients(
         indexing_jobs.ReindexBatchPayload(),
@@ -132,7 +134,7 @@ def test_reindex_stale_clients_reindexes_selected_batch(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr(indexing_jobs, "_reindex_lock", lambda: _UnlockedContext())
+    monkeypatch.setattr(indexing_jobs, "_reindex_lock", lambda **_kwargs: _UnlockedContext())
 
     result = indexing_jobs.reindex_stale_clients(
         indexing_jobs.ReindexBatchPayload(max_clients=2, only_at_risk=False),
@@ -198,3 +200,43 @@ def test_reindex_stale_clients_reports_cooldown_when_only_failed_clients_are_ski
     assert result["status"] == "cooldown"
     assert result["selected_client_ids"] == []
     assert result["skipped_due_to_recent_failures"] == ["client-stuck"]
+
+
+def test_reindex_lock_reclaims_stale_lock(monkeypatch, tmp_path):
+    from api.internal import indexing_jobs
+
+    stale_lock_path = tmp_path / ".reindex-batch.lock"
+    stale_lock_path.write_text(
+        (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(indexing_jobs, "get_base_data_path", lambda: str(tmp_path))
+    monkeypatch.setattr(indexing_jobs, "LOCK_STALE_AFTER_MINUTES", 15)
+
+    with indexing_jobs._reindex_lock(selected_client_ids=["client-1"]):
+        state = indexing_jobs._load_lock_state()
+        assert state is not None
+        assert state["selected_client_ids"] == ["client-1"]
+        assert state["format"] == "json"
+
+    assert not stale_lock_path.exists()
+
+
+def test_reindex_lock_treats_old_empty_lock_as_stale(monkeypatch, tmp_path):
+    from api.internal import indexing_jobs
+
+    stale_lock_path = tmp_path / ".reindex-batch.lock"
+    stale_lock_path.write_text("", encoding="utf-8")
+    old_timestamp = datetime.now(timezone.utc) - timedelta(minutes=25)
+    os.utime(stale_lock_path, (old_timestamp.timestamp(), old_timestamp.timestamp()))
+
+    monkeypatch.setattr(indexing_jobs, "get_base_data_path", lambda: str(tmp_path))
+    monkeypatch.setattr(indexing_jobs, "LOCK_STALE_AFTER_MINUTES", 15)
+
+    with indexing_jobs._reindex_lock(selected_client_ids=["client-2"]):
+        state = indexing_jobs._load_lock_state()
+        assert state is not None
+        assert state["selected_client_ids"] == ["client-2"]
+
+    assert not stale_lock_path.exists()

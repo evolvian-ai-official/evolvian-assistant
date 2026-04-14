@@ -28,6 +28,9 @@ router = APIRouter(
 FAILED_CLIENT_COOLDOWN_MINUTES = int(
     os.getenv("EVOLVIAN_REINDEX_FAILURE_COOLDOWN_MINUTES") or "30"
 )
+LOCK_STALE_AFTER_MINUTES = int(
+    os.getenv("EVOLVIAN_REINDEX_LOCK_STALE_MINUTES") or "15"
+)
 
 
 class ReindexBatchPayload(BaseModel):
@@ -49,6 +52,10 @@ def _runtime_context() -> dict:
         ),
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _failure_state_path() -> Path:
@@ -94,7 +101,7 @@ def _filter_retryable_client_ids(client_ids: list[str]) -> tuple[list[str], list
     if not state:
         return client_ids, []
 
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     cooldown = timedelta(minutes=FAILED_CLIENT_COOLDOWN_MINUTES)
     selected: list[str] = []
     skipped: list[str] = []
@@ -122,7 +129,7 @@ def _remember_reindex_results(results: list[dict]) -> None:
         if result.get("status") == "partial_failure":
             previous = state.get(client_id) or {}
             state[client_id] = {
-                "last_failed_at": datetime.now(timezone.utc).isoformat(),
+                "last_failed_at": _utcnow().isoformat(),
                 "failed_paths": list(result.get("failed_paths") or []),
                 "docs_failed": int(result.get("docs_failed") or 0),
                 "consecutive_failures": int(previous.get("consecutive_failures") or 0) + 1,
@@ -188,14 +195,109 @@ def _lock_path() -> Path:
     return Path(get_base_data_path()) / ".reindex-batch.lock"
 
 
-@contextmanager
-def _reindex_lock():
+def _load_lock_state() -> dict | None:
     lock_path = _lock_path()
+    if not lock_path.exists():
+        return None
+
     try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(datetime.now(timezone.utc).isoformat())
-    except FileExistsError:
+        stat = lock_path.stat()
+        file_mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+    except Exception:
+        file_mtime = None
+
+    try:
+        raw_content = lock_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return {
+            "lock_path": str(lock_path),
+            "read_error": True,
+            "file_mtime": file_mtime,
+        }
+
+    if not raw_content:
+        return {
+            "lock_path": str(lock_path),
+            "acquired_at": None,
+            "selected_client_ids": [],
+            "format": "empty",
+            "file_mtime": file_mtime,
+        }
+
+    try:
+        parsed = json.loads(raw_content)
+        if isinstance(parsed, dict):
+            state = dict(parsed)
+            state.setdefault("selected_client_ids", [])
+            state["lock_path"] = str(lock_path)
+            state["format"] = "json"
+            state["file_mtime"] = file_mtime
+            return state
+    except Exception:
+        pass
+
+    parsed_timestamp = _parse_iso_timestamp(raw_content)
+    return {
+        "lock_path": str(lock_path),
+        "acquired_at": parsed_timestamp.isoformat() if parsed_timestamp else raw_content,
+        "selected_client_ids": [],
+        "format": "legacy_text",
+        "file_mtime": file_mtime,
+    }
+
+
+def _lock_age_seconds(lock_state: dict | None) -> float | None:
+    if not lock_state:
+        return None
+    acquired_at = _parse_iso_timestamp(lock_state.get("acquired_at")) or _parse_iso_timestamp(
+        lock_state.get("file_mtime")
+    )
+    if not acquired_at:
+        return None
+    age = (_utcnow() - acquired_at).total_seconds()
+    return max(age, 0.0)
+
+
+def _is_lock_stale(lock_state: dict | None) -> bool:
+    age_seconds = _lock_age_seconds(lock_state)
+    if age_seconds is None:
+        return False
+    return age_seconds >= LOCK_STALE_AFTER_MINUTES * 60
+
+
+def _write_lock_state(handle, *, selected_client_ids: list[str]) -> None:
+    state = {
+        "acquired_at": _utcnow().isoformat(),
+        "selected_client_ids": list(selected_client_ids),
+        "pid": os.getpid(),
+    }
+    handle.write(json.dumps(state, ensure_ascii=True, sort_keys=True))
+    handle.flush()
+
+
+@contextmanager
+def _reindex_lock(*, selected_client_ids: list[str] | None = None):
+    lock_path = _lock_path()
+    acquired = False
+
+    for _attempt in range(2):
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                _write_lock_state(handle, selected_client_ids=selected_client_ids or [])
+            acquired = True
+            break
+        except FileExistsError:
+            lock_state = _load_lock_state()
+            if _is_lock_stale(lock_state):
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except Exception:
+                    raise HTTPException(status_code=409, detail="reindex_batch_already_running")
+                continue
+            raise HTTPException(status_code=409, detail="reindex_batch_already_running")
+
+    if not acquired:
         raise HTTPException(status_code=409, detail="reindex_batch_already_running")
 
     try:
@@ -214,6 +316,7 @@ def get_indexing_health(request: Request):
         "runtime": _runtime_context(),
         "audit": audit_document_index_health(),
         "recent_failures": _load_failure_state(),
+        "active_lock": _load_lock_state(),
     }
 
 
@@ -234,7 +337,7 @@ def reindex_stale_clients(payload: ReindexBatchPayload, request: Request):
         }
 
     try:
-        with _reindex_lock():
+        with _reindex_lock(selected_client_ids=target_client_ids):
             results = [reindex_client(client_id) for client_id in target_client_ids]
             _remember_reindex_results(results)
     except HTTPException as error:
@@ -244,6 +347,7 @@ def reindex_stale_clients(payload: ReindexBatchPayload, request: Request):
                 "runtime": _runtime_context(),
                 "selected_client_ids": target_client_ids,
                 "skipped_due_to_recent_failures": skipped_client_ids,
+                "active_lock": _load_lock_state(),
                 "results": [],
             }
         raise
