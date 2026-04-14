@@ -34,6 +34,7 @@ class _FakeSupabase:
 def test_select_target_client_ids_prefers_at_risk_clients(monkeypatch):
     from api.internal import indexing_jobs
 
+    monkeypatch.setattr(indexing_jobs, "_filter_retryable_client_ids", lambda ids: (ids, []))
     monkeypatch.setattr(
         indexing_jobs,
         "audit_document_index_health",
@@ -58,8 +59,11 @@ def test_reindex_stale_clients_returns_locked_status(monkeypatch):
     monkeypatch.setattr(indexing_jobs, "require_internal_request", lambda _request: None)
     monkeypatch.setattr(
         indexing_jobs,
-        "_select_target_client_ids",
-        lambda _payload: ["client-1"],
+        "_select_target_client_ids_with_context",
+        lambda _payload: {
+            "selected_client_ids": ["client-1"],
+            "skipped_due_to_recent_failures": [],
+        },
     )
     monkeypatch.setattr(
         indexing_jobs,
@@ -107,6 +111,7 @@ def test_reindex_stale_clients_reindexes_selected_batch(monkeypatch):
         "audit_document_index_health",
         lambda: {"at_risk_clients": []},
     )
+    monkeypatch.setattr(indexing_jobs, "_filter_retryable_client_ids", lambda ids: (ids, []))
     monkeypatch.setattr(
         indexing_jobs,
         "_runtime_context",
@@ -137,3 +142,59 @@ def test_reindex_stale_clients_reindexes_selected_batch(monkeypatch):
     assert result["status"] == "success"
     assert result["selected_client_ids"] == ["client-1", "client-2"]
     assert calls == ["client-1", "client-2"]
+
+
+def test_select_target_client_ids_skips_recent_failures(monkeypatch):
+    from api.internal import indexing_jobs
+
+    monkeypatch.setattr(
+        indexing_jobs,
+        "audit_document_index_health",
+        lambda: {
+            "at_risk_clients": [
+                {"client_id": "client-a"},
+                {"client_id": "client-b"},
+                {"client_id": "client-c"},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        indexing_jobs,
+        "_filter_retryable_client_ids",
+        lambda ids: ([client_id for client_id in ids if client_id != "client-a"], ["client-a"]),
+    )
+
+    result = indexing_jobs._select_target_client_ids_with_context(
+        indexing_jobs.ReindexBatchPayload(max_clients=2, only_at_risk=True)
+    )
+
+    assert result["selected_client_ids"] == ["client-b", "client-c"]
+    assert result["skipped_due_to_recent_failures"] == ["client-a"]
+
+
+def test_reindex_stale_clients_reports_cooldown_when_only_failed_clients_are_skipped(monkeypatch):
+    from api.internal import indexing_jobs
+
+    monkeypatch.setattr(indexing_jobs, "require_internal_request", lambda _request: None)
+    monkeypatch.setattr(
+        indexing_jobs,
+        "_select_target_client_ids_with_context",
+        lambda _payload: {
+            "selected_client_ids": [],
+            "skipped_due_to_recent_failures": ["client-stuck"],
+        },
+    )
+    monkeypatch.setattr(
+        indexing_jobs,
+        "_runtime_context",
+        lambda: {"base_data_path": "/tmp/evolvian"},
+    )
+
+    result = indexing_jobs.reindex_stale_clients(
+        indexing_jobs.ReindexBatchPayload(),
+        request=SimpleNamespace(),
+    )
+
+    assert result["status"] == "cooldown"
+    assert result["selected_client_ids"] == []
+    assert result["skipped_due_to_recent_failures"] == ["client-stuck"]
