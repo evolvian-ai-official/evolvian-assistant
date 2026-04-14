@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 import os
 
 router = APIRouter()
+NOINDEX_SEARCH_HEADER = "noindex, nofollow, noarchive, nosnippet"
 
 # 📂 Directorio base de archivos estáticos
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static")
@@ -13,7 +14,8 @@ async def serve_widget():
     return FileResponse(
         os.path.join(STATIC_DIR, "widget.html"),
         headers={
-            "Content-Security-Policy": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;"
+            "Content-Security-Policy": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;",
+            "X-Robots-Tag": NOINDEX_SEARCH_HEADER,
         },
         media_type="text/html",
     )

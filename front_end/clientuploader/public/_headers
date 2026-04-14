@@ -1,4 +1,8 @@
+/*
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
 /widget.html
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
   Content-Security-Policy: 
     default-src 'self';
     script-src 'self' https://sqqyamhzfgpisqjrqsjf.supabase.co;
@@ -7,3 +11,12 @@
     font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com;
     connect-src 'self' https://evolvian-assistant.onrender.com https://sqqyamhzfgpisqjrqsjf.supabase.co;
     frame-src 'self' https://sqqyamhzfgpisqjrqsjf.supabase.co;
+
+/chat-widget.html
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/test.html
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+
+/examples/*
+  X-Robots-Tag: noindex, nofollow, noarchive, nosnippet

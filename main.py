@@ -313,6 +313,7 @@ app.add_middleware(
 
 # 📂 Static
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+NOINDEX_SEARCH_HEADER = "noindex, nofollow, noarchive, nosnippet"
 class CORSMiddlewareStatic(StaticFiles):
     async def get_response(self, path, scope):
         response: Response = await super().get_response(path, scope)
@@ -328,6 +329,8 @@ class CORSMiddlewareStatic(StaticFiles):
         else:
             # Keep hashed assets cacheable for performance.
             response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+        if normalized_path.endswith(".html"):
+            response.headers["X-Robots-Tag"] = NOINDEX_SEARCH_HEADER
         return response
 
 app.mount("/static", CORSMiddlewareStatic(directory=STATIC_DIR), name="static")
