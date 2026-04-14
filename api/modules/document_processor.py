@@ -1,5 +1,5 @@
+import gc
 import requests
-from io import BytesIO
 from langchain_community.document_loaders import (
     PyPDFLoader,
     TextLoader,
@@ -10,6 +10,15 @@ from api.modules.chroma_indexer import save_to_chroma
 import logging
 import tempfile
 import os
+
+
+def _guess_temp_suffix(file_url: str, content_type: str) -> str:
+    content_type = (content_type or "").lower()
+    if ".pdf" in (file_url or "").lower() or "pdf" in content_type:
+        return ".pdf"
+    if ".txt" in (file_url or "").lower() or "text/plain" in content_type:
+        return ".txt"
+    return ".bin"
 
 
 def load_pdf_with_fallback(file_path: str):
@@ -42,16 +51,24 @@ def load_pdf_with_fallback(file_path: str):
     raise Exception("❌ No se pudo extraer texto del PDF con ningún loader")
 
 
-def process_file(file_url: str, client_id: str, storage_path: str | None = None):
+def process_file(
+    file_url: str,
+    client_id: str,
+    storage_path: str | None = None,
+    return_chunks: bool = True,
+):
     """
     Descarga un archivo desde Supabase, lo procesa, divide en chunks
     y lo guarda en Chroma de forma aislada por cliente.
     """
+    response = None
     tmp_file_path = None
+    docs = None
+    chunks = None
 
     try:
         logging.info(f"📥 Descargando archivo desde: {file_url}")
-        response = requests.get(file_url)
+        response = requests.get(file_url, stream=True, timeout=60)
 
         if response.status_code != 200:
             raise Exception(
@@ -60,22 +77,21 @@ def process_file(file_url: str, client_id: str, storage_path: str | None = None)
             )
 
         content_type = response.headers.get("content-type", "")
-        file_bytes = response.content
+        suffix = _guess_temp_suffix(file_url, content_type)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    tmp_file.write(chunk)
+            tmp_file_path = tmp_file.name
 
         # --------------------------------------------------
         # 📄 Carga del documento
         # --------------------------------------------------
         if ".pdf" in file_url.lower() or "pdf" in content_type.lower():
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                tmp_file.write(file_bytes)
-                tmp_file_path = tmp_file.name
-
             docs = load_pdf_with_fallback(tmp_file_path)
         else:
-            loader = TextLoader(
-                file_path_or_file=BytesIO(file_bytes),
-                encoding="utf-8"
-            )
+            loader = TextLoader(tmp_file_path, encoding="utf-8")
             docs = loader.load()
 
         logging.info(f"📄 Documento cargado: {len(docs)} páginas/secciones")
@@ -112,13 +128,23 @@ def process_file(file_url: str, client_id: str, storage_path: str | None = None)
         # --------------------------------------------------
         save_to_chroma(chunks, client_id)
 
-        return chunks
+        if return_chunks:
+            return chunks
+        return None
 
     except Exception as e:
         logging.exception(f"❌ Error procesando el documento para {client_id}")
         raise e
 
     finally:
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                logging.warning("⚠️ Could not close streamed response cleanly")
+        docs = None
+        chunks = None
+        gc.collect()
         if tmp_file_path and os.path.exists(tmp_file_path):
             os.remove(tmp_file_path)
             logging.info(f"🗑️ Archivo temporal eliminado: {tmp_file_path}")

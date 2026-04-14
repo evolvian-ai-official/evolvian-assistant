@@ -326,6 +326,61 @@ def _get_active_storage_paths(client_id: str) -> set[str]:
     }
 
 
+def _filter_retrieved_docs_for_client(
+    retrieved_docs: list,
+    client_id: str,
+    active_storage_paths: set[str],
+) -> list:
+    """
+    Defensa en profundidad contra mezcla multi-tenant.
+
+    Acepta chunks solo si:
+    - pertenecen a un documento activo del cliente, y
+    - su metadata client_id coincide con el cliente actual, o bien
+      son chunks legacy sin client_id pero con storage_path bajo el prefijo del cliente.
+    """
+    filtered_docs = []
+    discarded = {
+        "missing_metadata": 0,
+        "inactive_or_unknown_storage_path": 0,
+        "wrong_client": 0,
+    }
+
+    client_prefix = f"{client_id}/"
+
+    for doc in retrieved_docs or []:
+        metadata = getattr(doc, "metadata", None)
+        if not isinstance(metadata, dict):
+            discarded["missing_metadata"] += 1
+            continue
+
+        storage_path = str(metadata.get("storage_path") or "").strip()
+        if not storage_path or storage_path not in active_storage_paths:
+            discarded["inactive_or_unknown_storage_path"] += 1
+            continue
+
+        doc_client_id = str(metadata.get("client_id") or "").strip()
+        if doc_client_id:
+            if doc_client_id != client_id:
+                discarded["wrong_client"] += 1
+                continue
+        elif not storage_path.startswith(client_prefix):
+            discarded["wrong_client"] += 1
+            continue
+
+        filtered_docs.append(doc)
+
+    if any(discarded.values()):
+        logging.warning(
+            "🔒 Retrieved docs filtered for tenant isolation | client_id=%s | kept=%s | discarded=%s",
+            client_id,
+            len(filtered_docs),
+            discarded,
+        )
+
+    return filtered_docs
+
+
 def ask_question(
     messages: Union[List[Dict[str, str]], str],
     client_id: str,
@@ -575,17 +630,13 @@ Rules:
 
         retrieved_docs = retriever.invoke(rewritten_question)
 
-        # Refuerzo: usar solo chunks asociados a documentos activos cuando exista metadata.
+        # Refuerzo: aislar solo chunks activos del cliente actual.
         active_storage_paths = _get_active_storage_paths(client_id)
-        docs_with_storage_meta = [
-            d for d in retrieved_docs
-            if isinstance(getattr(d, "metadata", None), dict) and d.metadata.get("storage_path")
-        ]
-        if docs_with_storage_meta:
-            retrieved_docs = [
-                d for d in docs_with_storage_meta
-                if str(d.metadata.get("storage_path")).strip() in active_storage_paths
-            ]
+        retrieved_docs = _filter_retrieved_docs_for_client(
+            retrieved_docs,
+            client_id=client_id,
+            active_storage_paths=active_storage_paths,
+        )
 
         if not retrieved_docs:
             if persist_history:

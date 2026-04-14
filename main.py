@@ -27,6 +27,9 @@ IS_PROD = os.getenv("ENV") == "prod"
 if not IS_PROD:
     print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
 
+if os.path.exists("/opt/render/project/src") and not os.getenv("RENDER_DISK_MOUNT_PATH"):
+    print("⚠️ Render disk is not configured. Chroma indexes will use ephemeral storage.")
+
 # ✅ Validate Supabase Key
 supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 if not supabase_key:
@@ -70,6 +73,7 @@ from api.public.marketing import router as public_marketing_router
 from api.internal.privacy_requests import router as internal_privacy_router
 from api.internal.retention_jobs import router as internal_retention_router
 from api.internal.incident_readiness import router as internal_incident_router
+from api.internal.indexing_jobs import router as internal_indexing_router
 from api.routes import reset  # Cron
 from api.routes import embed
 from api.channels import router as channels_router
@@ -353,6 +357,7 @@ routers = [
     embed_router, public_plans_router, public_contact_router, public_privacy_router,
     public_demo_router, public_marketing_router,
     internal_privacy_router, internal_retention_router, internal_incident_router,
+    internal_indexing_router,
     stripe_router, checkout_router,
     stripe_cancel_router, stripe_change_plan_router,
     reactivate_subscription_router, channels_router, register_consent_router, check_consent_router,

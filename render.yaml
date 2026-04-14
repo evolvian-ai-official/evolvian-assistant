@@ -24,14 +24,48 @@ services:
     runtime: python
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
     startCommand: "python -m uvicorn main:app --host 0.0.0.0 --port 10000"
+    disk:
+      name: evolvian-data
+      mountPath: /var/data
+      sizeGB: 10
     buildFilterPaths:
       - main.py
       - api/**
       - requirements.txt
     envVars:
+      - key: EVOLVIAN_INTERNAL_TASK_TOKEN
+        generateValue: true
       - key: OPENAI_API_KEY
         sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+
+  - type: cron
+    name: evolvian-indexing-cron
+    runtime: python
+    schedule: "* * * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -fsS -X POST
+      http://${BACKEND_HOST}:${BACKEND_PORT}/api/internal/indexing/reindex-stale
+      -H "Content-Type: application/json"
+      -H "x-evolvian-internal-token: ${EVOLVIAN_INTERNAL_TASK_TOKEN}"
+      -d '{"max_clients":1,"only_at_risk":true}'
+    envVars:
+      - key: BACKEND_HOST
+        fromService:
+          type: web
+          name: evolvian-backend
+          property: host
+      - key: BACKEND_PORT
+        fromService:
+          type: web
+          name: evolvian-backend
+          property: port
+      - key: EVOLVIAN_INTERNAL_TASK_TOKEN
+        fromService:
+          type: web
+          name: evolvian-backend
+          envVarKey: EVOLVIAN_INTERNAL_TASK_TOKEN
