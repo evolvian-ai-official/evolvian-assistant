@@ -30,6 +30,8 @@ services:
         - api/**
         - requirements.txt
     envVars:
+      - key: EVOLVIAN_DATA_PATH
+        value: /var/data
       - key: EVOLVIAN_INTERNAL_TASK_TOKEN
         generateValue: true
       - key: OPENAI_API_KEY
@@ -44,12 +46,7 @@ services:
     runtime: python
     schedule: "* * * * *"
     buildCommand: "true"
-    startCommand: >-
-      curl -fsS -X POST
-      http://${BACKEND_HOST}:${BACKEND_PORT}/api/internal/indexing/reindex-stale
-      -H "Content-Type: application/json"
-      -H "x-evolvian-internal-token: ${EVOLVIAN_INTERNAL_TASK_TOKEN}"
-      -d '{"max_clients":1,"only_at_risk":true}'
+    startCommand: "curl -fsS -X POST http://${BACKEND_HOST}:${BACKEND_PORT}/api/internal/indexing/reindex-stale -H \"Content-Type: application/json\" -H \"x-evolvian-internal-token: ${EVOLVIAN_INTERNAL_TASK_TOKEN}\" -d '{\"max_clients\":1,\"only_at_risk\":true}'"
     envVars:
       - key: BACKEND_HOST
         fromService:

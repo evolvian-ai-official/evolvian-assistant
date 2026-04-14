@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import os
 import importlib.util, sys
 import subprocess
+from api.utils.paths import get_render_persistent_mount_path, is_running_on_render
 from api.security.log_redaction import (
     install_logging_redaction,
     install_print_redaction,
@@ -27,7 +28,7 @@ IS_PROD = os.getenv("ENV") == "prod"
 if not IS_PROD:
     print("🔍 GOOGLE_CLIENT_ID:", os.getenv("GOOGLE_CLIENT_ID"))
 
-if os.path.exists("/opt/render/project/src") and not os.getenv("RENDER_DISK_MOUNT_PATH"):
+if is_running_on_render() and not get_render_persistent_mount_path():
     print("⚠️ Render disk is not configured. Chroma indexes will use ephemeral storage.")
 
 # ✅ Validate Supabase Key

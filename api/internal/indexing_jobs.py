@@ -12,7 +12,11 @@ from api.config.config import supabase
 from api.internal.audit_document_index_health import audit_document_index_health
 from api.internal.reindex_single_client import reindex_client
 from api.internal_auth import require_internal_request
-from api.utils.paths import get_base_data_path
+from api.utils.paths import (
+    get_base_data_path,
+    get_render_persistent_mount_path,
+    is_running_on_render,
+)
 
 
 router = APIRouter(
@@ -29,12 +33,15 @@ class ReindexBatchPayload(BaseModel):
 
 def _runtime_context() -> dict:
     base_data_path = get_base_data_path()
-    render_disk_mount = (os.getenv("RENDER_DISK_MOUNT_PATH") or "").strip()
+    render_disk_mount = get_render_persistent_mount_path()
     return {
         "base_data_path": base_data_path,
         "render_disk_configured": bool(render_disk_mount),
         "render_disk_mount_path": render_disk_mount or None,
-        "running_on_render": os.path.exists("/opt/render/project/src"),
+        "running_on_render": is_running_on_render(),
+        "effective_data_path_is_persistent": bool(render_disk_mount) and (
+            Path(base_data_path).resolve() == Path(render_disk_mount).resolve()
+        ),
         "snapshot_at": datetime.now(timezone.utc).isoformat(),
     }
 
