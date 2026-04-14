@@ -2,7 +2,7 @@ services:
   # 🌐 Frontend: React + Vite
   - type: web
     name: evolvian-frontend
-    env: static
+    runtime: static
     buildCommand: |
       cd front_end/clientuploader
       npm install
@@ -28,10 +28,11 @@ services:
       name: evolvian-data
       mountPath: /var/data
       sizeGB: 10
-    buildFilterPaths:
-      - main.py
-      - api/**
-      - requirements.txt
+    buildFilter:
+      paths:
+        - main.py
+        - api/**
+        - requirements.txt
     envVars:
       - key: EVOLVIAN_INTERNAL_TASK_TOKEN
         generateValue: true
