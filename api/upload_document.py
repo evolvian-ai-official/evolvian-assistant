@@ -2,6 +2,7 @@
 
 import os
 import logging
+from pathlib import Path
 import re
 import unicodedata
 import requests
@@ -10,7 +11,12 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 
 from api.config.config import supabase
 from api.authz import authorize_client_request
-from api.modules.document_processor import process_file
+from api.delete_file import delete_file_from_storage
+from api.modules.document_processor import (
+    DocumentExtractionError,
+    DocumentTooLargeError,
+    process_file,
+)
 from api.internal.reindex_single_client import reindex_client
 from api.utils.effective_plan import normalize_plan_id, resolve_effective_plan_id
 from api.utils.usage_limiter import check_and_increment_usage
@@ -19,6 +25,8 @@ router = APIRouter()
 BUCKET_NAME = "evolvian-documents"
 
 logging.basicConfig(level=logging.INFO)
+ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".txt", ".docx"}
+PDF_MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024
 
 
 # --------------------------------------------------
@@ -30,6 +38,57 @@ def sanitize_filename(filename: str) -> str:
     return name.lower()
 
 
+def _validate_upload_candidate(filename: str, content_type: str, size_bytes: int) -> None:
+    extension = Path(filename or "").suffix.lower()
+    normalized_content_type = (content_type or "").lower()
+
+    if normalized_content_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="image_uploads_not_allowed")
+
+    if extension not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="unsupported_document_type")
+
+    if extension == ".pdf" and size_bytes > PDF_MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="pdf_file_too_large")
+
+
+def _mark_document_inactive(client_id: str, storage_path: str) -> None:
+    if not client_id or not storage_path:
+        return
+
+    (
+        supabase.table("document_metadata")
+        .update({"is_active": False})
+        .eq("client_id", client_id)
+        .eq("storage_path", storage_path)
+        .eq("is_active", True)
+        .execute()
+    )
+
+
+def _deactivate_document_ids(document_ids: list[str]) -> None:
+    for document_id in document_ids:
+        (
+            supabase.table("document_metadata")
+            .update({"is_active": False})
+            .eq("id", document_id)
+            .execute()
+        )
+
+
+def _activate_document(document_id: str | None, storage_path: str) -> None:
+    query = supabase.table("document_metadata").update(
+        {"is_active": True, "indexed_at": "now()"}
+    )
+
+    if document_id:
+        query = query.eq("id", document_id)
+    else:
+        query = query.eq("storage_path", storage_path).eq("is_active", False)
+
+    query.execute()
+
+
 # --------------------------------------------------
 # 📤 Upload + metadata + index
 # --------------------------------------------------
@@ -39,6 +98,8 @@ async def upload_document(
     file: UploadFile = File(...),
     client_id: str = Form(...)
 ):
+    storage_path = ""
+    new_document_id = None
     try:
         authorize_client_request(request, client_id)
         # --------------------------------------------------
@@ -100,6 +161,7 @@ async def upload_document(
         # 3️⃣ Subir archivo a Supabase Storage
         # --------------------------------------------------
         raw_content = await file.read()
+        _validate_upload_candidate(file.filename, file.content_type, len(raw_content))
         filename = sanitize_filename(file.filename)
         storage_path = f"{client_id}/{filename}"
 
@@ -138,24 +200,16 @@ async def upload_document(
         ).data or []
 
         had_prior_active_path = bool(existing_same_path)
-        if had_prior_active_path:
-            (
-                supabase
-                .table("document_metadata")
-                .update({"is_active": False})
-                .eq("client_id", client_id)
-                .eq("storage_path", storage_path)
-                .eq("is_active", True)
-                .execute()
-            )
-
-        supabase.table("document_metadata").insert({
+        insert_result = supabase.table("document_metadata").insert({
             "client_id": client_id,
             "storage_path": storage_path,
             "file_name": filename,
             "mime_type": file.content_type,
-            "is_active": True
+            "is_active": False
         }).execute()
+        inserted_rows = insert_result.data or []
+        if inserted_rows:
+            new_document_id = inserted_rows[0].get("id")
 
         # --------------------------------------------------
         # 5️⃣ Generar signed URL
@@ -183,14 +237,15 @@ async def upload_document(
         # --------------------------------------------------
         # 7️⃣ Marcar como indexado
         # --------------------------------------------------
-        supabase.table("document_metadata") \
-            .update({"indexed_at": "now()"}) \
-            .eq("storage_path", storage_path) \
-            .eq("is_active", True) \
-            .execute()
+        _activate_document(new_document_id, storage_path)
 
         # Si hubo reemplazo de versión en el mismo path, reconstruimos índice.
         if had_prior_active_path:
+            _deactivate_document_ids([
+                str(row.get("id"))
+                for row in existing_same_path
+                if row.get("id")
+            ])
             logging.info(
                 "♻️ Existing active file replaced; rebuilding vectorstore for client %s",
                 client_id,
@@ -216,6 +271,18 @@ async def upload_document(
 
     except HTTPException:
         raise
+
+    except DocumentTooLargeError as error:
+        logging.warning("⚠️ Upload rejected for oversized document: %s", storage_path)
+        _mark_document_inactive(client_id, storage_path)
+        delete_file_from_storage(storage_path)
+        raise HTTPException(status_code=413, detail=str(error))
+
+    except DocumentExtractionError as error:
+        logging.warning("⚠️ Upload rejected for unreadable document: %s", storage_path)
+        _mark_document_inactive(client_id, storage_path)
+        delete_file_from_storage(storage_path)
+        raise HTTPException(status_code=422, detail=str(error))
 
     except Exception as e:
         logging.exception("❌ Unexpected error in /upload_document")

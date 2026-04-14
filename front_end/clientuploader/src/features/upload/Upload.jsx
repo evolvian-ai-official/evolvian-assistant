@@ -4,6 +4,10 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { authFetch } from "../../lib/authFetch";
 import "../../components/ui/internal-admin-responsive.css";
 
+const PDF_MAX_BYTES = 3 * 1024 * 1024;
+const PDF_MAX_PAGES = 400;
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".txt", ".docx"]);
+
 export default function Upload() {
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState("");
@@ -48,6 +52,50 @@ export default function Upload() {
     if (clientId) fetchFiles();
   }, [clientId]);
 
+  const getUploadErrorMessage = (detail) => {
+    if (detail === "unsupported_document_type" || detail === "image_uploads_not_allowed") {
+      return (
+        t("upload_invalid_type") ||
+        "Solo puedes subir PDF, TXT o Word (.docx). No se permiten imágenes."
+      );
+    }
+
+    if (detail === "pdf_file_too_large") {
+      return t("upload_pdf_too_large") || "Los archivos PDF no pueden exceder 3 MB.";
+    }
+
+    return detail || t("unknown_upload_error");
+  };
+
+  const validateSelectedFile = (selectedFile) => {
+    if (!selectedFile) return null;
+
+    const lowerName = String(selectedFile.name || "").toLowerCase();
+    const dotIndex = lowerName.lastIndexOf(".");
+    const extension = dotIndex >= 0 ? lowerName.slice(dotIndex) : "";
+    const contentType = String(selectedFile.type || "").toLowerCase();
+
+    if (contentType.startsWith("image/")) {
+      return (
+        t("upload_invalid_type") ||
+        "Solo puedes subir PDF, TXT o Word (.docx). No se permiten imágenes."
+      );
+    }
+
+    if (!ALLOWED_EXTENSIONS.has(extension)) {
+      return (
+        t("upload_invalid_type") ||
+        "Solo puedes subir PDF, TXT o Word (.docx). No se permiten imágenes."
+      );
+    }
+
+    if (extension === ".pdf" && selectedFile.size > PDF_MAX_BYTES) {
+      return t("upload_pdf_too_large") || "Los archivos PDF no pueden exceder 3 MB.";
+    }
+
+    return null;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -60,6 +108,13 @@ export default function Upload() {
     if (!file) {
       setMessage(t("please_select_file"));
       setMessageType("warning");
+      return;
+    }
+
+    const validationError = validateSelectedFile(file);
+    if (validationError) {
+      setMessage(validationError);
+      setMessageType("error");
       return;
     }
 
@@ -90,7 +145,7 @@ export default function Upload() {
 
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.detail || t("unknown_upload_error"));
+        throw new Error(getUploadErrorMessage(errorData?.detail));
       }
 
       const data = await res.json();
@@ -172,8 +227,24 @@ export default function Upload() {
 
               <input
                 type="file"
-                accept=".pdf,.txt"
-                onChange={(e) => setFile(e.target.files[0])}
+                accept=".pdf,.txt,.docx"
+                onChange={(e) => {
+                  const selectedFile = e.target.files?.[0] || null;
+                  const validationError = validateSelectedFile(selectedFile);
+
+                  if (validationError) {
+                    setFile(null);
+                    setMessage(validationError);
+                    setMessageType("error");
+                    e.target.value = "";
+                    return;
+                  }
+
+                  setFile(selectedFile);
+                  if (messageType === "error") {
+                    setMessage("");
+                  }
+                }}
                 disabled={limitReached}
                 className="ia-upload-input"
                 style={{
@@ -182,8 +253,10 @@ export default function Upload() {
                 }}
               />
               <p className="ia-upload-help">
-                {t("supported_formats") || "Supported formats"}: .pdf, .txt -{" "}
-                <span style={{ color: "#274472" }}>{t("max_file_size") || "Max file size"}: 10MB</span>
+                {t("supported_formats") || "Supported formats"}: .pdf, .txt, .docx -{" "}
+                <span style={{ color: "#274472" }}>
+                  {t("max_file_size") || "Max file size"}: PDF 3MB / {PDF_MAX_PAGES} {t("max_pages") || "pages max"}
+                </span>
               </p>
             </div>
 
@@ -238,8 +311,9 @@ export default function Upload() {
                 {t("tip_clear_formatting") ||
                   "Use clear, well-formatted text (avoid scans or images of text)."}
               </li>
-              <li>{t("tip_supported_formats") || "Supported formats: .pdf and .txt."}</li>
-              <li>{t("tip_size") || "Keep each file under 10MB for optimal processing."}</li>
+              <li>{t("tip_supported_formats") || "Supported formats: .pdf, .txt and .docx."}</li>
+              <li>{t("tip_size") || "PDF files must stay under 3MB for optimal processing."}</li>
+              <li>{t("tip_pages") || `PDF files should stay under ${PDF_MAX_PAGES} pages.`}</li>
               <li>
                 {t("tip_one_topic") ||
                   "Organize content by topic (one manual/policy/FAQ per file)."}

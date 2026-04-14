@@ -9,9 +9,11 @@ from langchain.schema import Document
 from api.utils.paths import get_base_data_path
 
 
+CHROMA_INGEST_BATCH_SIZE = int(os.getenv("EVOLVIAN_CHROMA_INGEST_BATCH_SIZE") or "100")
+
+
 # ✅ Factoría centralizada para crear un Chroma con OpenAI Embeddings
 def get_chroma_vectorstore(
-    chunks: List[Document],
     client_id: Optional[str] = None,
     persist: bool = True
 ) -> Chroma:
@@ -19,7 +21,6 @@ def get_chroma_vectorstore(
     Crea un vectorstore Chroma usando OpenAIEmbeddings.
     
     Args:
-        chunks (List[Document]): Lista de documentos ya divididos.
         client_id (Optional[str]): Si se pasa, se crea un directorio persistente aislado.
         persist (bool): Si True, guarda en disco. Si False, mantiene en memoria.
 
@@ -40,10 +41,9 @@ def get_chroma_vectorstore(
         collection_name = client_id
 
 
-    vectordb = Chroma.from_documents(
-        documents=chunks,
-        embedding=embedding_model,   # ✅ usa solo `embedding`
+    vectordb = Chroma(
         persist_directory=persist_dir,
+        embedding_function=embedding_model,
         collection_name=collection_name,  # ✅ usa la variable correcta
     )
 
@@ -63,7 +63,26 @@ def save_to_chroma(chunks: List[Document], client_id: str):
         return
 
     try:
-        vectordb = get_chroma_vectorstore(chunks, client_id, persist=True)
+        vectordb = get_chroma_vectorstore(client_id, persist=False)
+        batch_size = max(1, CHROMA_INGEST_BATCH_SIZE)
+
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start:start + batch_size]
+            batch_number = (start // batch_size) + 1
+            total_batches = (len(chunks) + batch_size - 1) // batch_size
+            logging.info(
+                "📦 Ingestando batch %s/%s para %s (%s chunks)",
+                batch_number,
+                total_batches,
+                client_id,
+                len(batch),
+            )
+            vectordb.add_documents(batch)
+
+        if client_id:
+            vectordb.persist()
+            logging.info("💾 Persistencia activada para %s", client_id)
+
         logging.info(f"✅ Chunks guardados exitosamente para {client_id}")
         return vectordb
     except Exception as e:
