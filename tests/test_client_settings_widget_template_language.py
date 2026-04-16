@@ -260,3 +260,79 @@ def test_client_settings_free_plan_hides_custom_launcher_icon(monkeypatch):
     payload = _load_response_body(response)
 
     assert payload["launcher_icon_url"] is None
+
+
+def test_client_settings_masks_widget_theme_without_widget_customization_feature(monkeypatch):
+    import api.client_settings_api as client_settings_api
+
+    state = {
+        "client_settings": {
+            "client_id": "client-1",
+            "assistant_name": "Assistant",
+            "language": "es",
+            "appointments_template_language": "es",
+            "show_powered_by": False,
+            "show_logo": False,
+            "header_color": "#101010",
+            "button_color": "#202020",
+            "launcher_icon_url": "https://cdn.example.com/premium-icon.png",
+            "plan_id": "premium",
+            "plan": {"id": "premium", "plan_features": ["chat_widget"]},
+        },
+        "message_templates": [],
+    }
+
+    monkeypatch.setattr(client_settings_api, "supabase", _FakeSupabase(state))
+    monkeypatch.setattr(client_settings_api, "authorize_client_request", lambda _request, _client_id: None)
+    monkeypatch.setattr(
+        client_settings_api,
+        "resolve_effective_plan_id",
+        lambda client_id, base_plan_id, supabase_client: base_plan_id,
+    )
+
+    response = client_settings_api.get_client_settings(_DummyRequest(), client_id="client-1")
+    payload = _load_response_body(response)
+
+    assert payload["header_color"] == "#fff9f0"
+    assert payload["button_color"] == "#f5a623"
+    assert payload["show_powered_by"] is True
+    assert payload["show_logo"] is True
+    assert payload["launcher_icon_url"] is None
+
+
+def test_client_settings_keeps_widget_theme_with_widget_customization_feature(monkeypatch):
+    import api.client_settings_api as client_settings_api
+
+    state = {
+        "client_settings": {
+            "client_id": "client-1",
+            "assistant_name": "Assistant",
+            "language": "es",
+            "appointments_template_language": "es",
+            "show_powered_by": False,
+            "show_logo": False,
+            "header_color": "#101010",
+            "button_color": "#202020",
+            "launcher_icon_url": "https://cdn.example.com/premium-icon.png",
+            "plan_id": "premium",
+            "plan": {"id": "premium", "plan_features": ["chat_widget", "widget_customization"]},
+        },
+        "message_templates": [],
+    }
+
+    monkeypatch.setattr(client_settings_api, "supabase", _FakeSupabase(state))
+    monkeypatch.setattr(client_settings_api, "authorize_client_request", lambda _request, _client_id: None)
+    monkeypatch.setattr(
+        client_settings_api,
+        "resolve_effective_plan_id",
+        lambda client_id, base_plan_id, supabase_client: base_plan_id,
+    )
+
+    response = client_settings_api.get_client_settings(_DummyRequest(), client_id="client-1")
+    payload = _load_response_body(response)
+
+    assert payload["header_color"] == "#101010"
+    assert payload["button_color"] == "#202020"
+    assert payload["show_powered_by"] is False
+    assert payload["show_logo"] is False
+    assert payload["launcher_icon_url"] == "https://cdn.example.com/premium-icon.png"

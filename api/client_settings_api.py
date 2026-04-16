@@ -11,6 +11,7 @@ from api.utils.effective_plan import (
     normalize_plan_id,
     resolve_effective_plan_id,
 )
+from api.utils.feature_access import client_has_active_feature
 from api.appointments.template_language_resolution import normalize_language_preferences
 
 # 🧠 Prompt base por defecto
@@ -18,6 +19,37 @@ DEFAULT_PROMPT = "You are a helpful assistant. Provide relevant answers based on
 
 # 🎨 Fuentes permitidas (Google Fonts seguras)
 ALLOWED_FONTS = ["Inter", "Roboto", "Poppins", "Open Sans"]
+WIDGET_CUSTOMIZATION_FEATURE = "widget_customization"
+WIDGET_CUSTOMIZATION_DEFAULTS = {
+    "show_powered_by": True,
+    "show_logo": True,
+    "header_color": "#fff9f0",
+    "header_text_color": "#1b2a41",
+    "background_color": "#ffffff",
+    "user_message_color": "#a3d9b1",
+    "bot_message_color": "#f7f7f7",
+    "button_color": "#f5a623",
+    "button_text_color": "#ffffff",
+    "footer_text_color": "#999999",
+    "launcher_icon_url": None,
+    "font_family": "Inter, sans-serif",
+    "widget_height": 420,
+    "widget_border_radius": 13,
+    "show_tooltip": False,
+    "tooltip_bg_color": "#FFF8E1",
+    "tooltip_text_color": "#5C4B00",
+    "show_legal_links": False,
+    "require_email_consent": False,
+    "require_terms_consent": False,
+    "consent_bg_color": "#FFF8E6",
+    "consent_text_color": "#7A4F00",
+    "max_messages_per_session": 20,
+}
+WIDGET_CUSTOMIZATION_FIELDS = set(WIDGET_CUSTOMIZATION_DEFAULTS.keys()) | {
+    "tooltip_text",
+    "terms_url",
+    "privacy_url",
+}
 
 router = APIRouter()
 
@@ -70,6 +102,19 @@ def _run_timed(metrics: dict, key: str, fn):
     result = fn()
     metrics[key] = round((time.perf_counter() - started) * 1000, 1)
     return result
+
+
+def _payload_contains_widget_customization_fields(payload: dict) -> bool:
+    return any(field in payload for field in WIDGET_CUSTOMIZATION_FIELDS)
+
+
+def _strip_widget_customization_fields(payload: dict) -> None:
+    for field in WIDGET_CUSTOMIZATION_FIELDS:
+        payload.pop(field, None)
+
+
+def _apply_widget_customization_defaults(settings: dict) -> None:
+    settings.update(WIDGET_CUSTOMIZATION_DEFAULTS)
 
 
 def _client_settings_select_fields(*, include_launcher_icon_url: bool = True) -> str:
@@ -305,11 +350,17 @@ async def upsert_client_settings(request: Request):
             base_plan_id=plan_id,
             supabase_client=supabase,
         )
+        has_widget_customization_feature = client_has_active_feature(
+            payload.client_id,
+            WIDGET_CUSTOMIZATION_FEATURE,
+        )
 
         # 🔒 Solo premium / white_label puede editar custom_prompt
         if effective_plan_id not in ["premium", "white_label"]:
             payload_dict.pop("custom_prompt", None)
-            payload_dict.pop("launcher_icon_url", None)
+
+        if not has_widget_customization_feature and _payload_contains_widget_customization_fields(payload_dict):
+            _strip_widget_customization_fields(payload_dict)
 
         # 💾 Guardar configuración limpia
         print(
@@ -571,9 +622,9 @@ def get_client_settings(
         raw_features = plan.get("plan_features", []) or []
 
         active_features = [
-            f["feature"]
+            (str(f).strip().lower() if isinstance(f, str) else str(f["feature"]).strip().lower())
             for f in raw_features
-            if f.get("is_active") is True
+            if (isinstance(f, str) and str(f).strip()) or (not isinstance(f, str) and f.get("is_active") is True)
         ]
 
         plan["plan_features"] = active_features
@@ -599,28 +650,8 @@ def get_client_settings(
 
         settings["font_family"] = font_raw
 
-        # Si plan no es premium/white_label, aplicar tema base
-        plan_id = normalize_plan_id(plan["id"])
-        if plan_id not in ["premium", "white_label"]:
-            settings.update({
-                "header_color": settings.get("header_color") or "#fff9f0",
-                "header_text_color": settings.get("header_text_color") or "#1b2a41",
-                "background_color": settings.get("background_color") or "#ffffff",
-                "user_message_color": settings.get("user_message_color") or "#a3d9b1",
-                "bot_message_color": settings.get("bot_message_color") or "#f7f7f7",
-                "button_color": settings.get("button_color") or "#f5a623",
-                "button_text_color": settings.get("button_text_color") or "#ffffff",
-                "footer_text_color": settings.get("footer_text_color") or "#999999",
-                "launcher_icon_url": None,
-                "widget_height": settings.get("widget_height") or 420,
-                "widget_border_radius": settings.get("widget_border_radius") or 13,
-                "show_logo": settings.get("show_logo", True),
-                "tooltip_bg_color": settings.get("tooltip_bg_color") or "#FFF8E1",
-                "tooltip_text_color": settings.get("tooltip_text_color") or "#5C4B00",
-                "consent_bg_color": settings.get("consent_bg_color") or "#FFF8E6",
-                "consent_text_color": settings.get("consent_text_color") or "#7A4F00",
-                "max_messages_per_session": settings.get("max_messages_per_session") or 20
-            })
+        if WIDGET_CUSTOMIZATION_FEATURE not in active_features:
+            _apply_widget_customization_defaults(settings)
 
         # Listar planes disponibles
         plans_response = _run_timed(

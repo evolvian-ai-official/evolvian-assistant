@@ -3,12 +3,20 @@ import { useEffect, useState } from "react";
 import { useClientId } from "../../hooks/useClientId";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { authFetch, getAuthHeaders } from "../../lib/authFetch";
+import {
+  extractActivePlanFeatures,
+  minPlanForFeatures,
+  normalizeFeature,
+  normalizePlanId,
+} from "../../lib/planEntitlements";
 
 export default function WidgetCustomizer() {
   const { t } = useLanguage();
   const clientId = useClientId();
   const [saving, setSaving] = useState(false);
-  const [planId, setPlanId] = useState("free"); // Detectar plan actual
+  const [planId, setPlanId] = useState("free");
+  const [activePlanFeatures, setActivePlanFeatures] = useState([]);
+  const [availablePlans, setAvailablePlans] = useState([]);
   const defaultLauncherIconUrl = getDefaultLauncherIconUrl();
 
   const [form, setForm] = useState({
@@ -44,8 +52,36 @@ export default function WidgetCustomizer() {
     
   });
 
-  // ✅ Permisos por plan (sin tocar lógica)
-  const canSave = ["premium", "white_label"].includes(planId);
+  const planLabelForId = (value) => {
+    const normalized = normalizePlanId(value);
+    if (normalized === "free" || normalized === "starter" || normalized === "premium") return t(normalized);
+    if (normalized === "white_label") return t("plan_white_label");
+    return normalized.replace(/_/g, " ");
+  };
+
+  const hasAllPlanFeatures = (featureKeys) =>
+    (Array.isArray(featureKeys) ? featureKeys : [featureKeys])
+      .map((featureKey) => normalizeFeature(featureKey))
+      .filter(Boolean)
+      .every((featureKey) => activePlanFeatures.includes(featureKey));
+
+  const getFeatureGate = (featureKeys, fallbackPlanId = "premium") => {
+    const normalizedKeys = (Array.isArray(featureKeys) ? featureKeys : [featureKeys])
+      .map((featureKey) => normalizeFeature(featureKey))
+      .filter(Boolean);
+    const suggestedPlanId =
+      minPlanForFeatures(availablePlans, normalizedKeys) ||
+      normalizePlanId(fallbackPlanId);
+
+    return {
+      allowed: hasAllPlanFeatures(normalizedKeys),
+      requiredPlanId: suggestedPlanId,
+      requiredPlanLabel: planLabelForId(suggestedPlanId),
+    };
+  };
+
+  const widgetCustomizationGate = getFeatureGate("widget_customization", "premium");
+  const canSave = widgetCustomizationGate.allowed;
 
   // 🧭 Cargar configuración actual
   useEffect(() => {
@@ -63,6 +99,8 @@ export default function WidgetCustomizer() {
         }
 
         setPlanId(data?.plan?.id || "free");
+        setActivePlanFeatures(extractActivePlanFeatures(data?.plan?.plan_features));
+        setAvailablePlans(Array.isArray(data?.available_plans) ? data.available_plans : []);
         setForm((prev) => ({ ...prev, ...data }));
       } catch (e) {
         console.error("❌ Error cargando settings:", e);
@@ -102,7 +140,7 @@ export default function WidgetCustomizer() {
 
   const handleSave = async () => {
     if (!canSave) {
-      alert(`⚠️ ${t("widget_premium_notice")}`);
+      alert(`⚠️ ${t("current_plan_unavailable")} ${t("available_from")} ${widgetCustomizationGate.requiredPlanLabel}.`);
       return;
     }
 
@@ -496,10 +534,13 @@ export default function WidgetCustomizer() {
 
         {!canSave && (
           <div style={upgradeBox}>
-            ⚠️ {t("widget_premium_notice")}
+            ⚠️ {t("current_plan_unavailable")} {t("available_from")} {widgetCustomizationGate.requiredPlanLabel}.
             <br />
+            <small style={{ display: "block", marginTop: "0.35rem" }}>
+              {t("your_current_plan")}: {planLabelForId(planId)}
+            </small>
             <button style={upgradeButton} onClick={handleUpgrade}>
-              🚀 {t("widget_upgrade_to_premium")}
+              🚀 {t("upgrade_to")} {widgetCustomizationGate.requiredPlanLabel}
             </button>
           </div>
         )}
