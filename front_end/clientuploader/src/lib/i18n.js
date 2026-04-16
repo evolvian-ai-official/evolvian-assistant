@@ -974,6 +974,7 @@ es: {
   google_calendar_toggle_show_book_button_chat_widget: "Mostrar botón \"Agendar\" en Chat Widget",
   google_calendar_toggle_ai_chat: "Agendar con AI en chat",
   google_calendar_toggle_ai_whatsapp: "Agendar con AI en WhatsApp",
+  current_plan_unavailable: "No disponible en tu plan actual.",
 
   // Templates list (admin)
   templates_meta_status_label_ready: "Sincronizado con Meta · Listo para usar",
@@ -2051,6 +2052,7 @@ en: {
   google_calendar_toggle_show_book_button_chat_widget: "Show \"Book\" button in Chat Widget",
   google_calendar_toggle_ai_chat: "AI booking in chat",
   google_calendar_toggle_ai_whatsapp: "AI booking in WhatsApp",
+  current_plan_unavailable: "Not available on your current plan.",
 
   // Templates list (admin)
   templates_meta_status_label_ready: "Synced with Meta · Ready for use",

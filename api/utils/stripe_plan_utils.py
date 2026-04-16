@@ -38,6 +38,43 @@ def get_plan_from_price_id(price_id: str) -> str | None:
     return None
 
 
+def create_subscription_for_customer(
+    customer_id: str,
+    plan_id: str,
+    *,
+    default_payment_method: str | None = None,
+    metadata: dict | None = None,
+):
+    """
+    Crea una nueva suscripción para un customer existente usando el plan interno.
+    Si existe un default_payment_method se envía explícitamente; si no, Stripe usa
+    el método por defecto configurado en el customer cuando esté disponible.
+    """
+    try:
+        if not customer_id:
+            raise ValueError("customer_id es requerido")
+
+        price_id = get_price_id_from_plan(plan_id)
+        if not price_id:
+            raise ValueError(f"No Stripe price configured for plan '{plan_id}'")
+
+        payload = {
+            "customer": customer_id,
+            "items": [{"price": price_id}],
+            "metadata": metadata or {},
+        }
+        if default_payment_method:
+            payload["default_payment_method"] = default_payment_method
+
+        print(f"🆕 Creando nueva suscripción para customer={customer_id} plan={plan_id}")
+        created = stripe.Subscription.create(**payload)
+        print(f"✅ Nueva suscripción creada: {created.get('id') if isinstance(created, dict) else getattr(created, 'id', None)}")
+        return created
+    except Exception as e:
+        print(f"❌ Error creando suscripción para customer {customer_id}: {e}")
+        raise
+
+
 # =====================================================
 # 🔁 Cambiar plan de suscripción (upgrade o downgrade)
 # =====================================================
@@ -127,5 +164,4 @@ async def cancel_subscription_immediately_if_exists(subscription_id: str):
     except Exception as e:
         print(f"❌ Error al cancelar suscripción inmediatamente: {e}")
         raise
-
 

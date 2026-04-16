@@ -7,6 +7,12 @@ import { authFetch } from "../../lib/authFetch";
 import { useLanguage } from "../../contexts/LanguageContext";
 import CreateAppointment from "./CreateAppointments";
 import AppointmentClients from "./AppointmentClients";
+import {
+  extractActivePlanFeatures,
+  minPlanForFeatures,
+  normalizeFeature,
+  normalizePlanId,
+} from "../../lib/planEntitlements";
 import "../../components/ui/internal-admin-responsive.css";
 
 
@@ -47,8 +53,17 @@ export default function GoogleCalendarSettings() {
   const [googleConnectedEmail, setGoogleConnectedEmail] = useState("");
   const [loadingGoogleStatus, setLoadingGoogleStatus] = useState(false);
   const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
+  const [currentPlanId, setCurrentPlanId] = useState("free");
+  const [availablePlans, setAvailablePlans] = useState([]);
+  const [activePlanFeatures, setActivePlanFeatures] = useState([]);
 
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const suggestedPlanByFeature = {
+    google_calendar_sync: "premium",
+    widget_calendar_booking: "premium",
+    calendar_ai_chat: "premium",
+    calendar_ai_whatsapp: "premium",
+  };
   const parseBool = (value, fallback = true) => {
     if (value === null || value === undefined) return fallback;
     if (typeof value === "boolean") return value;
@@ -199,6 +214,34 @@ export default function GoogleCalendarSettings() {
     loadSettings();
   }, [clientId, t]);
 
+  useEffect(() => {
+    if (!clientId) return;
+
+    let cancelled = false;
+    const loadEntitlements = async () => {
+      try {
+        const res = await authFetch(`${backendUrl}/client_settings?client_id=${clientId}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error("entitlements_failed");
+        if (cancelled) return;
+
+        setCurrentPlanId(normalizePlanId(data?.plan?.id || data?.plan_id || "free"));
+        setAvailablePlans(Array.isArray(data?.available_plans) ? data.available_plans : []);
+        setActivePlanFeatures(extractActivePlanFeatures(data?.plan?.plan_features));
+      } catch {
+        if (cancelled) return;
+        setCurrentPlanId("free");
+        setAvailablePlans([]);
+        setActivePlanFeatures([]);
+      }
+    };
+
+    loadEntitlements();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
   // --- Cambiar estado del calendario ---
   const handleToggleCalendar = async () => {
     if (!clientId) return;
@@ -308,6 +351,45 @@ export default function GoogleCalendarSettings() {
     (window.location.hostname === "localhost"
       ? "http://localhost:8001"
       : "https://evolvian-assistant.onrender.com");
+
+  const planLabelForId = (planId) => {
+    const normalized = normalizePlanId(planId);
+    if (normalized === "free" || normalized === "starter" || normalized === "premium") return t(normalized);
+    if (normalized === "white_label") return t("plan_white_label");
+    return normalized.replace(/_/g, " ");
+  };
+
+  const hasAllPlanFeatures = (featureKeys) =>
+    (Array.isArray(featureKeys) ? featureKeys : [featureKeys])
+      .map((featureKey) => normalizeFeature(featureKey))
+      .filter(Boolean)
+      .every((featureKey) => activePlanFeatures.includes(featureKey));
+
+  const getFeatureGate = (featureKeys, fallbackPlanId = "premium") => {
+    const normalizedKeys = (Array.isArray(featureKeys) ? featureKeys : [featureKeys])
+      .map((featureKey) => normalizeFeature(featureKey))
+      .filter(Boolean);
+    const suggestedPlanId =
+      minPlanForFeatures(availablePlans, normalizedKeys) ||
+      normalizePlanId(
+        suggestedPlanByFeature[normalizedKeys[normalizedKeys.length - 1]] || fallbackPlanId
+      );
+
+    return {
+      allowed: hasAllPlanFeatures(normalizedKeys),
+      requiredPlanId: suggestedPlanId,
+      requiredPlanLabel: planLabelForId(suggestedPlanId),
+    };
+  };
+
+  const buildLockedMessage = (planLabel) =>
+    `${t("current_plan_unavailable")} ${t("available_from")} ${planLabel}.`;
+
+  const googleCalendarGate = getFeatureGate(["calendar_sync", "google_calendar_sync"], "premium");
+  const widgetCalendarGate = getFeatureGate(["calendar_sync", "widget_calendar_booking"], "premium");
+  const chatAiGate = getFeatureGate(["calendar_sync", "calendar_ai_chat"], "premium");
+  const whatsappAiGate = getFeatureGate(["calendar_sync", "calendar_ai_whatsapp"], "premium");
+  const currentPlanLabel = planLabelForId(currentPlanId);
 
   const fetchGoogleConnectionStatus = async () => {
     if (!clientId) return;
@@ -605,7 +687,7 @@ export default function GoogleCalendarSettings() {
                   <span style={{ color: "#7A7A7A" }}>{t("google_calendar_checking_connection")}</span>
                 </div>
               ) : (
-                <div style={connectedBox}>
+                <div style={{ ...connectedBox, alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <strong style={{ color: "#274472" }}>
                       {googleConnected ? t("connected") : t("status_not_connected")}
@@ -617,19 +699,31 @@ export default function GoogleCalendarSettings() {
                     </span>
                   </div>
 
-                  {googleConnected ? (
-                    <button
-                      onClick={handleDisconnectGoogleCalendar}
-                      disabled={disconnectingGoogle}
-                      style={dangerGhostButton(disconnectingGoogle)}
-                    >
-                      {disconnectingGoogle ? t("disconnecting") : t("google_calendar_disconnect_button")}
-                    </button>
-                  ) : (
-                    <button onClick={handleConnectGoogleCalendar} style={primaryButton(false)}>
-                      {t("calendar_connect_button")}
-                    </button>
-                  )}
+                  <div style={featureControlAside}>
+                    {googleConnected ? (
+                      <button
+                        onClick={handleDisconnectGoogleCalendar}
+                        disabled={disconnectingGoogle}
+                        style={dangerGhostButton(disconnectingGoogle)}
+                      >
+                        {disconnectingGoogle ? t("disconnecting") : t("google_calendar_disconnect_button")}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleConnectGoogleCalendar}
+                        disabled={!googleCalendarGate.allowed}
+                        style={primaryButton(!googleCalendarGate.allowed)}
+                      >
+                        {t("calendar_connect_button")}
+                      </button>
+                    )}
+
+                    {!googleCalendarGate.allowed && (
+                      <PlanLockedNotice
+                        message={`${buildLockedMessage(googleCalendarGate.requiredPlanLabel)} ${t("email_setup_status_plan_label")}: ${currentPlanLabel}.`}
+                      />
+                    )}
+                  </div>
                 </div>
               )}
             </section>
@@ -649,35 +743,29 @@ export default function GoogleCalendarSettings() {
                 {t("google_calendar_channels_description")}
               </p>
 
-              <div style={toggleRow}>
-                <label style={labelStyle}>{t("google_calendar_toggle_show_book_button_chat_widget")}</label>
-                <input
-                  type="checkbox"
-                  checked={showAgendaInChatWidget}
-                  onChange={(e) => setShowAgendaInChatWidget(e.target.checked)}
-                  style={checkboxStyle}
-                />
-              </div>
+              <FeatureToggleRow
+                label={t("google_calendar_toggle_show_book_button_chat_widget")}
+                checked={showAgendaInChatWidget}
+                disabled={!widgetCalendarGate.allowed}
+                lockedMessage={!widgetCalendarGate.allowed ? buildLockedMessage(widgetCalendarGate.requiredPlanLabel) : ""}
+                onChange={(checked) => setShowAgendaInChatWidget(checked)}
+              />
 
-              <div style={toggleRow}>
-                <label style={labelStyle}>{t("google_calendar_toggle_ai_chat")}</label>
-                <input
-                  type="checkbox"
-                  checked={aiSchedulingChatEnabled}
-                  onChange={(e) => setAiSchedulingChatEnabled(e.target.checked)}
-                  style={checkboxStyle}
-                />
-              </div>
+              <FeatureToggleRow
+                label={t("google_calendar_toggle_ai_chat")}
+                checked={aiSchedulingChatEnabled}
+                disabled={!chatAiGate.allowed}
+                lockedMessage={!chatAiGate.allowed ? buildLockedMessage(chatAiGate.requiredPlanLabel) : ""}
+                onChange={(checked) => setAiSchedulingChatEnabled(checked)}
+              />
 
-              <div style={toggleRow}>
-                <label style={labelStyle}>{t("google_calendar_toggle_ai_whatsapp")}</label>
-                <input
-                  type="checkbox"
-                  checked={aiSchedulingWhatsappEnabled}
-                  onChange={(e) => setAiSchedulingWhatsappEnabled(e.target.checked)}
-                  style={checkboxStyle}
-                />
-              </div>
+              <FeatureToggleRow
+                label={t("google_calendar_toggle_ai_whatsapp")}
+                checked={aiSchedulingWhatsappEnabled}
+                disabled={!whatsappAiGate.allowed}
+                lockedMessage={!whatsappAiGate.allowed ? buildLockedMessage(whatsappAiGate.requiredPlanLabel) : ""}
+                onChange={(checked) => setAiSchedulingWhatsappEnabled(checked)}
+              />
             </section>
 
             <div style={{ textAlign: "right", marginTop: "2rem" }}>
@@ -705,6 +793,28 @@ export default function GoogleCalendarSettings() {
 
 
 /* Subcomponentes */
+function PlanLockedNotice({ message }) {
+  return <p style={planLockedNote}>{`🔒 ${message}`}</p>;
+}
+
+function FeatureToggleRow({ label, checked, disabled = false, lockedMessage = "", onChange }) {
+  return (
+    <div style={featureToggleRow}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", minWidth: 0 }}>
+        <label style={{ ...labelStyle, color: disabled ? "#7A7A7A" : labelStyle.color }}>{label}</label>
+        {lockedMessage ? <PlanLockedNotice message={lockedMessage} /> : null}
+      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange?.(e.target.checked)}
+        style={{ ...checkboxStyle, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }}
+      />
+    </div>
+  );
+}
+
 function RuleInput({ label, value, onChange }) {
   return (
     <div style={ruleBox}>
@@ -767,6 +877,7 @@ const readonlyTimezone = { border: "1px solid #EDEDED", borderRadius: 8, padding
 const connectedBox = { display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#F7FFF9", border: "1px solid #A3D9B1", padding: "0.8rem 1.2rem", borderRadius: 10 };
 const primaryButton = (disabled) => ({ backgroundColor: disabled ? "#BDE9DF" : "#2EB39A", color: "#FFFFFF", border: "none", borderRadius: 10, padding: "0.7rem 1.2rem", fontWeight: "bold", cursor: disabled ? "not-allowed" : "pointer", fontSize: "0.95rem" });
 const dangerGhostButton = (disabled) => ({ backgroundColor: "#FFFFFF", color: disabled ? "#A0A0A0" : "#B00020", border: `1px solid ${disabled ? "#E6E6E6" : "#FFD3D7"}`, borderRadius: 10, padding: "0.6rem 1rem", fontWeight: "bold", cursor: disabled ? "not-allowed" : "pointer" });
+const featureControlAside = { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.6rem", marginLeft: "auto", flex: "1 1 320px" };
 
 const daysContainer = { display: "flex", flexWrap: "wrap", gap: "0.5rem" };
 const dayButton = { border: "1px solid #EDEDED", borderRadius: 8, padding: "0.5rem 1rem", fontWeight: "bold", cursor: "pointer", transition: "all 0.2s ease" };
@@ -782,6 +893,18 @@ const selectStyle = { border: "1px solid #EDEDED", borderRadius: 8, padding: "0.
 
 const toggleRow = { display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "1rem" };
 const checkboxStyle = { width: 18, height: 18, accentColor: "#4A90E2", cursor: "pointer" };
+const featureToggleRow = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "0.75rem", alignItems: "start", marginTop: "1rem" };
+const planLockedNote = {
+  margin: 0,
+  padding: "0.45rem 0.65rem",
+  borderRadius: 10,
+  border: "1px solid #FFD8A8",
+  backgroundColor: "#FFF8ED",
+  color: "#7A4D00",
+  fontSize: "0.82rem",
+  fontWeight: 600,
+  lineHeight: 1.4,
+};
 
 const saveButton = { backgroundColor: "#2EB39A", color: "#FFFFFF", border: "none", borderRadius: 10, padding: "0.8rem 1.6rem", fontWeight: "bold", fontSize: "0.95rem", cursor: "pointer", minHeight: 42 };
 const dirtyWarningBox = { border: "1px solid #FFD8A8", borderRadius: 12, backgroundColor: "#FFF8ED", padding: "0.9rem 1rem", marginBottom: "1rem" };

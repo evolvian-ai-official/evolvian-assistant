@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from ..modules.assistant_rag.supabase_client import supabase
 from api.oauth_state import decode_signed_state
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 # ✅ Prefijo /api para que coincida con las rutas del frontend
 router = APIRouter(prefix="/api", tags=["Calendar"])
@@ -157,6 +158,9 @@ async def google_calendar_callback(request: Request, code: str = None, state: st
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not google_redirect_uri or not client_id:
         logging.error("❌ Missing Google OAuth configuration or client_id")
         return _redirect_with_status(dashboard_redirect_url, success=False, reason="oauth_config_missing")
+    if not client_can_use_google_calendar_sync(client_id):
+        logging.warning("🚫 Google Calendar sync blocked by plan | client_id=%s", client_id)
+        return _redirect_with_status(dashboard_redirect_url, success=False, reason="feature_not_enabled")
 
     logging.info(f"🔄 Received callback | client_id={client_id} | code_present={bool(code)}")
     logging.info(f"➡️ redirect_uri used: {google_redirect_uri}")

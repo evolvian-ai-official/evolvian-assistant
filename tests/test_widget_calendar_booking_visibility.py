@@ -1,11 +1,17 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from pathlib import Path
 import sys
 import types
 
 import pytest
 from fastapi import HTTPException
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # Test sandbox fallback: some environments don't have Babel installed.
 if "babel" not in sys.modules:
@@ -105,6 +111,12 @@ def _build_payload():
     )
 
 
+@pytest.fixture(autouse=True)
+def _enable_calendar_plan_features(monkeypatch):
+    monkeypatch.setattr(widget_api, "client_can_use_widget_calendar_booking", lambda _client_id: True)
+    monkeypatch.setattr(widget_api, "client_can_use_calendar_ai_for_channel", lambda _client_id, _channel: True)
+
+
 def test_widget_booking_allows_manual_calendar_when_chat_ai_scheduling_is_disabled(monkeypatch):
     monkeypatch.setattr(widget_api, "supabase", _FakeSupabase())
     monkeypatch.setattr(
@@ -161,6 +173,59 @@ def test_widget_booking_rejects_when_widget_agenda_is_hidden(monkeypatch):
 
     assert exc.value.status_code == 403
     assert "hidden in chat widget" in str(exc.value.detail)
+
+
+def test_widget_visibility_hides_agenda_when_plan_feature_is_disabled(monkeypatch):
+    monkeypatch.setattr(
+        widget_api,
+        "get_client_id_from_public_client_id",
+        lambda _public_client_id: "2d9987c0-a08b-41a3-bd90-1f11bf099849",
+    )
+    monkeypatch.setattr(widget_api, "client_can_use_widget_calendar_booking", lambda _client_id: False)
+    monkeypatch.setattr(widget_api, "client_can_use_calendar_ai_for_channel", lambda _client_id, _channel: False)
+    monkeypatch.setattr(
+        widget_api,
+        "_get_widget_calendar_config",
+        lambda _client_id: {
+            "calendar_status": "active",
+            "show_agenda_in_chat_widget": True,
+            "ai_scheduling_chat_enabled": True,
+            "timezone": "UTC",
+        },
+    )
+
+    result = widget_api.get_widget_calendar_visibility(public_client_id="public-client-1")
+
+    assert result["show_agenda_in_chat_widget"] is False
+    assert result["ai_scheduling_chat_enabled"] is False
+    assert result["widget_calendar_booking_enabled"] is False
+    assert result["calendar_ai_chat_feature_enabled"] is False
+
+
+def test_widget_booking_rejects_when_plan_feature_is_disabled(monkeypatch):
+    monkeypatch.setattr(widget_api, "supabase", _FakeSupabase())
+    monkeypatch.setattr(
+        widget_api,
+        "get_client_id_from_public_client_id",
+        lambda _public_client_id: "2d9987c0-a08b-41a3-bd90-1f11bf099849",
+    )
+    monkeypatch.setattr(widget_api, "client_can_use_widget_calendar_booking", lambda _client_id: False)
+    monkeypatch.setattr(
+        widget_api,
+        "_get_widget_calendar_config",
+        lambda _client_id: {
+            "calendar_status": "active",
+            "show_agenda_in_chat_widget": True,
+            "ai_scheduling_chat_enabled": True,
+            "timezone": "UTC",
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(widget_api.book_widget_calendar(_build_payload()))
+
+    assert exc.value.status_code == 403
+    assert "not enabled for this plan" in str(exc.value.detail)
 
 
 def test_widget_availability_hides_pending_confirmation_slots(monkeypatch):

@@ -8,13 +8,39 @@ from api.modules.assistant_rag.supabase_client import (
     get_client_id_by_subscription_id,
     supabase
 )
-from api.utils.stripe_plan_utils import get_plan_from_price_id
+from api.utils.calendar_plan_cleanup import disconnect_calendar_features_for_plan
+from api.utils.stripe_plan_utils import get_plan_from_price_id, create_subscription_for_customer
 
 load_dotenv()
 router = APIRouter()
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+
+def _log_billing_recovery_event(
+    *,
+    client_id: str,
+    event_name: str,
+    details: dict | None = None,
+):
+    try:
+        event_row = {
+            "client_id": client_id,
+            "role": "assistant",
+            "content": event_name,
+            "channel": "system",
+            "source_type": "billing_alert",
+            "provider": "internal",
+            "status": "error",
+            "metadata": details or {},
+            "session_id": "__billing__",
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        supabase.table("history").insert(event_row).execute()
+        print(f"📝 Billing recovery event logged for client {client_id}: {event_name}")
+    except Exception as log_error:
+        print(f"⚠️ No se pudo registrar billing recovery event para {client_id}: {log_error}")
 
 
 @router.post("/stripe")
@@ -132,6 +158,11 @@ async def stripe_webhook(request: Request):
                 "subscription_end": subscription_end,
                 "cancellation_requested_at": None
             }).eq("client_id", client_id).execute()
+            disconnect_calendar_features_for_plan(
+                client_id,
+                base_plan_id=plan_id,
+                supabase_client=supabase,
+            )
 
         # -------------------------------------------------------------
         # 4️⃣ customer.subscription.updated → Cancel-at-period-end
@@ -184,15 +215,20 @@ async def stripe_webhook(request: Request):
                 return Response(status_code=200)
 
             rec = supabase.table("client_settings").select(
-                "pending_deleted_subscription_id", "upgrade_in_progress"
+                "scheduled_plan_id, pending_deleted_subscription_id, upgrade_in_progress"
             ).eq("client_id", client_id).execute()
+            scheduled_plan_id = None
             pending_deleted = None
             in_progress     = False
             if rec.data and len(rec.data) > 0:
+                scheduled_plan_id = rec.data[0].get("scheduled_plan_id")
                 pending_deleted = rec.data[0].get("pending_deleted_subscription_id")
                 in_progress     = bool(rec.data[0].get("upgrade_in_progress", False))
 
-            print(f"🔍 pending_deleted_subscription_id = {pending_deleted}, upgrade_in_progress = {in_progress}")
+            print(
+                f"🔍 scheduled_plan_id = {scheduled_plan_id}, "
+                f"pending_deleted_subscription_id = {pending_deleted}, upgrade_in_progress = {in_progress}"
+            )
 
             # Verificar si quedan suscripciones activas
             active_subs = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
@@ -210,6 +246,82 @@ async def stripe_webhook(request: Request):
                 print(f"🚫 Downgrade cancelado (otra sub activa) para cliente {client_id}")
                 return Response(status_code=200)
 
+            if scheduled_plan_id and scheduled_plan_id != "free":
+                try:
+                    customer = stripe.Customer.retrieve(customer_id)
+                    customer_invoice_settings = customer.get("invoice_settings") or {}
+                    customer_default_pm = customer_invoice_settings.get("default_payment_method")
+                    fallback_payment_method = (
+                        customer_default_pm
+                        or subscription.get("default_payment_method")
+                        or None
+                    )
+                    new_subscription = create_subscription_for_customer(
+                        customer_id,
+                        scheduled_plan_id,
+                        default_payment_method=fallback_payment_method,
+                        metadata={
+                            "client_id": client_id,
+                            "plan_id": scheduled_plan_id,
+                            "transition": "scheduled_downgrade",
+                        },
+                    )
+                    start_ts = new_subscription.get("current_period_start")
+                    end_ts = new_subscription.get("current_period_end")
+                    new_subscription_id = new_subscription.get("id")
+                    supabase.table("client_settings").update({
+                        "plan_id": scheduled_plan_id,
+                        "subscription_id": new_subscription_id,
+                        "subscription_start": datetime.fromtimestamp(start_ts, tz=timezone.utc).isoformat() if start_ts else None,
+                        "subscription_end": datetime.fromtimestamp(end_ts, tz=timezone.utc).isoformat() if end_ts else None,
+                        "cancellation_requested_at": None,
+                        "scheduled_plan_id": None,
+                        "pending_deleted_subscription_id": None,
+                        "upgrade_in_progress": False,
+                    }).eq("client_id", client_id).execute()
+                    disconnect_calendar_features_for_plan(
+                        client_id,
+                        base_plan_id=scheduled_plan_id,
+                        supabase_client=supabase,
+                    )
+                    print(
+                        f"✅ Downgrade programado materializado: cliente {client_id} → "
+                        f"{scheduled_plan_id} (sub {new_subscription_id})"
+                    )
+                    return Response(status_code=200)
+                except Exception as e:
+                    print(
+                        f"⚠️ No se pudo crear suscripción para downgrade programado "
+                        f"{scheduled_plan_id} de cliente {client_id}: {e}"
+                    )
+                    _log_billing_recovery_event(
+                        client_id=client_id,
+                        event_name="scheduled_downgrade_recovery_needed",
+                        details={
+                            "previous_subscription_id": subscription_id,
+                            "customer_id": customer_id,
+                            "target_plan_id": scheduled_plan_id,
+                            "reason": str(e),
+                        },
+                    )
+                    print(f"⬇️ Fallback seguro a FREE para cliente {client_id} tras fallo de downgrade programado")
+                    supabase.table("client_settings").update({
+                        "plan_id": "free",
+                        "subscription_id": None,
+                        "subscription_start": None,
+                        "subscription_end": None,
+                        "cancellation_requested_at": None,
+                        "scheduled_plan_id": scheduled_plan_id,
+                        "pending_deleted_subscription_id": None,
+                        "upgrade_in_progress": False,
+                    }).eq("client_id", client_id).execute()
+                    disconnect_calendar_features_for_plan(
+                        client_id,
+                        base_plan_id="free",
+                        supabase_client=supabase,
+                    )
+                    return Response(status_code=200)
+
             # Sin sub activa → downgrade automático
             print(f"⬇️ Downgrade automático a FREE para cliente {client_id}")
             supabase.table("client_settings").update({
@@ -222,6 +334,11 @@ async def stripe_webhook(request: Request):
                 "pending_deleted_subscription_id": None,
                 "upgrade_in_progress": False
             }).eq("client_id", client_id).execute()
+            disconnect_calendar_features_for_plan(
+                client_id,
+                base_plan_id="free",
+                supabase_client=supabase,
+            )
 
         else:
             print(f"ℹ️ Evento no manejado: {event['type']}")

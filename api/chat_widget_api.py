@@ -22,6 +22,10 @@ from api.appointments.create_appointment import (
     _get_google_busy_ranges,
 )
 from api.appointments.cancel_appointment import _cancel_appointment_record
+from api.utils.calendar_feature_flags import (
+    client_can_use_calendar_ai_for_channel,
+    client_can_use_widget_calendar_booking,
+)
 
 router = APIRouter()
 ACTIVE_WIDGET_APPOINTMENT_STATUSES = ("confirmed", "scheduled", "pending")
@@ -314,6 +318,14 @@ def _get_widget_calendar_config(client_id: str) -> dict:
     return config
 
 
+def _widget_calendar_booking_enabled_for_plan(client_id: str) -> bool:
+    return client_can_use_widget_calendar_booking(client_id)
+
+
+def _widget_calendar_ai_enabled_for_plan(client_id: str) -> bool:
+    return client_can_use_calendar_ai_for_channel(client_id, "chat")
+
+
 def _normalize_session_uuid(raw_value: str | None) -> uuid.UUID:
     if raw_value:
         try:
@@ -460,6 +472,14 @@ def get_widget_calendar_availability(
 ):
     try:
         client_id = get_client_id_from_public_client_id(public_client_id)
+        if not _widget_calendar_booking_enabled_for_plan(client_id):
+            return {
+                "available": False,
+                "timezone": "UTC",
+                "slots": [],
+                "counts_by_day": {},
+                "message": "Calendar booking is not enabled for this plan.",
+            }
         config = _get_widget_calendar_config(client_id)
 
         if config["calendar_status"] != "active":
@@ -627,10 +647,18 @@ def get_widget_calendar_visibility(public_client_id: str = Query(...)):
     try:
         client_id = get_client_id_from_public_client_id(public_client_id)
         config = _get_widget_calendar_config(client_id)
+        widget_booking_feature_enabled = _widget_calendar_booking_enabled_for_plan(client_id)
+        chat_ai_feature_enabled = _widget_calendar_ai_enabled_for_plan(client_id)
         return {
-            "show_agenda_in_chat_widget": bool(config.get("show_agenda_in_chat_widget", False)),
+            "show_agenda_in_chat_widget": bool(
+                widget_booking_feature_enabled and config.get("show_agenda_in_chat_widget", False)
+            ),
             "calendar_status": config.get("calendar_status") or "inactive",
-            "ai_scheduling_chat_enabled": bool(config.get("ai_scheduling_chat_enabled", True)),
+            "ai_scheduling_chat_enabled": bool(
+                chat_ai_feature_enabled and config.get("ai_scheduling_chat_enabled", True)
+            ),
+            "widget_calendar_booking_enabled": bool(widget_booking_feature_enabled),
+            "calendar_ai_chat_feature_enabled": bool(chat_ai_feature_enabled),
             "timezone": config.get("timezone") or "UTC",
         }
     except HTTPException:
@@ -644,6 +672,8 @@ def get_widget_calendar_visibility(public_client_id: str = Query(...)):
 async def book_widget_calendar(payload: WidgetBookRequest):
     try:
         client_id = get_client_id_from_public_client_id(payload.public_client_id)
+        if not _widget_calendar_booking_enabled_for_plan(client_id):
+            raise HTTPException(status_code=403, detail="Calendar booking is not enabled for this plan.")
         config = _get_widget_calendar_config(client_id)
         if config["calendar_status"] != "active":
             raise HTTPException(status_code=403, detail="Calendar booking is disabled for this client.")

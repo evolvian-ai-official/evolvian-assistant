@@ -5,6 +5,7 @@ from datetime import timedelta
 from api.modules.assistant_rag.supabase_client import supabase
 import os
 import logging
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,8 @@ def refresh_access_token(refresh_token: str) -> str:
 def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -> dict:
     try:
         logger.info(f"📅 Verificando disponibilidad real para client_id: {client_id}")
+        if not client_can_use_google_calendar_sync(client_id):
+            return {"available_slots": [], "message": "Google Calendar sync no está habilitado para este plan"}
         tz = pytz.timezone("America/Mexico_City")
         now = datetime.datetime.now(tz)
         end_range = now + timedelta(days=days_ahead)

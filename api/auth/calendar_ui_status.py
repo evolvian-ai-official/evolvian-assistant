@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 # ============================================================
 # 📘 Router: Estado de integración Google Calendar (para UI)
@@ -21,6 +22,7 @@ async def check_google_calendar_connection(
     """
     try:
         authorize_client_request(request, client_id)
+        feature_enabled = client_can_use_google_calendar_sync(client_id)
         res = (
             supabase.table("calendar_integrations")
             .select("connected_email, calendar_id, is_active")
@@ -33,7 +35,9 @@ async def check_google_calendar_connection(
         # 🟡 No existe integración activa
         if not res or not res.data:
             logger.info(f"ℹ️ No active Google Calendar connection for client {client_id}")
-            return JSONResponse(content={"connected": False, "is_active": False})
+            return JSONResponse(
+                content={"connected": False, "is_active": False, "feature_enabled": feature_enabled}
+            )
 
         record = res.data[0]
         connected_email = record.get("connected_email") or record.get("calendar_id")
@@ -44,6 +48,7 @@ async def check_google_calendar_connection(
             content={
                 "connected": True,
                 "is_active": record.get("is_active", False),
+                "feature_enabled": feature_enabled,
                 "connected_email": connected_email,
             }
         )

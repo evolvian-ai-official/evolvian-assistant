@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 from urllib.parse import urlparse
 from api.authz import authorize_client_request
 from api.oauth_state import encode_signed_state
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 router = APIRouter()
 
@@ -76,6 +77,8 @@ def google_calendar_init(
     as_json: bool = False,
 ):
     authorize_client_request(request, client_id)
+    if not client_can_use_google_calendar_sync(client_id):
+        raise HTTPException(status_code=403, detail="Google Calendar sync is not enabled for this plan.")
 
     redirect_uri = _resolve_redirect_uri(request)
     if not GOOGLE_CLIENT_ID or not redirect_uri:

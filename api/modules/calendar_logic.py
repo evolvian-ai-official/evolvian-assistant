@@ -9,6 +9,7 @@ from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.calendar.schedule_event import schedule_event
 from api.modules.calendar.send_confirmation_email import send_confirmation_email
 from api.modules.calendar.notify_business_owner import notify_business_owner
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,30 @@ def get_availability_from_google_calendar(client_id: str, days_ahead: int = 7) -
         tz = pytz.timezone("America/Mexico_City")
         now = datetime.datetime.now(tz)
         end_range = now + timedelta(days=days_ahead)
+
+        if not client_can_use_google_calendar_sync(client_id):
+            logger.info("ℹ️ Google Calendar sync disabled by plan for client_id=%s", client_id)
+            manual = (
+                supabase.table("client_schedule_settings")
+                .select("*")
+                .eq("client_id", client_id)
+                .maybe_single()
+                .execute()
+            )
+            if not manual.data:
+                return {"available_slots": [], "message": "❌ Google Calendar sync no está habilitado para este plan"}
+            config = manual.data
+            start_hour = int(config.get("availability_start", 9))
+            end_hour = int(config.get("availability_end", 18))
+            working_days = config.get("working_days", [1, 2, 3, 4, 5])
+            available_slots = []
+            for d in range(days_ahead):
+                day = now + timedelta(days=d)
+                if day.isoweekday() in working_days:
+                    for hour in range(start_hour, end_hour):
+                        slot = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+                        available_slots.append(slot.isoformat())
+            return {"available_slots": available_slots[:10], "message": "🕒 Horarios manuales generados"}
 
         # Buscar integración activa
         resp = (
@@ -229,7 +254,10 @@ def save_appointment_if_valid(client_id: str, scheduled_time_str: str, user_emai
             "user_email": user_email,
             "user_name": user_name
         })
-        logger.info("📤 Evento enviado a Google Calendar")
+        if client_can_use_google_calendar_sync(client_id):
+            logger.info("📤 Evento enviado a Google Calendar")
+        else:
+            logger.info("ℹ️ Google Calendar sync omitido por plan para client_id=%s", client_id)
 
         # Formatear hora local
         local_time = scheduled_time_local.astimezone(ZoneInfo("America/Mexico_City"))

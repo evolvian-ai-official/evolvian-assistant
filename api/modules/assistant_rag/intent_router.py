@@ -1138,8 +1138,10 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
 
     def get_calendar_gate() -> tuple[bool, str | None]:
         try:
-            from api.utils.plan_features_logic import client_has_feature
-            has_calendar_feature = client_has_feature(client_id, "calendar_sync")
+            from api.utils.calendar_feature_flags import client_can_use_calendar_ai_for_channel
+
+            normalized_channel = _normalize_channel(channel)
+            has_calendar_feature = client_can_use_calendar_ai_for_channel(client_id, normalized_channel)
             res = (
                 supabase.table("calendar_settings")
                 .select("*")
@@ -1152,7 +1154,6 @@ def route_message(client_id: str, session_id: str, message: str, channel: str = 
             if not (has_calendar_feature and calendar_status == "active"):
                 return False, calendar_status
 
-            normalized_channel = _normalize_channel(channel)
             chat_ai_enabled = _is_truthy(settings.get("ai_scheduling_chat_enabled"), True)
             wa_ai_enabled = _is_truthy(settings.get("ai_scheduling_whatsapp_enabled"), True)
 

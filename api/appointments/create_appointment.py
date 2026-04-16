@@ -33,6 +33,7 @@ from api.appointments.template_language_resolution import (
 )
 from api.modules.whatsapp.template_sync import resolve_effective_template_buttons_json
 from api.utils.babel_compat import format_datetime
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -197,6 +198,9 @@ def _refresh_google_access_token(client_id: str, refresh_token: str) -> str:
 
 
 def _get_active_google_integration(client_id: str) -> Optional[dict]:
+    if not client_can_use_google_calendar_sync(client_id):
+        return None
+
     res = (
         supabase
         .table("calendar_integrations")

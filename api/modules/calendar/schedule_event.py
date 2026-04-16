@@ -11,6 +11,7 @@ from api.compliance.email_policy import (
     begin_email_send_audit,
     complete_email_send_audit,
 )
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 # ============================================================
 # 🔧 Configuración
@@ -74,6 +75,9 @@ def schedule_event(payload: dict):
         user_name = payload.get("user_name", "Cliente Evolvian")
 
         logger.info(f"📅 Scheduling event for client_id={client_id} at {slot_time}")
+        if not client_can_use_google_calendar_sync(str(client_id)):
+            logger.info("ℹ️ Google Calendar sync skipped by plan for client_id=%s", client_id)
+            return None
 
         # 1️⃣ Get calendar integration
         integration_resp = (

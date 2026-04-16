@@ -6,6 +6,7 @@ import pytz
 
 from api.modules.assistant_rag.supabase_client import supabase
 from api.modules.calendar.google_calendar_availability import get_availability_from_google_calendar
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 logger = logging.getLogger("calendar_availability")
 
@@ -24,6 +25,8 @@ def get_availability(client_id: str) -> dict:
     logger.info(f"📅 Fetching availability for client_id={client_id} (ENV={ENV})")
 
     try:
+        google_sync_enabled = client_can_use_google_calendar_sync(client_id)
+
         # 1️⃣ Check if the client has an active Google Calendar integration
         integration = (
             supabase.table("calendar_integrations")
@@ -37,7 +40,7 @@ def get_availability(client_id: str) -> dict:
         has_calendar = bool(integration.data)
 
         # 2️⃣ If in prod/qa and integration is active → use real Google Calendar data
-        if ENV in ["prod", "qa"] and has_calendar:
+        if ENV in ["prod", "qa"] and google_sync_enabled and has_calendar:
             logger.info("🔗 Active Google Calendar integration: fetching real availability.")
             availability = get_availability_from_google_calendar(client_id)
             return {

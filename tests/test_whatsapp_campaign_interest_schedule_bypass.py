@@ -43,9 +43,9 @@ class _FakeSupabase:
 
 
 def test_whatsapp_campaign_interest_handoff_does_not_block_scheduling(monkeypatch):
-    fake_plan_features = types.ModuleType("api.utils.plan_features_logic")
-    fake_plan_features.client_has_feature = lambda _client_id, feature_key: feature_key == "calendar_sync"
-    monkeypatch.setitem(sys.modules, "api.utils.plan_features_logic", fake_plan_features)
+    fake_calendar_features = types.ModuleType("api.utils.calendar_feature_flags")
+    fake_calendar_features.client_can_use_calendar_ai_for_channel = lambda _client_id, _channel: True
+    monkeypatch.setitem(sys.modules, "api.utils.calendar_feature_flags", fake_calendar_features)
 
     monkeypatch.setattr(intent_router, "supabase", _FakeSupabase())
     monkeypatch.setattr(

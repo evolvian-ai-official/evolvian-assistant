@@ -468,6 +468,7 @@ from datetime import datetime
 import stripe
 from api.utils.stripe_plan_utils import get_plan_from_price_id
 from api.config.config import supabase
+from api.utils.calendar_plan_cleanup import disconnect_calendar_features_for_plan
 
 # -------------------------------
 # PLAN STRIPE
@@ -523,6 +524,12 @@ async def update_client_plan_by_id(client_id: str, new_plan_id: str, subscriptio
             print(f"✅ Plan actualizado correctamente para {client_id}")
         else:
             print(f"⚠️ Update ejecutado pero sin data devuelta")
+
+        disconnect_calendar_features_for_plan(
+            client_id,
+            base_plan_id=update_payload.get("plan_id"),
+            supabase_client=supabase,
+        )
 
     except Exception as e:
         print(f"🔥 Error en update_client_plan_by_id: {e}")

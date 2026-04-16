@@ -8,6 +8,7 @@ from api.modules.calendar.notify_business_owner import notify_business_owner
 from api.modules.calendar_logic import get_availability_from_google_calendar as get_availability
 from api.authz import authorize_client_request
 from api.internal_auth import has_valid_internal_token
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -88,14 +89,18 @@ async def book_calendar(request: Request):
         # 2️⃣ Google Calendar Sync (con refresh token)
         # =====================================
         try:
-            integration = (
-                supabase.table("calendar_integrations")
-                .select("access_token, refresh_token, calendar_id, is_active, connected_email, expires_at")
-                .eq("client_id", client_id)
-                .eq("is_active", True)
-                .limit(1)
-                .execute()
-            )
+            if not client_can_use_google_calendar_sync(str(client_id)):
+                logger.info("ℹ️ Google Calendar sync disabled by plan for client_id=%s", client_id)
+                integration = None
+            else:
+                integration = (
+                    supabase.table("calendar_integrations")
+                    .select("access_token, refresh_token, calendar_id, is_active, connected_email, expires_at")
+                    .eq("client_id", client_id)
+                    .eq("is_active", True)
+                    .limit(1)
+                    .execute()
+                )
 
             if integration and integration.data:
                 record = integration.data[0]

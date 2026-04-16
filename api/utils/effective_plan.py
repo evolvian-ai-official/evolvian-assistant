@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from api.modules.assistant_rag.supabase_client import supabase
+from api.config.config import supabase
 
 
 logger = logging.getLogger(__name__)

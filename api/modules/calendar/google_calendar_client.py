@@ -4,12 +4,15 @@ import pytz
 import requests
 
 from api.modules.assistant_rag.supabase_client import supabase
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 logger = logging.getLogger(__name__)
 
 def get_availability_from_google_calendar(client_id: str) -> dict:
     try:
         logger.info(f"📅 Verificando disponibilidad para client_id: {client_id}")
+        if not client_can_use_google_calendar_sync(client_id):
+            return {"available_slots": [], "message": "Google Calendar sync no está habilitado para este plan"}
         
         # Obtener integración
         res = supabase.table("calendar_integrations").select("access_token, calendar_id").eq("client_id", client_id).maybe_single().execute()

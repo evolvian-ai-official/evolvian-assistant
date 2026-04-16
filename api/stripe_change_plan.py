@@ -7,6 +7,7 @@ from api.config.config import supabase
 from api.authz import authorize_client_request
 from api.utils.stripe_plan_utils import modify_subscription_plan, cancel_subscription_at_period_end
 from api.utils.effective_plan import get_client_override_plan_id
+from api.utils.calendar_plan_cleanup import disconnect_calendar_features_for_plan
 import stripe
 
 load_dotenv()
@@ -166,6 +167,11 @@ async def change_plan(request: Request):
             "cancellation_requested_at": None,
             "scheduled_plan_id": None
         }).eq("client_id", client_id).execute()
+        disconnect_calendar_features_for_plan(
+            client_id,
+            base_plan_id=new_plan_id,
+            supabase_client=supabase,
+        )
 
         print(f"✅ Cambio de plan aplicado inmediatamente: {new_plan_id}")
         return JSONResponse({

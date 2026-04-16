@@ -45,6 +45,7 @@ def client_has_feature(client_id: str, feature_key: str) -> bool:
             supabase.table("plan_features")
             .select("feature")
             .eq("plan_id", plan_id)
+            .eq("is_active", True)
             .execute()
         )
 

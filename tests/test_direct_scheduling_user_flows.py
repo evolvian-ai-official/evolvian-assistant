@@ -176,6 +176,7 @@ class _FakeTwilioRequest:
 class _FakeMetaRequest:
     def __init__(self, text, business_phone="+15551234567", user_phone="15557654321"):
         payload = {
+            "object": "whatsapp_business_account",
             "entry": [
                 {
                     "changes": [
@@ -222,9 +223,9 @@ def intent_router_calendar_env(monkeypatch):
     events = []
     state_store = {}
 
-    fake_plan_features = types.ModuleType("api.utils.plan_features_logic")
-    fake_plan_features.client_has_feature = lambda _client_id, feature_key: feature_key == "calendar_sync"
-    monkeypatch.setitem(sys.modules, "api.utils.plan_features_logic", fake_plan_features)
+    fake_calendar_features = types.ModuleType("api.utils.calendar_feature_flags")
+    fake_calendar_features.client_can_use_calendar_ai_for_channel = lambda _client_id, _channel: True
+    monkeypatch.setitem(sys.modules, "api.utils.calendar_feature_flags", fake_calendar_features)
 
     monkeypatch.setattr(intent_router, "supabase", _FakeSupabase())
 
@@ -392,7 +393,7 @@ async def _run_twilio(prompt):
 
 async def _run_meta(prompt):
     req = _FakeMetaRequest(text=prompt)
-    return await meta_webhook.receive_whatsapp_message(req)
+    return await meta_webhook.receive_meta_messages(req)
 
 
 async def _run_widget(prompt):

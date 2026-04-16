@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
 from api.oauth_state import encode_signed_state
+from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
 
 router = APIRouter(tags=["Calendar"])
 
@@ -69,6 +70,8 @@ def google_calendar_init(
     return_to: str | None = Query(None),
 ):
     authorize_client_request(request, client_id)
+    if not client_can_use_google_calendar_sync(client_id):
+        raise HTTPException(status_code=403, detail="Google Calendar sync is not enabled for this plan.")
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
     REDIRECT_URI = _resolve_redirect_uri(request)
 
@@ -115,6 +118,8 @@ def alias_calendar_connect(request: Request, client_id: str = Query(...)):
     """
     try:
         authorize_client_request(request, client_id)
+        if not client_can_use_google_calendar_sync(client_id):
+            raise HTTPException(status_code=403, detail="Google Calendar sync is not enabled for this plan.")
         target_url = f"/auth/google_calendar/init?client_id={client_id}"
         logging.info(f"🔄 Redirecting alias /calendar/connect → {target_url}")
         return RedirectResponse(url=target_url)
