@@ -59,6 +59,7 @@ export default function GoogleCalendarSettings() {
 
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const suggestedPlanByFeature = {
+    manual_appointment_creation: "starter",
     google_calendar_sync: "premium",
     widget_calendar_booking: "premium",
     calendar_ai_chat: "premium",
@@ -389,6 +390,7 @@ export default function GoogleCalendarSettings() {
   const widgetCalendarGate = getFeatureGate(["calendar_sync", "widget_calendar_booking"], "premium");
   const chatAiGate = getFeatureGate(["calendar_sync", "calendar_ai_chat"], "premium");
   const whatsappAiGate = getFeatureGate(["calendar_sync", "calendar_ai_whatsapp"], "premium");
+  const manualAppointmentGate = getFeatureGate("manual_appointment_creation", "starter");
   const currentPlanLabel = planLabelForId(currentPlanId);
 
   const fetchGoogleConnectionStatus = async () => {
@@ -519,7 +521,14 @@ export default function GoogleCalendarSettings() {
                 pointerEvents: isDisabled ? "none" : "auto",
               }}
             >
-              <CreateAppointment disabled={isDisabled} />
+              <CreateAppointment
+                disabled={isDisabled || !manualAppointmentGate.allowed}
+                disabledMessage={
+                  isDisabled
+                    ? null
+                    : buildLockedMessage(manualAppointmentGate.requiredPlanLabel)
+                }
+              />
             </div>
           )}
 

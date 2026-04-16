@@ -33,7 +33,10 @@ from api.appointments.template_language_resolution import (
 )
 from api.modules.whatsapp.template_sync import resolve_effective_template_buttons_json
 from api.utils.babel_compat import format_datetime
-from api.utils.calendar_feature_flags import client_can_use_google_calendar_sync
+from api.utils.calendar_feature_flags import (
+    client_can_use_google_calendar_sync,
+    client_can_use_manual_appointment_creation,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -68,6 +71,7 @@ LANGUAGE_TO_LOCALE = {
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_FREEBUSY_URL = "https://www.googleapis.com/calendar/v3/freeBusy"
 E164_PHONE_RE = re.compile(r"^\+[1-9]\d{7,14}$")
+MANUAL_APPOINTMENT_CHANNELS = {"manual", "dashboard", "admin"}
 
 
 def is_calendar_active_for_client(client_id: str) -> bool:
@@ -89,6 +93,10 @@ def is_calendar_active_for_client(client_id: str) -> bool:
     except Exception as e:
         logger.error(f"❌ Failed to check calendar_status for {client_id}: {e}")
         return False
+
+
+def _is_manual_appointment_creation_channel(channel: str | None) -> bool:
+    return str(channel or "").strip().lower() in MANUAL_APPOINTMENT_CHANNELS
 
 
 def _normalize_selected_days(raw_days) -> set[int]:
@@ -900,6 +908,13 @@ def get_google_busy_slots(
 # Endpoint
 # =========================
 async def create_appointment(payload: CreateAppointmentPayload):
+    if _is_manual_appointment_creation_channel(payload.channel) and not client_can_use_manual_appointment_creation(str(payload.client_id)):
+        return {
+            "success": False,
+            "manual_creation_disabled": True,
+            "message": "Manual appointment creation is not enabled for this plan.",
+        }
+
     if not is_calendar_active_for_client(str(payload.client_id)):
         return {
             "success": False,
@@ -1507,6 +1522,8 @@ async def create_appointment_http(payload: CreateAppointmentPayload, request: Re
         return result
 
     if result.get("calendar_inactive"):
+        return JSONResponse(status_code=403, content=result)
+    if result.get("manual_creation_disabled"):
         return JSONResponse(status_code=403, content=result)
     if result.get("invalid_time"):
         return JSONResponse(status_code=400, content=result)

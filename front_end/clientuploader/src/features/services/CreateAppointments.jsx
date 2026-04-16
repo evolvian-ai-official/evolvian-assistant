@@ -70,7 +70,7 @@ const parseTemplateFrequency = (value) => {
 /* =========================
    Component
    ========================= */
-export default function CreateAppointment({ disabled = false }) {
+export default function CreateAppointment({ disabled = false, disabledMessage = null }) {
   const clientId = useClientId();
   const { t, lang } = useLanguage();
   const isEs = lang === "es";
@@ -146,7 +146,7 @@ export default function CreateAppointment({ disabled = false }) {
     internal_notes: "",
     scheduled_time: "",
     appointment_type: "general",
-    channel: "chat",
+    channel: "manual",
   });
   const [appointmentClients, setAppointmentClients] = useState([]);
   const [appointmentClientsLoading, setAppointmentClientsLoading] = useState(false);
@@ -964,7 +964,7 @@ export default function CreateAppointment({ disabled = false }) {
       internal_notes: "",
       scheduled_time: "",
       appointment_type: "general",
-      channel: "chat",
+      channel: "manual",
     });
     setEnableReminder(false);
     setReminderEmail(false);
@@ -1027,6 +1027,7 @@ export default function CreateAppointment({ disabled = false }) {
           user_email: hasValidEmail ? normalizedEmail : undefined,
           user_phone: hasValidPhone ? normalizedPhone : undefined,
           appointment_type: form.appointment_type,
+          channel: form.channel || "manual",
           internal_notes: form.internal_notes?.trim() || undefined,
           send_reminders: enableReminder,
           replace_existing: replaceExisting,
@@ -1095,7 +1096,11 @@ export default function CreateAppointment({ disabled = false }) {
       </div>
       {disabled && (
         <p style={reminderHint}>
-          {t("create_appointment_disabled_message_prefix")} <strong>{t("create_appointment_calendar_setup_label")}</strong> {t("create_appointment_disabled_message_suffix")}
+          {disabledMessage || (
+            <>
+              {t("create_appointment_disabled_message_prefix")} <strong>{t("create_appointment_calendar_setup_label")}</strong> {t("create_appointment_disabled_message_suffix")}
+            </>
+          )}
         </p>
       )}
 

@@ -2,10 +2,19 @@ from api.utils.feature_access import client_has_all_active_features
 
 
 CALENDAR_SYNC_FEATURE = "calendar_sync"
+MANUAL_APPOINTMENT_CREATION_FEATURE = "manual_appointment_creation"
 WIDGET_CALENDAR_BOOKING_FEATURE = "widget_calendar_booking"
 CALENDAR_AI_CHAT_FEATURE = "calendar_ai_chat"
 CALENDAR_AI_WHATSAPP_FEATURE = "calendar_ai_whatsapp"
 GOOGLE_CALENDAR_SYNC_FEATURE = "google_calendar_sync"
+
+
+def client_can_use_manual_appointment_creation(client_id: str) -> bool:
+    return client_has_all_active_features(
+        client_id,
+        CALENDAR_SYNC_FEATURE,
+        MANUAL_APPOINTMENT_CREATION_FEATURE,
+    )
 
 
 def client_can_use_widget_calendar_booking(client_id: str) -> bool:
