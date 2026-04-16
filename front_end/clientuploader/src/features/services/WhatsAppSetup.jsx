@@ -626,7 +626,7 @@ export default function WhatsAppSetup() {
     <div className="ia-page">
       <div className="ia-shell ia-whatsapp-shell">
         <section className="ia-card" style={{ marginBottom: "1rem" }}>
-          <h2 className="ia-header-title">🧩 {t("meta_apps_integration_title")}</h2>
+          <h2 className="ia-header-title">{t("meta_apps_integration_title")}</h2>
           <p className="ia-help-text">{t("meta_apps_integration_subtitle")}</p>
           <div className="ia-note" style={{ marginTop: "0.9rem" }}>
             <strong>{t("meta_apps_required_data_title")}</strong>
@@ -640,7 +640,7 @@ export default function WhatsAppSetup() {
 
         <section className="ia-card" style={{ marginBottom: "1rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-            <h3 className="ia-header-title">💬 {t("whatsapp")}</h3>
+            <h3 className="ia-header-title">{t("whatsapp")}</h3>
             {waConnected ? <span className="ia-badge success">{t("connected")}</span> : null}
           </div>
 
@@ -860,7 +860,7 @@ export default function WhatsAppSetup() {
 
         <section className="ia-card">
           <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-            <h3 className="ia-header-title">🔵/📷 {t("meta_apps_social_title")}</h3>
+            <h3 className="ia-header-title">{t("meta_apps_social_title")}</h3>
           </div>
           <p className="ia-help-text">{t("meta_apps_social_subtitle")}</p>
 

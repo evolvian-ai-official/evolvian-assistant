@@ -7,7 +7,7 @@ export default function WidgetSettings({ activeTab, require_email, require_phone
   return (
     <div style={{ marginTop: "2rem" }}>
       <h4 style={{ fontSize: "1.1rem", fontWeight: "bold", color: "#274472", marginBottom: "1rem" }}>
-        💬 {t("chat_widget")} & IFRAME
+        {t("chat_widget")} & IFRAME
       </h4>
 
       <div>

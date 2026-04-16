@@ -140,7 +140,7 @@ export default function WidgetCustomizer() {
 
   const handleSave = async () => {
     if (!canSave) {
-      alert(`⚠️ ${t("current_plan_unavailable")} ${t("available_from")} ${widgetCustomizationGate.requiredPlanLabel}.`);
+      alert(`${t("current_plan_unavailable")} ${t("available_from")} ${widgetCustomizationGate.requiredPlanLabel}.`);
       return;
     }
 
@@ -161,9 +161,9 @@ export default function WidgetCustomizer() {
         }),
       });
       if (!res.ok) throw new Error(await res.text());
-      alert(`✅ ${t("widget_settings_saved_successfully")}`);
+      alert(t("widget_settings_saved_successfully"));
     } catch (e) {
-      alert(`❌ ${t("widget_error_saving_settings")}: ${e.message}`);
+      alert(`${t("widget_error_saving_settings")}: ${e.message}`);
     } finally {
       setSaving(false);
     }
@@ -179,7 +179,7 @@ export default function WidgetCustomizer() {
 
   return (
   <div style={pageStyle}>
-    <h2 style={titleStyle}>🎨 {t("widget_customize_title")}</h2>
+    <h2 style={titleStyle}>{t("widget_customize_title")}</h2>
     <p style={subtitleStyle}>
       {t("widget_customize_subtitle")}
     </p>
@@ -189,7 +189,7 @@ export default function WidgetCustomizer() {
       <div style={leftPanel}>
         <div style={formGrid}>
           {/* 🔒 Legal y consentimiento */}
-          <h3 style={sectionTitle}>🔒 {t("widget_section_legal_consent")}</h3>
+          <h3 style={sectionTitle}>{t("widget_section_legal_consent")}</h3>
 
           <label style={labelStyle}>
             {t("widget_show_legal_links")}:
@@ -253,7 +253,7 @@ export default function WidgetCustomizer() {
             />
           </label>
 
-          <h3 style={sectionTitle}>🧾 {t("widget_section_consent_colors")}</h3>
+          <h3 style={sectionTitle}>{t("widget_section_consent_colors")}</h3>
 
           <label style={labelStyle}>
             {t("widget_consent_bg_color")}:
@@ -278,7 +278,7 @@ export default function WidgetCustomizer() {
           </label>
 
           {/* 🖼️ Apariencia adicional */}
-          <h3 style={sectionTitle}>🖼️ {t("widget_section_appearance")}</h3>
+          <h3 style={sectionTitle}>{t("widget_section_appearance")}</h3>
 
           <label style={labelStyle}>
             {t("widget_tooltip")}:
@@ -496,7 +496,7 @@ export default function WidgetCustomizer() {
           </label>
 
           {/* 💬 Configuración de sesión */}
-          <h3 style={sectionTitle}>💬 {t("widget_section_session_behavior")}</h3>
+          <h3 style={sectionTitle}>{t("widget_section_session_behavior")}</h3>
 
           <label style={labelStyle}>
             {t("widget_max_messages_per_session")}:
@@ -528,19 +528,19 @@ export default function WidgetCustomizer() {
           {saving
             ? t("widget_saving")
             : canSave
-            ? `💾 ${t("save_changes")}`
-            : `🔒 ${t("widget_premium_feature")}`}
+            ? t("save_changes")
+            : t("widget_premium_feature")}
         </button>
 
         {!canSave && (
           <div style={upgradeBox}>
-            ⚠️ {t("current_plan_unavailable")} {t("available_from")} {widgetCustomizationGate.requiredPlanLabel}.
+            {t("current_plan_unavailable")} {t("available_from")} {widgetCustomizationGate.requiredPlanLabel}.
             <br />
             <small style={{ display: "block", marginTop: "0.35rem" }}>
               {t("your_current_plan")}: {planLabelForId(planId)}
             </small>
             <button style={upgradeButton} onClick={handleUpgrade}>
-              🚀 {t("upgrade_to")} {widgetCustomizationGate.requiredPlanLabel}
+              {t("upgrade_to")} {widgetCustomizationGate.requiredPlanLabel}
             </button>
           </div>
         )}
@@ -599,7 +599,7 @@ export default function WidgetCustomizer() {
                 borderBottom: "1px solid #EDEDED",
               }}
             >
-              💡 {form.tooltip_text}
+              {form.tooltip_text}
             </div>
           )}
 
@@ -636,7 +636,7 @@ export default function WidgetCustomizer() {
                 borderRadius: "8px",
               }}
             >
-              🧾 {t("widget_preview_email_consent_required")}
+              {t("widget_preview_email_consent_required")}
             </div>
           )}
 

@@ -16,7 +16,6 @@ PLAN_ORDER = {
 def get_public_plans():
     """
     Returns public plan pricing for marketing surfaces.
-    White label price is intentionally hidden.
     """
     try:
         res = (
@@ -34,7 +33,7 @@ def get_public_plans():
             normalized_id = "white_label" if plan_id == "enterprise" else plan_id
 
             price_usd = row.get("price_usd")
-            show_price = normalized_id != "white_label"
+            show_price = price_usd is not None
 
             plans.append(
                 {

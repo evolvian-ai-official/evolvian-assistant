@@ -459,7 +459,7 @@ export default function GoogleCalendarSettings() {
         <div style={headerRow}>
           <img src="/logo-evolvian.svg" alt="Evolvian Logo" style={{ width: 56, height: 56, borderRadius: "50%" }} />
           <div>
-            <h1 style={titleStyle}>🗓️ {t("easy_appointments_title")}</h1>
+            <h1 style={titleStyle}>{t("easy_appointments_title")}</h1>
             <p style={subtitleStyle}>{t("easy_appointments_subtitle")}</p>
           </div>
         </div>
@@ -535,7 +535,7 @@ export default function GoogleCalendarSettings() {
           {view === "settings" && (
             <div>
               <section style={sectionStyle}>
-                <h3 style={sectionTitle}>📅 {t("appointments_nav") || "Appointments"}</h3>
+                <h3 style={sectionTitle}>{t("appointments_nav") || "Appointments"}</h3>
                 <p style={sectionHint}>
                   {t("google_calendar_settings_updated") ||
                     "Set your booking limits so clients can only schedule inside your available window."}
@@ -596,7 +596,7 @@ export default function GoogleCalendarSettings() {
 
             {/* Available Days */}
             <section style={sectionStyle}>
-              <h3 style={sectionTitle}>🕒 {t("available_days_hours")}</h3>
+              <h3 style={sectionTitle}>{t("available_days_hours")}</h3>
 
               <div style={daysContainer}>
                 {days.map((day) => {
@@ -643,7 +643,7 @@ export default function GoogleCalendarSettings() {
 
             {/* Booking Rules */}
             <section style={sectionStyle}>
-              <h3 style={sectionTitle}>⚙️ {t("booking_rules")}</h3>
+              <h3 style={sectionTitle}>{t("booking_rules")}</h3>
 
               <div style={rulesGrid}>
                 <RuleInput
@@ -682,7 +682,7 @@ export default function GoogleCalendarSettings() {
 
             {/* Google -> Evolvian sync block */}
             <section style={sectionStyle}>
-              <h3 style={sectionTitle}>🔄 {t("google_calendar_sync_section_title")}</h3>
+              <h3 style={sectionTitle}>{t("google_calendar_sync_section_title")}</h3>
               <p style={sectionHint}>
                 {t("google_calendar_sync_mode_prefix")} <strong>Google → Evolvian</strong>.{" "}
                 {t("google_calendar_sync_mode_suffix")}
@@ -739,7 +739,7 @@ export default function GoogleCalendarSettings() {
 
             {/* Timezone (read-only, source of truth: My Profile) */}
             <section style={sectionStyle}>
-              <h3 style={sectionTitle}>🌎 {t("timezone")}</h3>
+              <h3 style={sectionTitle}>{t("timezone")}</h3>
               <div style={readonlyTimezone}>{timezone || "UTC"}</div>
               <p style={sectionHint}>
                 {t("google_calendar_timezone_edit_hint_prefix")} <strong>{t("settings_my_profile_path")}</strong>.
@@ -747,7 +747,7 @@ export default function GoogleCalendarSettings() {
             </section>
 
             <section style={sectionStyle}>
-              <h3 style={sectionTitle}>💬 {t("google_calendar_channels_title")}</h3>
+              <h3 style={sectionTitle}>{t("google_calendar_channels_title")}</h3>
               <p style={sectionHint}>
                 {t("google_calendar_channels_description")}
               </p>
@@ -803,7 +803,7 @@ export default function GoogleCalendarSettings() {
 
 /* Subcomponentes */
 function PlanLockedNotice({ message }) {
-  return <p style={planLockedNote}>{`🔒 ${message}`}</p>;
+  return <p style={planLockedNote}>{message}</p>;
 }
 
 function FeatureToggleRow({ label, checked, disabled = false, lockedMessage = "", onChange }) {

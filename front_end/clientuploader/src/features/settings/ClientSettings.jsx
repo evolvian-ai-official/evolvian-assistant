@@ -110,7 +110,7 @@ export default function ClientSettings() {
     e.preventDefault();
 
     if ((formData.custom_prompt || DEFAULT_PROMPT).length > MAX_PROMPT_LENGTH) {
-      setStatus({ message: `❌ ${t("prompt_too_long")}`, type: "error" });
+      setStatus({ message: t("prompt_too_long"), type: "error" });
       return;
     }
 
@@ -136,15 +136,15 @@ export default function ClientSettings() {
 
       if (!res.ok) {
         setStatus({
-          message: `❌ ${data.error || t("error_saving")}`,
+          message: data.error || t("error_saving"),
           type: "error",
         });
       } else {
-        setStatus({ message: `✅ ${t("settings_saved")}`, type: "success" });
+        setStatus({ message: t("settings_saved"), type: "success" });
       }
     } catch (err) {
       console.error("❌ Error in handleSubmit:", err);
-      setStatus({ message: "❌ Error saving settings.", type: "error" });
+      setStatus({ message: "Error saving settings.", type: "error" });
     }
   };
 
@@ -172,7 +172,7 @@ export default function ClientSettings() {
     <div className="ia-page">
       <div className="ia-shell ia-settings-shell">
         <section className="ia-settings-card">
-          <h2 className="ia-settings-title">⚙️ {t("client_settings")}</h2>
+          <h2 className="ia-settings-title">{t("client_settings")}</h2>
 
           <div className="ia-tabs">
             <button
@@ -180,7 +180,7 @@ export default function ClientSettings() {
               onClick={() => setActiveTab("profile")}
               className={`ia-tab ${activeTab === "profile" ? "is-active" : ""}`}
             >
-              👤 {t("my_profile")}
+              {t("my_profile")}
             </button>
 
             <button
@@ -188,21 +188,21 @@ export default function ClientSettings() {
               onClick={() => setActiveTab("plan")}
               className={`ia-tab ${activeTab === "plan" ? "is-active" : ""}`}
             >
-              🧾 {t("your_current_plan")}
+              {t("your_current_plan")}
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("features")}
               className={`ia-tab ${activeTab === "features" ? "is-active" : ""}`}
             >
-              🧩 {t("included_features")}
+              {t("included_features")}
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("prompt")}
               className={`ia-tab ${activeTab === "prompt" ? "is-active" : ""}`}
             >
-              🎨 {t("custom_prompt")}
+              {t("custom_prompt")}
             </button>
           </div>
 

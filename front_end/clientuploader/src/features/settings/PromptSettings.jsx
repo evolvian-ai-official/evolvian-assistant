@@ -58,7 +58,7 @@ export default function PromptSettings({
       {/* 🌡️ Temperatura del modelo */}
       <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
         <label htmlFor="temperature" style={{ fontWeight: "bold" }}>
-          🌡️ {t("temperature_label") || "Model temperature (0.0 - 1.0)"}
+          {t("temperature_label") || "Model temperature (0.0 - 1.0)"}
         </label>
         <small style={{ color: "#5f6b7a", lineHeight: 1.4 }}>
           {temperatureHelp}

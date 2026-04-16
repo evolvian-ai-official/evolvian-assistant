@@ -95,7 +95,6 @@ export default function EmailSetup() {
 
     if (params.get("gmail_connected") === "true") {
       setStatusModal({
-        icon: "✅",
         titleKey: "email_setup_modal_connected_title",
         messageKey: "email_setup_modal_connected_message",
         noteKey: "email_setup_modal_connected_note",
@@ -165,7 +164,6 @@ export default function EmailSetup() {
       );
       if (res.ok) {
         setStatusModal({
-          icon: "ℹ️",
           titleKey: "email_setup_modal_disconnected_title",
           messageKey: "email_setup_modal_disconnected_message",
           noteKey: "email_setup_modal_disconnected_note",
@@ -256,7 +254,7 @@ export default function EmailSetup() {
           <div className="ia-header-row">
             <img src="/logo-evolvian.svg" alt="Evolvian Logo" className="ia-header-logo" />
             <div>
-              <h1 className="ia-header-title">📧 {t("email_setup_header_title")}</h1>
+              <h1 className="ia-header-title">{t("email_setup_header_title")}</h1>
               <p className="ia-header-subtitle">
                 {t("email_setup_header_subtitle")}
               </p>
@@ -265,7 +263,7 @@ export default function EmailSetup() {
         </section>
 
         <section className="ia-card">
-          <h2 className="ia-card-title">🔍 {t("email_setup_status_title")}</h2>
+          <h2 className="ia-card-title">{t("email_setup_status_title")}</h2>
           <div className="ia-meta-grid">
             <p>
               <strong>{t("email_setup_status_plan_label")}:</strong> {planName}
@@ -274,11 +272,11 @@ export default function EmailSetup() {
               <strong>{t("email_setup_status_gmail_connected_label")}:</strong>{" "}
               {isConnected ? (
                 <span style={{ color: "#2EB39A", fontWeight: 700 }}>
-                  🟢 {t("yes")} ({connectedEmail || t("connected")})
+                  {t("yes")} ({connectedEmail || t("connected")})
                 </span>
               ) : (
                 <span style={{ color: "#F5A623", fontWeight: 700 }}>
-                  🟡 {t("status_not_connected")}
+                  {t("status_not_connected")}
                 </span>
               )}
             </p>
@@ -312,7 +310,7 @@ export default function EmailSetup() {
                   color: supportsEmail ? "#1B2A41" : "#999",
                 }}
               >
-                🔗 {t("connect_gmail")}
+                {t("connect_gmail")}
               </button>
             ) : (
               <button
@@ -321,7 +319,7 @@ export default function EmailSetup() {
                 className="ia-button"
                 style={{ backgroundColor: "#F5A623", color: "#fff" }}
               >
-                ❌ {t("email_setup_disconnect_gmail")}
+                {t("email_setup_disconnect_gmail")}
               </button>
             )}
           </div>
@@ -363,7 +361,7 @@ export default function EmailSetup() {
 
         {!supportsEmail && (
           <section className="ia-card" style={{ marginBottom: 0 }}>
-            <h2 className="ia-card-title">🔒 {t("email_setup_premium_title")}</h2>
+            <h2 className="ia-card-title">{t("email_setup_premium_title")}</h2>
             <p style={{ color: "#274472", lineHeight: 1.55 }}>
               {t("email_setup_premium_description")}
             </p>
@@ -372,7 +370,7 @@ export default function EmailSetup() {
               className="ia-button ia-button-primary"
               onClick={() => (window.location.href = "/settings#plans")}
             >
-              ⬆️ {t("see_plans")}
+              {t("see_plans")}
             </button>
           </section>
         )}
@@ -386,9 +384,11 @@ export default function EmailSetup() {
           onClick={() => setStatusModal(null)}
         >
           <div className="ia-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="ia-modal-side" aria-hidden="true">
-              <div style={{ fontSize: "2rem" }}>{statusModal.icon || "✅"}</div>
-            </div>
+            {statusModal.icon ? (
+              <div className="ia-modal-side" aria-hidden="true">
+                <div style={{ fontSize: "2rem" }}>{statusModal.icon}</div>
+              </div>
+            ) : null}
             <div className="ia-modal-main">
               <h3 className="ia-modal-title">
                 {statusModal?.titleKey ? t(statusModal.titleKey) : ""}

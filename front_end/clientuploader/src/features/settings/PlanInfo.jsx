@@ -40,49 +40,77 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       name: t("plan_free"),
       price: t("plan_price_free"),
       desc: t("plan_free_desc"),
+      supportingCopy: t("plan_free_pitch"),
       features: [
-        t("plan_feature_100_messages"),
-        t("plan_feature_1_document"),
-        t("plan_feature_basic_dashboard"),
-        t("plan_feature_widget_integration"),
+        t("plan_feature_500_messages"),
+        t("pricing_feature_web_chat_widget"),
+        t("pricing_feature_appointment_booking"),
       ],
+      badge: t("pricing_position_try_it"),
     },
     {
       id: "starter",
       name: t("plan_starter"),
       price: t("plan_price_starter"),
       desc: t("plan_starter_desc"),
+      supportingCopy: t("plan_starter_pitch"),
       features: [
-        t("plan_feature_1000_messages"),
-        t("plan_feature_1_document"),
-        t("plan_feature_basic_dashboard"),
-        t("plan_feature_widget_integration"),
-        t("plan_feature_whatsapp_setup_required"),
-        
+        t("plan_feature_2000_messages"),
+        t("pricing_feature_web_chat_widget"),
+        t("pricing_feature_appointment_booking"),
+        t("pricing_feature_active_whatsapp_ai"),
+        t("pricing_feature_appointment_reminders"),
       ],
+      badge: t("pricing_position_start_automating"),
     },
     {
       id: "premium",
       name: t("plan_premium"),
       price: t("plan_price_premium"),
       desc: t("plan_premium_desc"),
+      supportingCopy: t("plan_premium_pitch"),
       features: [
-        t("feature_all_starter"),
         t("plan_feature_5000_messages"),
-        t("plan_feature_3_documents"),
-        t("plan_feature_brand_customization"),
-        t("plan_feature_custom_prompt"),
-        t("plan_feature_whatsapp_appointments")],
+        t("pricing_feature_web_chat_widget"),
+        t("pricing_feature_appointment_booking"),
+        t("pricing_feature_active_whatsapp_ai"),
+        t("pricing_feature_appointment_reminders"),
+        t("pricing_feature_client_insights"),
+        t("pricing_feature_custom_assistant_behavior"),
+        t("pricing_feature_branded_chat_experience"),
+        t("pricing_feature_google_calendar_sync"),
+        t("pricing_feature_human_handoff"),
+        t("pricing_feature_marketing_campaigns"),
+        t("pricing_feature_automated_followups"),
+      ],
       badge: t("most_popular"),
     },
     {
       id: "white_label",
       name: t("plan_white_label"),
-      price: t("custom_price"),
+      price: t("plan_price_white_label"),
       desc: t("plan_enterprise_desc"),
+      supportingCopy: t("plan_white_label_pitch"),
       features: [
-        t("plan_feature_unlimited_messages_docs"),
-        t("plan_feature_dedicated_support")],
+        t("pricing_feature_unlimited_messages"),
+        t("pricing_feature_web_chat_widget"),
+        t("pricing_feature_appointment_booking"),
+        t("pricing_feature_active_whatsapp_ai"),
+        t("pricing_feature_appointment_reminders"),
+        t("pricing_feature_client_insights"),
+        t("pricing_feature_custom_assistant_behavior"),
+        t("pricing_feature_branded_chat_experience"),
+        t("pricing_feature_google_calendar_sync"),
+        t("pricing_feature_human_handoff"),
+        t("pricing_feature_marketing_campaigns"),
+        t("pricing_feature_automated_followups"),
+        t("pricing_feature_white_label"),
+        t("pricing_feature_dedicated_onboarding"),
+        t("pricing_feature_priority_support"),
+        t("pricing_feature_custom_configuration"),
+        t("pricing_feature_multi_location_setup"),
+      ],
+      badge: t("pricing_position_contact_sales"),
       contact: "sales@evolvianai.com",
     },
   ];
@@ -103,31 +131,6 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   const currentPlanName = formData?.plan?.name || t("current_plan_label");
   const cancellationRequested = !!formData?.cancellation_requested_at;
   const subscriptionEnd = formData?.subscription_end;
-  const backendAvailablePlans = Array.isArray(formData?.available_plans) ? formData.available_plans : [];
-
-  const backendFeaturesByPlan = backendAvailablePlans.reduce((acc, planRow) => {
-    const planId = normalizePlanId(planRow?.id);
-    const features = Array.isArray(planRow?.plan_features)
-      ? planRow.plan_features
-          .map((feature) => (typeof feature === "string" ? feature : feature?.feature))
-          .filter(Boolean)
-          .map((feature) => feature.toLowerCase().replace(/\s+/g, "_"))
-      : [];
-    acc[planId] = new Set(features);
-    return acc;
-  }, {});
-
-  const planHasBackendFeature = (planId, ...featureKeys) => {
-    const normalizedId = normalizePlanId(planId);
-    const featureSet = backendFeaturesByPlan[normalizedId];
-    if (!featureSet || featureSet.size === 0) return null;
-    return featureKeys.some((key) => featureSet.has(String(key).toLowerCase().replace(/\s+/g, "_")));
-  };
-
-  const featureMark = (value, fallback) => {
-    if (typeof value === "boolean") return value ? "✅" : "—";
-    return fallback;
-  };
 
   const formatDate = (date) =>
     date
@@ -280,94 +283,165 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   };
 
   const comparisonRows = [
+    // Use plain text instead of emoji markers inside Settings.
     {
       id: "messages",
-      label: t("messages") || "Messages / month",
+      label: t("pricing_feature_messages_month"),
       values: {
-        free: t("plan_feature_100_messages"),
-        starter: t("plan_feature_1000_messages"),
-        premium: t("plan_feature_5000_messages"),
+        free: "500",
+        starter: "2,000",
+        premium: "5,000",
         white_label: t("unlimited"),
       },
     },
     {
-      id: "documents",
-      label: t("plan_feature_1_document") || "Upload documents",
-      values: {
-        free: "✅",
-        starter: "✅",
-        premium: "✅",
-        white_label: "✅",
-      },
-    },
-    {
-      id: "dashboard",
-      label: t("plan_feature_basic_dashboard"),
-      values: {
-        free: "✅",
-        starter: "✅",
-        premium: "✅",
-        white_label: "✅",
-      },
-    },
-    {
       id: "widget",
-      label: t("plan_feature_widget_integration"),
+      label: t("pricing_feature_web_chat_widget"),
       values: {
-        free: featureMark(planHasBackendFeature("free", "chat_widget"), "✅"),
-        starter: featureMark(planHasBackendFeature("starter", "chat_widget"), "✅"),
-        premium: featureMark(planHasBackendFeature("premium", "chat_widget"), "✅"),
-        white_label: featureMark(planHasBackendFeature("white_label", "chat_widget"), "✅"),
+        free: t("yes"),
+        starter: t("yes"),
+        premium: t("yes"),
+        white_label: t("yes"),
       },
     },
     {
-      id: "whatsapp_setup",
-      label: t("plan_feature_whatsapp_setup_required"),
+      id: "appointment_booking",
+      label: t("pricing_feature_appointment_booking"),
       values: {
-        free: featureMark(planHasBackendFeature("free", "whatsapp_integration"), "—"),
-        starter: featureMark(planHasBackendFeature("starter", "whatsapp_integration"), "✅"),
-        premium: featureMark(planHasBackendFeature("premium", "whatsapp_integration"), "✅"),
-        white_label: featureMark(planHasBackendFeature("white_label", "whatsapp_integration"), "✅"),
+        free: t("yes"),
+        starter: t("yes"),
+        premium: t("yes"),
+        white_label: t("yes"),
       },
     },
     {
-      id: "brand_customization",
-      label: t("plan_feature_brand_customization"),
+      id: "active_whatsapp_ai",
+      label: t("pricing_feature_active_whatsapp_ai"),
       values: {
-        free: featureMark(planHasBackendFeature("free", "remove_branding", "white_labeling"), "—"),
-        starter: featureMark(planHasBackendFeature("starter", "remove_branding", "white_labeling"), "—"),
-        premium: featureMark(planHasBackendFeature("premium", "remove_branding", "white_labeling"), "✅"),
-        white_label: featureMark(planHasBackendFeature("white_label", "remove_branding", "white_labeling"), "✅"),
+        free: t("no"),
+        starter: t("yes"),
+        premium: t("yes"),
+        white_label: t("yes"),
       },
     },
     {
-      id: "custom_prompt",
-      label: t("plan_feature_custom_prompt"),
+      id: "appointment_reminders",
+      label: t("pricing_feature_appointment_reminders"),
       values: {
-        free: featureMark(planHasBackendFeature("free", "custom_prompt_editing"), "—"),
-        starter: featureMark(planHasBackendFeature("starter", "custom_prompt_editing"), "—"),
-        premium: featureMark(planHasBackendFeature("premium", "custom_prompt_editing"), "✅"),
-        white_label: featureMark(planHasBackendFeature("white_label", "custom_prompt_editing"), "✅"),
+        free: t("no"),
+        starter: t("yes"),
+        premium: t("yes"),
+        white_label: t("yes"),
       },
     },
     {
-      id: "appointments",
-      label: t("plan_feature_whatsapp_appointments"),
+      id: "client_insights",
+      label: t("pricing_feature_client_insights"),
       values: {
-        free: featureMark(planHasBackendFeature("free", "calendar_sync"), "—"),
-        starter: featureMark(planHasBackendFeature("starter", "calendar_sync"), "—"),
-        premium: featureMark(planHasBackendFeature("premium", "calendar_sync"), "✅"),
-        white_label: featureMark(planHasBackendFeature("white_label", "calendar_sync"), "✅"),
+        free: t("no"),
+        starter: t("no"),
+        premium: t("yes"),
+        white_label: t("yes"),
       },
     },
     {
-      id: "support",
-      label: t("plan_feature_dedicated_support"),
+      id: "custom_assistant_behavior",
+      label: t("pricing_feature_custom_assistant_behavior"),
       values: {
-        free: "—",
-        starter: "—",
-        premium: "—",
-        white_label: "✅",
+        free: t("no"),
+        starter: t("no"),
+        premium: t("yes"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "branded_chat_experience",
+      label: t("pricing_feature_branded_chat_experience"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("yes"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "google_calendar_sync",
+      label: t("pricing_feature_google_calendar_sync"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("yes"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "human_handoff",
+      label: t("pricing_feature_human_handoff"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("yes"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "marketing_campaigns",
+      label: t("pricing_feature_marketing_campaigns"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("yes"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "automated_followups",
+      label: t("pricing_feature_automated_followups"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("yes"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "dedicated_onboarding",
+      label: t("pricing_feature_dedicated_onboarding"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("no"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "priority_support",
+      label: t("pricing_feature_priority_support"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("no"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "white_label",
+      label: t("pricing_feature_white_label"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("no"),
+        white_label: t("yes"),
+      },
+    },
+    {
+      id: "multi_location_setup",
+      label: t("pricing_feature_multi_location_setup"),
+      values: {
+        free: t("no"),
+        starter: t("no"),
+        premium: t("no"),
+        white_label: t("yes"),
       },
     },
   ];
@@ -387,7 +461,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
     }
 
     if (relation === "current") {
-      return <button className="btn current">✅ {t("current_plan_label")}</button>;
+      return <button className="btn current">{t("current_plan_label")}</button>;
     }
 
     if (relation === "upgrade") {
@@ -449,7 +523,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
                 </h4>
                 <ul className="feature-list">
                   {featureDiff.map((f, i) => (
-                    <li key={i}>{type === "upgrade" ? "✅ " : "❌ "}{f}</li>
+                    <li key={i}>{type === "upgrade" ? "+ " : "- "}{f}</li>
                   ))}
                 </ul>
               </>
@@ -516,10 +590,10 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
 
         {cancellationRequested && (
           <div className="cancel-banner">
-            ⚠️ {t("your_plan_will_be_cancelled_on")} <strong>{currentPlanName}</strong> {t("on_date")}{" "}
+            {t("your_plan_will_be_cancelled_on")} <strong>{currentPlanName}</strong> {t("on_date")}{" "}
             <strong>{formatDate(subscriptionEnd)}</strong>.
             <button onClick={handleReactivate} disabled={reactivating} className="reactivate-btn">
-              {reactivating ? t("reactivating") : `🔄 ${t("reactivate")} ${currentPlanName}`}
+              {reactivating ? t("reactivating") : `${t("reactivate")} ${currentPlanName}`}
             </button>
           </div>
         )}
@@ -551,6 +625,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
                           </div>
                           <div className="compare-plan-price">{p.price}</div>
                           <p className="compare-plan-desc">{p.desc}</p>
+                          {p.supportingCopy ? <p className="compare-plan-desc">{p.supportingCopy}</p> : null}
                           <div className="compare-plan-cta">{renderPlanAction(p)}</div>
                         </div>
                       </th>

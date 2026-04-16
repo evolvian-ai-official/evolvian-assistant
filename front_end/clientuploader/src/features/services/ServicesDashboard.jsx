@@ -8,16 +8,16 @@ export default function ServicesDashboard() {
     <div className="ia-page">
       <div className="ia-shell ia-services-shell">
         <section className="ia-card" style={{ marginBottom: 0 }}>
-          <h2 className="ia-services-title">🧰 {t("services_available_title")}</h2>
+          <h2 className="ia-services-title">{t("services_available_title")}</h2>
           <p className="ia-services-subtitle">{t("services_use_sidebar")}</p>
 
           <div className="ia-services-grid">
-            <div className="ia-service-item">🧠 {t("chat_assistant")}</div>
-            <div className="ia-service-item">✉️ {t("email")}</div>
-            <div className="ia-service-item">🧩 {t("meta_apps_nav") || "Meta Apps"}</div>
-            <div className="ia-service-item">🗓️ {t("appointments_nav")}</div>
-            <div className="ia-service-item">📣 Marketing Campaigns</div>
-            <div className="ia-service-item">👥 Clients</div>
+            <div className="ia-service-item">{t("chat_assistant")}</div>
+            <div className="ia-service-item">{t("email")}</div>
+            <div className="ia-service-item">{t("meta_apps_nav") || "Meta Apps"}</div>
+            <div className="ia-service-item">{t("appointments_nav")}</div>
+            <div className="ia-service-item">Marketing Campaigns</div>
+            <div className="ia-service-item">Clients</div>
           </div>
         </section>
       </div>

@@ -27,7 +27,7 @@ export default function FeatureList({ activeTab, plan }) {
           marginBottom: "1rem",
         }}
       >
-        🧩 {t("included_features")}
+        {t("included_features")}
       </h4>
 
       {features.length === 0 ? (
@@ -54,7 +54,7 @@ export default function FeatureList({ activeTab, plan }) {
                 fontWeight: 500,
               }}
             >
-              <span>✅ {t(featureKey)}</span>
+              <span>{t(featureKey)}</span>
 
               <span
                 style={{
