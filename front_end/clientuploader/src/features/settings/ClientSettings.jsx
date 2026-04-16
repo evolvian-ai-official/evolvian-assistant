@@ -5,7 +5,6 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { authFetch, getAuthHeaders } from "../../lib/authFetch";
 
 import PlanInfo from "./PlanInfo";
-import FeatureList from "./FeatureList";
 import PromptSettings from "./PromptSettings";
 import MyProfile from "./MyProfile";
 import "../../components/ui/internal-admin-responsive.css";
@@ -44,7 +43,7 @@ export default function ClientSettings() {
       plan: "plan",
       plans: "plan",
       pricing: "plan",
-      features: "features",
+      features: "plan",
       prompt: "prompt",
     };
 
@@ -192,13 +191,6 @@ export default function ClientSettings() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("features")}
-              className={`ia-tab ${activeTab === "features" ? "is-active" : ""}`}
-            >
-              {t("included_features")}
-            </button>
-            <button
-              type="button"
               onClick={() => setActiveTab("prompt")}
               className={`ia-tab ${activeTab === "prompt" ? "is-active" : ""}`}
             >
@@ -211,8 +203,6 @@ export default function ClientSettings() {
           {activeTab === "plan" && (
             <PlanInfo activeTab={activeTab} formData={formData} refetchSettings={fetchSettings} />
           )}
-
-          {activeTab === "features" && <FeatureList activeTab={activeTab} plan={formData.plan} />}
 
           {activeTab === "prompt" && (
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}>

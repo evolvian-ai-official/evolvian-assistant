@@ -33,6 +33,26 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
     fetchEmail();
   }, []);
 
+  const resolveCheckoutEmail = async () => {
+    if (userEmail?.trim()) return userEmail.trim();
+
+    const { data: userData } = await supabase.auth.getUser();
+    const emailFromUser = userData?.user?.email?.trim();
+    if (emailFromUser) {
+      setUserEmail(emailFromUser);
+      return emailFromUser;
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const emailFromSession = sessionData?.session?.user?.email?.trim();
+    if (emailFromSession) {
+      setUserEmail(emailFromSession);
+      return emailFromSession;
+    }
+
+    return null;
+  };
+
   // 🔹 Planes disponibles (UI/branding; sin tocar lógica)
   const availablePlans = [
     {
@@ -40,7 +60,6 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       name: t("plan_free"),
       price: t("plan_price_free"),
       desc: t("plan_free_desc"),
-      supportingCopy: t("plan_free_pitch"),
       features: [
         t("plan_feature_500_messages"),
         t("pricing_feature_web_chat_widget"),
@@ -53,7 +72,6 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       name: t("plan_starter"),
       price: t("plan_price_starter"),
       desc: t("plan_starter_desc"),
-      supportingCopy: t("plan_starter_pitch"),
       features: [
         t("plan_feature_2000_messages"),
         t("pricing_feature_web_chat_widget"),
@@ -68,7 +86,6 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       name: t("plan_premium"),
       price: t("plan_price_premium"),
       desc: t("plan_premium_desc"),
-      supportingCopy: t("plan_premium_pitch"),
       features: [
         t("plan_feature_5000_messages"),
         t("pricing_feature_web_chat_widget"),
@@ -90,7 +107,6 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       name: t("plan_white_label"),
       price: t("plan_price_white_label"),
       desc: t("plan_enterprise_desc"),
-      supportingCopy: t("plan_white_label_pitch"),
       features: [
         t("pricing_feature_unlimited_messages"),
         t("pricing_feature_web_chat_widget"),
@@ -131,6 +147,14 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   const currentPlanName = formData?.plan?.name || t("current_plan_label");
   const cancellationRequested = !!formData?.cancellation_requested_at;
   const subscriptionEnd = formData?.subscription_end;
+  const effectiveClientId = clientId || formData?.client_id || null;
+  const planManagementLocked = !!formData?.plan_management_locked;
+  const planManagementReason = formData?.plan_management_reason || null;
+
+  const isManagedInternallyError = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .includes("plan managed internally");
 
   const formatDate = (date) =>
     date
@@ -176,24 +200,34 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
 
   // 🔹 Funciones (sin cambios funcionales)
   const handleUpgrade = async (planId) => {
-    if (cancellationRequested)
+    if (planManagementLocked) {
       return toast({
-        title: t("plan_change_blocked"),
-        description: t("plan_change_blocked_desc"),
+        title: t("plan_managed_internally_title"),
+        description: t("plan_managed_internally_desc"),
       });
+    }
 
     try {
-      if (!userEmail) {
-        toast({ title: t("missing_email"), description: t("please_sign_in_again") });
-        return;
-      }
       setLoadingPlan(planId);
+      if (!effectiveClientId) throw new Error(t("checkout_session_failed"));
+      const checkoutEmail = await resolveCheckoutEmail();
+      const payload = { plan_id: planId, client_id: effectiveClientId };
+      if (checkoutEmail) payload.email = checkoutEmail;
+
       const res = await authFetch(`${import.meta.env.VITE_API_URL}/create-checkout-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan_id: planId, client_id: clientId, email: userEmail }),
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
+
+      const rawBody = await res.text();
+      let data = {};
+      try {
+        data = rawBody ? JSON.parse(rawBody) : {};
+      } catch {
+        data = { detail: rawBody };
+      }
+
       if (res.ok && data.url) {
         try {
           localStorage.setItem(CHECKOUT_PENDING_PLAN_KEY, normalizePlanId(planId));
@@ -201,7 +235,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
           // no-op: si storage falla, seguimos con checkout y mostramos mensaje genérico al volver.
         }
         void trackClientEvent({
-          clientId,
+          clientId: effectiveClientId,
           name: "Funnel_Upgrade_Started",
           category: "funnel",
           label: planId,
@@ -213,9 +247,13 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
           },
           dedupeLocal: true,
         });
-        window.location.href = data.url;
+        window.location.assign(data.url);
+      } else {
+        if (isManagedInternallyError(data?.detail || data?.error)) {
+          throw new Error(t("plan_managed_internally_desc"));
+        }
+        throw new Error(data?.error || data?.detail || t("checkout_session_failed"));
       }
-      else throw new Error(data?.error || data?.detail || t("checkout_session_failed"));
     } catch (err) {
       toast({ title: t("upgrade_failed"), description: err.message });
     } finally {
@@ -224,6 +262,12 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   };
 
   const handleDowngrade = async (planId) => {
+    if (planManagementLocked)
+      return toast({
+        title: t("plan_managed_internally_title"),
+        description: t("plan_managed_internally_desc"),
+      });
+
     if (cancellationRequested)
       return toast({
         title: t("downgrade_already_scheduled"),
@@ -242,7 +286,9 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
         toast({ title: t("plan_updated"), description: data.message || t("plan_change_scheduled") });
         await refetchSettings?.();
         setTimeout(() => (window.location.href = "/dashboard"), 1000);
-      } else throw new Error(data?.error || t("plan_change_failed"));
+      } else if (isManagedInternallyError(data?.detail || data?.error)) {
+        throw new Error(t("plan_managed_internally_desc"));
+      } else throw new Error(data?.error || data?.detail || t("plan_change_failed"));
     } catch (err) {
       toast({ title: t("downgrade_failed"), description: err.message });
     } finally {
@@ -251,6 +297,12 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   };
 
   const handleReactivate = async () => {
+    if (planManagementLocked) {
+      return toast({
+        title: t("plan_managed_internally_title"),
+        description: t("plan_managed_internally_desc"),
+      });
+    }
     if (!confirm(`${t("reactivate_confirm_prefix")} ${currentPlanName}?`)) return;
     try {
       setReactivating(true);
@@ -266,7 +318,9 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
           description: `${t("subscription_restored_prefix")} ${currentPlanName} ${t("subscription_restored_suffix")}`,
         });
         setTimeout(() => (window.location.href = "/dashboard"), 1000);
-      } else throw new Error(data?.error || t("reactivate_subscription_error"));
+      } else if (isManagedInternallyError(data?.detail || data?.error)) {
+        throw new Error(t("plan_managed_internally_desc"));
+      } else throw new Error(data?.error || data?.detail || t("reactivate_subscription_error"));
     } catch (err) {
       toast({ title: t("error"), description: err.message });
     } finally {
@@ -283,7 +337,6 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
   };
 
   const comparisonRows = [
-    // Use plain text instead of emoji markers inside Settings.
     {
       id: "messages",
       label: t("pricing_feature_messages_month"),
@@ -298,150 +351,150 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
       id: "widget",
       label: t("pricing_feature_web_chat_widget"),
       values: {
-        free: t("yes"),
-        starter: t("yes"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "✅",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "appointment_booking",
       label: t("pricing_feature_appointment_booking"),
       values: {
-        free: t("yes"),
-        starter: t("yes"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "✅",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "active_whatsapp_ai",
       label: t("pricing_feature_active_whatsapp_ai"),
       values: {
-        free: t("no"),
-        starter: t("yes"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "appointment_reminders",
       label: t("pricing_feature_appointment_reminders"),
       values: {
-        free: t("no"),
-        starter: t("yes"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "✅",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "client_insights",
       label: t("pricing_feature_client_insights"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "custom_assistant_behavior",
       label: t("pricing_feature_custom_assistant_behavior"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "branded_chat_experience",
       label: t("pricing_feature_branded_chat_experience"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "google_calendar_sync",
       label: t("pricing_feature_google_calendar_sync"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "human_handoff",
       label: t("pricing_feature_human_handoff"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "marketing_campaigns",
       label: t("pricing_feature_marketing_campaigns"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "automated_followups",
       label: t("pricing_feature_automated_followups"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("yes"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "✅",
+        white_label: "✅",
       },
     },
     {
       id: "dedicated_onboarding",
       label: t("pricing_feature_dedicated_onboarding"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("no"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "❌",
+        white_label: "✅",
       },
     },
     {
       id: "priority_support",
       label: t("pricing_feature_priority_support"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("no"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "❌",
+        white_label: "✅",
       },
     },
     {
       id: "white_label",
       label: t("pricing_feature_white_label"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("no"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "❌",
+        white_label: "✅",
       },
     },
     {
       id: "multi_location_setup",
       label: t("pricing_feature_multi_location_setup"),
       values: {
-        free: t("no"),
-        starter: t("no"),
-        premium: t("no"),
-        white_label: t("yes"),
+        free: "❌",
+        starter: "❌",
+        premium: "❌",
+        white_label: "✅",
       },
     },
   ];
@@ -461,14 +514,22 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
     }
 
     if (relation === "current") {
-      return <button className="btn current">{t("current_plan_label")}</button>;
+      return <button className="btn current">✅ {t("current_plan_label")}</button>;
+    }
+
+    if (planManagementLocked) {
+      return (
+        <button disabled className="btn locked">
+          {t("plan_managed_internally_button")}
+        </button>
+      );
     }
 
     if (relation === "upgrade") {
       return (
         <button
           onClick={() => setConfirmModal({ type: "upgrade", plan })}
-          disabled={loadingPlan === plan.id || cancellationRequested}
+          disabled={loadingPlan === plan.id}
           className="btn upgrade"
         >
           {loadingPlan === plan.id ? t("processing") : t("upgrade")}
@@ -523,7 +584,7 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
                 </h4>
                 <ul className="feature-list">
                   {featureDiff.map((f, i) => (
-                    <li key={i}>{type === "upgrade" ? "+ " : "- "}{f}</li>
+                    <li key={i}>{type === "upgrade" ? "✅ " : "❌ "}{f}</li>
                   ))}
                 </ul>
               </>
@@ -598,6 +659,15 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
           </div>
         )}
 
+        {planManagementLocked && (
+          <div className="plan-lock-banner">
+            <strong>{t("plan_managed_internally_title")}</strong>{" "}
+            {planManagementReason === "managed_internally"
+              ? t("plan_managed_internally_desc")
+              : t("plan_managed_internally_desc")}
+          </div>
+        )}
+
         <section className="plans-compare">
           <h3 className="plans-compare-title">
             {t("change_or_update_plan") || "Change or update plan"}: {t("included_features") || "Included Features"}
@@ -625,7 +695,6 @@ export default function PlanInfo({ activeTab, formData, refetchSettings }) {
                           </div>
                           <div className="compare-plan-price">{p.price}</div>
                           <p className="compare-plan-desc">{p.desc}</p>
-                          {p.supportingCopy ? <p className="compare-plan-desc">{p.supportingCopy}</p> : null}
                           <div className="compare-plan-cta">{renderPlanAction(p)}</div>
                         </div>
                       </th>

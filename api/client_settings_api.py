@@ -8,6 +8,7 @@ import httpx
 from api.modules.assistant_rag.supabase_client import supabase
 from api.authz import authorize_client_request
 from api.utils.effective_plan import (
+    get_client_override_plan_id,
     normalize_plan_id,
     resolve_effective_plan_id,
 )
@@ -595,6 +596,8 @@ def get_client_settings(
             base_plan_id=base_plan_id,
             supabase_client=supabase,
         )
+        override_plan_id = get_client_override_plan_id(client_id, supabase_client=supabase)
+        strategic_override_active = bool(override_plan_id)
         if effective_plan_id != base_plan_id:
             override_plan_res = _run_timed(
                 perf_ms,
@@ -630,6 +633,21 @@ def get_client_settings(
         plan["plan_features"] = active_features
 
         settings["plan"] = plan
+        settings["plan_management_locked"] = strategic_override_active
+        settings["plan_management_override_id"] = override_plan_id
+        settings["plan_management_reason"] = (
+            "managed_internally" if strategic_override_active else None
+        )
+
+        if strategic_override_active:
+            for key in [
+                "subscription_start",
+                "subscription_end",
+                "subscription_id",
+                "cancellation_requested_at",
+                "scheduled_plan_id",
+            ]:
+                settings[key] = None
 
 
 

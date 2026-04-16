@@ -25,10 +25,57 @@ def _ensure_success_url_has_session_id(url: str) -> str:
         return url
 
     parsed = urlparse(url)
-    query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query_params["session_id"] = "{CHECKOUT_SESSION_ID}"
-    rebuilt_query = urlencode(query_params)
+    query_pairs = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key != "session_id"
+    ]
+    rebuilt_query = urlencode(query_pairs)
+    session_param = "session_id={CHECKOUT_SESSION_ID}"
+    if rebuilt_query:
+        rebuilt_query = f"{rebuilt_query}&{session_param}"
+    else:
+        rebuilt_query = session_param
     return urlunparse(parsed._replace(query=rebuilt_query))
+
+
+def _origin_base_url(request: Request) -> str | None:
+    origin = (request.headers.get("origin") or "").strip()
+    if origin:
+        return origin.rstrip("/")
+
+    referer = (request.headers.get("referer") or "").strip()
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+    return None
+
+
+def _is_localhost_url(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").strip().lower()
+    return hostname in {"localhost", "127.0.0.1", "0.0.0.0"}
+
+
+def _resolve_checkout_redirect_url(request: Request, env_var_name: str, default_path: str) -> str:
+    configured_url = (os.getenv(env_var_name) or "").strip()
+    request_origin = _origin_base_url(request)
+
+    # Si producción está apuntando por error a localhost en env, preferimos el origin real del navegador.
+    if request_origin and not _is_localhost_url(request_origin) and _is_localhost_url(configured_url):
+        return f"{request_origin}{default_path}"
+
+    if configured_url:
+        return configured_url
+
+    if request_origin:
+        return f"{request_origin}{default_path}"
+
+    return f"https://evolvianai.net{default_path}"
 
 
 @router.post("/create-checkout-session")
@@ -37,7 +84,7 @@ async def create_checkout_session(request: Request):
     client_id = data.get("client_id")
     plan_id = str(data.get("plan_id") or "").strip().lower()
     stripe_price_id = data.get("price_id")  # no confiable desde cliente
-    email = data.get("email")
+    email = str(data.get("email") or "").strip() or None
 
     print("📥 Recibiendo petición para crear checkout session...")
     print(f"🧾 Datos recibidos: client_id={client_id}, plan_id={plan_id}, price_id={stripe_price_id}, email={email}")
@@ -111,24 +158,30 @@ async def create_checkout_session(request: Request):
         # -------------------------------------------------------------
         print("🚀 Creando nueva sesión de checkout en Stripe...")
         success_url = _ensure_success_url_has_session_id(
-            os.getenv("STRIPE_SUCCESS_URL", "https://evolvianai.net/success")
+            _resolve_checkout_redirect_url(request, "STRIPE_SUCCESS_URL", "/dashboard")
         )
+        cancel_url = _resolve_checkout_redirect_url(request, "STRIPE_CANCEL_URL", "/settings")
         metadata = {"plan_id": plan_id}
         if old_sub:
             # Evita estado huérfano en DB si el checkout no termina:
             # preservamos la sub anterior dentro de la sesión.
             metadata["previous_subscription_id"] = old_sub
 
+        session_payload = {
+            "payment_method_types": ["card"],
+            "line_items": [{"price": stripe_price_id, "quantity": 1}],
+            "mode": "subscription",
+            "allow_promotion_codes": True,
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "client_reference_id": client_id,
+            "metadata": metadata,
+        }
+        if email:
+            session_payload["customer_email"] = email
+
         session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{"price": stripe_price_id, "quantity": 1}],
-            mode="subscription",
-            allow_promotion_codes=True,
-            success_url=success_url,
-            cancel_url=os.getenv("STRIPE_CANCEL_URL", "https://evolvianai.net/cancel"),
-            client_reference_id=client_id,
-            customer_email=email,  # ayuda a vincular usuario con cliente en Stripe
-            metadata=metadata
+            **session_payload
         )
 
         print(f"✅ Sesión creada correctamente con URL: {session.url}")
