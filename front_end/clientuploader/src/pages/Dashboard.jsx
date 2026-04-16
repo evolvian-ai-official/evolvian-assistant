@@ -20,6 +20,9 @@ import "../components/ui/internal-admin-responsive.css";
 
 export default function Dashboard() {
   const [dashboardData, setDashboardData] = useState(null);
+  const [conversationInsights, setConversationInsights] = useState(null);
+  const [conversationInsightsLoading, setConversationInsightsLoading] = useState(false);
+  const [conversationInsightsError, setConversationInsightsError] = useState("");
   const [humanAlertsData, setHumanAlertsData] = useState({ items: [], counts: {}, status_filter: "open" });
   const [humanAlertsFilter, setHumanAlertsFilter] = useState("open");
   const [humanAlertsLoading, setHumanAlertsLoading] = useState(false);
@@ -147,7 +150,56 @@ export default function Dashboard() {
 
   const normalize = (str) => str.toLowerCase().replace(/\s+/g, "_");
   const activeFeatures = plan?.plan_features?.map((f) => normalize(f)) || [];
+  const hasConversationInsightsFeature = activeFeatures.includes("conversation_insights");
   const isSpanish = lang === "es";
+
+  useEffect(() => {
+    if (!clientId || !dashboardData) return;
+
+    if (!hasConversationInsightsFeature) {
+      setConversationInsights(null);
+      setConversationInsightsError("");
+      setConversationInsightsLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchConversationInsights = async () => {
+      setConversationInsightsLoading(true);
+      setConversationInsightsError("");
+      try {
+        const params = new URLSearchParams({
+          client_id: clientId,
+          limit: "120",
+          lang: lang || "en",
+        });
+        const res = await authFetch(
+          `${import.meta.env.VITE_API_URL}/history/insights?${params.toString()}`
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.detail || data?.error || "Could not load conversation insights");
+        }
+        if (!isMounted) return;
+        setConversationInsights(data && typeof data === "object" ? data : null);
+      } catch (err) {
+        if (!isMounted) return;
+        console.error("❌ Error fetching dashboard insights:", err);
+        setConversationInsights(null);
+        setConversationInsightsError(err?.message || "Could not load conversation insights");
+      } finally {
+        if (!isMounted) return;
+        setConversationInsightsLoading(false);
+      }
+    };
+
+    fetchConversationInsights();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [clientId, lang, dashboardData, hasConversationInsightsFeature]);
 
   useEffect(() => {
     if (!clientId || typeof window === "undefined") {
@@ -468,6 +520,28 @@ export default function Dashboard() {
       max: plan.is_unlimited ? usage.messages_used : plan.max_messages,
     },
   ];
+
+  const topFaq = conversationInsights?.faq?.[0] || null;
+  const topTopics = Array.isArray(conversationInsights?.top_topics)
+    ? conversationInsights.top_topics.slice(0, 3)
+    : [];
+  const topQuestions = Array.isArray(conversationInsights?.faq)
+    ? conversationInsights.faq.slice(0, 3)
+    : [];
+  const topRecommendation = conversationInsights?.recommendations?.[0] || "";
+  const conversationInsightsProviderLabel =
+    conversationInsights?.provider === "openai"
+      ? t("history_ai_provider") || "AI analyzed"
+      : t("history_heuristic_provider") || "Automatic summary";
+  const dashboardInsightsTitle =
+    t("dashboard_conversation_insights") || (lang === "es" ? "Insights de conversaciones" : "Conversation insights");
+  const dashboardInsightsIntro =
+    topFaq?.question
+      ? `${t("dashboard_common_questions_intro") || (lang === "es" ? "Tus clientes comúnmente preguntan" : "Your customers commonly ask")}: "${topFaq.question}"`
+      : t("dashboard_common_questions_fallback") ||
+        (lang === "es"
+          ? "Todavía no hay suficientes preguntas repetidas para detectar un patrón fuerte."
+          : "There are not enough repeated questions yet to detect a strong pattern.");
 
   const handleReactivate = async () => {
     if (!cancellation_status?.reactivate_available) return;
@@ -1007,6 +1081,210 @@ export default function Dashboard() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        </section>
+
+        <section className="ia-card">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "0.9rem",
+              flexWrap: "wrap",
+              marginBottom: "0.8rem",
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <h2 className="ia-card-title" style={{ marginBottom: "0.35rem" }}>
+                {dashboardInsightsTitle}
+              </h2>
+              <p className="ia-dashboard-subtext" style={{ margin: 0 }}>
+                {conversationInsightsProviderLabel}
+                {conversationInsights?.stats?.conversation_count
+                  ? ` · ${conversationInsights.stats.conversation_count} ${t("history_conversations") || "Conversations"}`
+                  : ""}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="ia-button ia-button-ghost"
+              onClick={() => navigate(hasConversationInsightsFeature ? "/history" : "/settings#plans")}
+            >
+              {hasConversationInsightsFeature
+                ? t("message_history") || "Message History"
+                : `${t("upgrade_to") || "Upgrade to"} ${t("premium")}`}
+            </button>
+          </div>
+
+          {!hasConversationInsightsFeature ? (
+            <div
+              style={{
+                border: "1px solid #F3D28E",
+                background: "#FFF8EB",
+                color: "#7A5900",
+                borderRadius: "14px",
+                padding: "0.95rem",
+              }}
+            >
+              <strong style={{ display: "block", marginBottom: "0.35rem" }}>
+                {t("dashboard_insights_locked_title") || "Conversation insights available on Premium"}
+              </strong>
+              <p style={{ margin: 0 }}>
+                {t("dashboard_insights_locked_copy") ||
+                  "Unlock AI analysis of frequent questions, top topics, and recommendations from your conversations."}
+              </p>
+              <p style={{ margin: "0.55rem 0 0", fontWeight: 700 }}>
+                {(t("current_plan_unavailable") || "Not available on your current plan.").replace(/\s+$/, "")}{" "}
+                {t("available_from") || "Available from"} {t("premium")}.
+              </p>
+            </div>
+          ) : conversationInsightsLoading ? (
+            <p>{lang === "es" ? "Analizando conversaciones..." : "Analyzing conversations..."}</p>
+          ) : conversationInsightsError ? (
+            <div
+              style={{
+                border: "1px solid #F1B8B8",
+                background: "#FFF6F6",
+                color: "#9F2D2D",
+                borderRadius: "12px",
+                padding: "0.85rem",
+              }}
+            >
+              {conversationInsightsError}
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  border: "1px solid #DCE7F5",
+                  background: "linear-gradient(135deg, #F6FBFF 0%, #FFFFFF 62%, #FFF9ED 100%)",
+                  borderRadius: "16px",
+                  padding: "1rem",
+                  marginBottom: "1rem",
+                }}
+              >
+                <p
+                  style={{
+                    margin: 0,
+                    color: "#18304F",
+                    fontWeight: 800,
+                    lineHeight: 1.55,
+                  }}
+                  className="ia-break-anywhere"
+                >
+                  {dashboardInsightsIntro}
+                </p>
+                {!!conversationInsights?.summary && (
+                  <p className="ia-dashboard-subtext ia-break-anywhere" style={{ margin: "0.5rem 0 0" }}>
+                    {conversationInsights.summary}
+                  </p>
+                )}
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                  gap: "0.85rem",
+                }}
+              >
+                <div
+                  style={{
+                    border: "1px solid #EDEDED",
+                    borderRadius: "14px",
+                    padding: "0.95rem",
+                    background: "#FFFFFF",
+                  }}
+                >
+                  <h3
+                    style={{
+                      margin: "0 0 0.65rem",
+                      color: "#274472",
+                      fontSize: "0.98rem",
+                    }}
+                  >
+                    {t("history_faq") || "Frequent questions"}
+                  </h3>
+                  {topQuestions.length ? (
+                    <ul style={{ margin: 0, paddingLeft: "1.1rem", display: "grid", gap: "0.55rem" }}>
+                      {topQuestions.map((item, index) => (
+                        <li key={`${item.question}-${index}`} className="ia-dashboard-history-item ia-break-anywhere">
+                          {item.question}
+                          {typeof item.mentions === "number" ? ` (${item.mentions}x)` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="ia-dashboard-subtext" style={{ margin: 0 }}>
+                      {t("history_no_faq") || "No clear repeated questions yet."}
+                    </p>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    border: "1px solid #EDEDED",
+                    borderRadius: "14px",
+                    padding: "0.95rem",
+                    background: "#FFFFFF",
+                  }}
+                >
+                  <h3
+                    style={{
+                      margin: "0 0 0.65rem",
+                      color: "#274472",
+                      fontSize: "0.98rem",
+                    }}
+                  >
+                    {t("history_top_topics") || "Top topics"}
+                  </h3>
+                  {topTopics.length ? (
+                    <ul style={{ margin: 0, paddingLeft: "1.1rem", display: "grid", gap: "0.55rem" }}>
+                      {topTopics.map((item, index) => (
+                        <li key={`${item.topic}-${index}`} className="ia-dashboard-history-item ia-break-anywhere">
+                          <strong>{item.topic}</strong>
+                          {typeof item.mentions === "number" ? ` (${item.mentions}x)` : ""}
+                          {item.note ? ` · ${item.note}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="ia-dashboard-subtext" style={{ margin: 0 }}>
+                      {t("history_no_topics") || "No dominant topics detected yet."}
+                    </p>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    border: "1px solid #EDEDED",
+                    borderRadius: "14px",
+                    padding: "0.95rem",
+                    background: "#FFFFFF",
+                  }}
+                >
+                  <h3
+                    style={{
+                      margin: "0 0 0.65rem",
+                      color: "#274472",
+                      fontSize: "0.98rem",
+                    }}
+                  >
+                    {t("history_recommendations") || "Recommendations"}
+                  </h3>
+                  {topRecommendation ? (
+                    <p className="ia-dashboard-subtext ia-break-anywhere" style={{ margin: 0, color: "#274472" }}>
+                      {topRecommendation}
+                    </p>
+                  ) : (
+                    <p className="ia-dashboard-subtext" style={{ margin: 0 }}>
+                      {t("history_no_recommendations") || "No recommendations for now."}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </section>
 
         <section className="ia-card">
