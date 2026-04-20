@@ -926,36 +926,215 @@ def _load_settings(client_id: str) -> dict | None:
 
 def _validate_slot(settings: dict, iso_str: str) -> tuple[bool, str | None]:
     try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", ""))
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
     except Exception:
         return False, "Fecha/hora inválida."
 
-    # -----------------------------------------------------------
-    # 🔧 FIX: comparar aware vs aware (timezone correcto)
-    # -----------------------------------------------------------
-    if dt.tzinfo is not None:
-        now = datetime.now(dt.tzinfo)   # aware (mismo timezone del cliente)
-    else:
-        now = datetime.now()            # naive fallback
+    tz_name = str((settings or {}).get("timezone") or "UTC")
+    try:
+        client_tz = ZoneInfo(tz_name)
+    except Exception:
+        client_tz = ZoneInfo("UTC")
 
-    min_h = int(settings.get("min_notice_hours") or 0)
-    if dt < now + timedelta(hours=min_h):
+    if dt.tzinfo is None:
+        scheduled_local = dt.replace(tzinfo=client_tz)
+    else:
+        scheduled_local = dt.astimezone(client_tz)
+
+    now = datetime.now(client_tz)
+
+    if scheduled_local < now:
+        return False, "No se puede agendar en el pasado."
+
+    selected_days = set(_weekday_codes_from_settings(settings))
+    weekday_code = scheduled_local.strftime("%a").lower()[:3]
+    if selected_days and weekday_code not in selected_days:
+        return False, "Ese día no está disponible para agendar."
+
+    min_h = int((settings or {}).get("min_notice_hours") or 0)
+    if scheduled_local < now + timedelta(hours=min_h):
         return False, f"Debe respetar aviso mínimo de {min_h} horas."
 
-    # -----------------------------------------------------------
-    # Horario laboral dentro del timezone del cliente
-    # -----------------------------------------------------------
-    start = settings.get("start_time")
-    end = settings.get("end_time")
-    if start and end:
+    allow_same_day = bool((settings or {}).get("allow_same_day", True))
+    if not allow_same_day and scheduled_local.date() == now.date():
+        return False, "Las citas para el mismo día no están permitidas."
+
+    max_days = int((settings or {}).get("max_days_ahead") or 14)
+    if scheduled_local > now + timedelta(days=max_days):
+        return False, f"Solo puedes agendar con hasta {max_days} días de anticipación."
+
+    start = str((settings or {}).get("start_time") or "09:00")
+    end = str((settings or {}).get("end_time") or "18:00")
+    try:
         s_h, s_m = map(int, start.split(":"))
         e_h, e_m = map(int, end.split(":"))
+    except Exception:
+        s_h, s_m = 9, 0
+        e_h, e_m = 18, 0
 
-        # dt.hour y dt.minute ya están en TZ del cliente
-        if not (dtime(s_h, s_m) <= dtime(dt.hour, dt.minute) <= dtime(e_h, e_m)):
-            return False, f"Fuera del horario laboral ({start}–{end})."
+    if (e_h, e_m) <= (s_h, s_m):
+        s_h, s_m = 9, 0
+        e_h, e_m = 18, 0
+        start = "09:00"
+        end = "18:00"
+
+    slot_duration_min = max(1, int((settings or {}).get("slot_duration_minutes") or 30))
+    day_start = scheduled_local.replace(hour=s_h, minute=s_m, second=0, microsecond=0)
+    day_end = scheduled_local.replace(hour=e_h, minute=e_m, second=0, microsecond=0)
+    slot_end = scheduled_local + timedelta(minutes=slot_duration_min)
+    if scheduled_local < day_start or slot_end > day_end:
+        return False, f"Fuera del horario laboral ({start}-{end})."
 
     return True, None
+
+
+def _respond_with_valid_slot_options(
+    *,
+    client_id: str,
+    session_id: str,
+    state: dict,
+    collected: dict,
+    settings: dict | None,
+    lang: str,
+    reason: str,
+) -> str:
+    collected.pop("scheduled_time", None)
+    collected.pop("scheduled_time_hint", None)
+    collected.pop("scheduled_date_hint", None)
+    state.pop("last_date_hint", None)
+    state.pop("existing_appointment", None)
+    state["status"] = "collecting"
+    state.pop("proposed_slots", None)
+
+    try:
+        available_slots = _generate_available_slots(settings or {}, client_id)
+        state["proposed_slots"] = available_slots
+    except Exception:
+        state["proposed_slots"] = []
+
+    state["collected"] = collected
+    _persist_conversation_state(client_id, session_id, state, log_error=False)
+
+    tz_name = (settings or {}).get("timezone") or "UTC"
+    display_limit = _slot_display_limit_for_settings(settings)
+    display_max_per_day = _slot_display_max_per_day_for_settings(settings)
+    display_overflow_target_min = _slot_display_overflow_target_min_for_settings(settings)
+    slot_text = _format_slot_list_for_lang(
+        state.get("proposed_slots") or [],
+        tz_name,
+        lang,
+        limit=display_limit,
+        max_per_day=display_max_per_day,
+        fill_overflow=(display_max_per_day > 1) or bool(display_overflow_target_min),
+        overflow_target_min=display_overflow_target_min,
+    )
+    slot_text = _compact_slot_text_if_needed(
+        slot_text,
+        state.get("proposed_slots") or [],
+        tz_name,
+        lang,
+    )
+    if not slot_text:
+        return (
+            f"⚠️ Ese horario no cumple reglas: {reason}. No encontré horarios válidos por ahora."
+            if lang == "es"
+            else f"⚠️ That time violates booking rules: {reason}. I couldn't find valid slots right now."
+        )
+
+    return (
+        f"⚠️ Ese horario no cumple reglas: {reason}.\n"
+        "Te propongo estos horarios válidos:\n"
+        f"{slot_text}\n"
+        "Elige uno de esta lista."
+        if lang == "es"
+        else (
+            f"⚠️ That time violates booking rules: {reason}.\n"
+            "Here are valid slots:\n"
+            f"{slot_text}\n"
+            "Choose one from this list."
+        )
+    )
+
+
+def _reset_scheduling_selection(
+    *,
+    client_id: str,
+    session_id: str,
+    state: dict,
+    collected: dict,
+    settings: dict | None,
+    clear_contact_fields: tuple[str, ...] = (),
+) -> list[dict]:
+    collected.pop("scheduled_time", None)
+    collected.pop("scheduled_time_hint", None)
+    collected.pop("scheduled_date_hint", None)
+    for field in clear_contact_fields:
+        collected.pop(field, None)
+    state.pop("last_date_hint", None)
+    state.pop("existing_appointment", None)
+    state.pop("awaiting_whatsapp_phone_confirmation", None)
+    state["status"] = "collecting"
+    state.pop("proposed_slots", None)
+
+    try:
+        available_slots = _generate_available_slots(settings or {}, client_id)
+        state["proposed_slots"] = available_slots
+    except Exception:
+        state["proposed_slots"] = []
+
+    state["collected"] = collected
+    _persist_conversation_state(client_id, session_id, state, log_error=False)
+    return state.get("proposed_slots") or []
+
+
+def _render_collecting_slot_prompt(
+    *,
+    state: dict,
+    settings: dict | None,
+    lang: str,
+    intro_es: str,
+    intro_en: str,
+) -> str:
+    tz_name = (settings or {}).get("timezone") or "UTC"
+    proposed_slots = state.get("proposed_slots") or []
+    display_limit = _slot_display_limit_for_settings(settings)
+    display_max_per_day = _slot_display_max_per_day_for_settings(settings)
+    display_overflow_target_min = _slot_display_overflow_target_min_for_settings(settings)
+    display_fill_overflow = (display_max_per_day > 1) or bool(display_overflow_target_min)
+
+    slot_text = _format_slot_list_for_lang(
+        proposed_slots,
+        tz_name,
+        lang,
+        limit=display_limit,
+        max_per_day=display_max_per_day,
+        fill_overflow=display_fill_overflow,
+        overflow_target_min=display_overflow_target_min,
+    )
+    slot_text = _compact_slot_text_if_needed(
+        slot_text,
+        proposed_slots,
+        tz_name,
+        lang,
+    )
+    if not slot_text:
+        return (
+            "No encontré horarios disponibles por ahora. ¿Quieres intentar otra fecha?"
+            if lang == "es"
+            else "I could not find available slots right now. Do you want to try another date?"
+        )
+
+    return (
+        f"{intro_es}\n{slot_text}\n\n"
+        "Indícame cuál prefieres.\n"
+        f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
+        if lang == "es"
+        else (
+            f"{intro_en}\n{slot_text}\n\n"
+            "Tell me which one you prefer.\n"
+            f"{_other_day_prompt(settings, proposed_slots, tz_name, lang)}"
+        )
+    )
 
 
 def _normalize_session_uuid(client_id: str, session_id: str) -> uuid.UUID:
@@ -1141,6 +1320,8 @@ def _generate_available_slots(settings, client_id):
 
             slot = day_start
             while slot + timedelta(minutes=slot_duration) <= day_end:
+                if slot > date_end:
+                    break
 
                 # ⛔️ Aviso mínimo
                 if slot < now + timedelta(hours=min_notice):
@@ -1462,11 +1643,12 @@ def _is_explicit_schedule_restart_message(message: str) -> bool:
         return bool(re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text))
 
     restart_verbs = {
-        "agendar", "reservar", "programar", "reagendar",
-        "schedule", "book", "reschedule",
+        "agendar", "reservar", "programar", "reagendar", "cambiar", "modificar", "mover",
+        "schedule", "book", "reschedule", "change", "modify", "move",
     }
     restart_objects = {
-        "cita", "llamada", "sesion", "appointment", "call", "session", "consultation",
+        "cita", "horario", "agenda", "dias", "días", "disponibilidad", "llamada", "sesion",
+        "appointment", "availability", "days", "times", "call", "session", "consultation",
     }
     has_verb = any(_has_word(v) for v in restart_verbs)
     has_object = any(_has_word(o) for o in restart_objects)
@@ -1475,15 +1657,29 @@ def _is_explicit_schedule_restart_message(message: str) -> bool:
 
     restart_phrases = (
         "quiero agendar",
+        "me gustaria agendar",
+        "me gustaría agendar",
         "necesito una cita",
         "quiero una cita",
         "quiero agendar una llamada",
         "agendar una llamada",
         "programar una llamada",
         "reservar una cita",
+        "dame dias disponibles",
+        "dame días disponibles",
+        "dame horarios",
+        "quiero modificar la cita",
+        "modificar la cita",
+        "cambiar cita",
+        "cambiar la cita",
         "i want to schedule",
         "i need to schedule",
         "can i schedule",
+        "show availability",
+        "show me availability",
+        "available days",
+        "change appointment",
+        "modify appointment",
         "schedule a call",
         "schedule call",
         "book a call",
@@ -1654,6 +1850,19 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             collected["user_phone"] = normalized_collected_phone
         state.pop("awaiting_whatsapp_phone_confirmation", None)
 
+    if settings and new_data.get("scheduled_time") and collected.get("scheduled_time"):
+        ok, reason = _validate_slot(settings, collected["scheduled_time"])
+        if not ok:
+            return _respond_with_valid_slot_options(
+                client_id=client_id,
+                session_id=session_id,
+                state=state,
+                collected=collected,
+                settings=settings,
+                lang=lang,
+                reason=reason or "Ese horario no está disponible.",
+            )
+
 
     # ============================================================
     # 🔄 Cambiar a pending_confirmation cuando ya tengo todos los datos
@@ -1678,6 +1887,19 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
         and collected.get("scheduled_time")
         and (handled_whatsapp_phone_confirmation or (not _is_yes(message) and not _is_no(message)))
     ):
+        if settings:
+            ok, reason = _validate_slot(settings, collected["scheduled_time"])
+            if not ok:
+                return _respond_with_valid_slot_options(
+                    client_id=client_id,
+                    session_id=session_id,
+                    state=state,
+                    collected=collected,
+                    settings=settings,
+                    lang=lang,
+                    reason=reason or "Ese horario no está disponible.",
+                )
+
         tz_name = (settings or {}).get("timezone") or "UTC"
         pretty_slot = _format_slot_for_lang(collected["scheduled_time"], tz_name, lang)
         confirm_msg = (
@@ -1782,6 +2004,22 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             else f"You already have an active appointment ({pretty_existing}). Do you want to cancel it and create the new one? (Yes/No)"
         )
 
+    if state.get("status") == "pending_confirmation" and _is_no(message):
+        _reset_scheduling_selection(
+            client_id=client_id,
+            session_id=session_id,
+            state=state,
+            collected=collected,
+            settings=settings,
+        )
+        return _render_collecting_slot_prompt(
+            state=state,
+            settings=settings,
+            lang=lang,
+            intro_es="Perfecto. No registraré ese horario. Estos son los próximos horarios disponibles:",
+            intro_en="Perfect. I won't book that slot. Here are the next available times:",
+        )
+
     # ============================================================
     # 📅 Confirmar cita si ya hay horario propuesto
     # ============================================================
@@ -1796,58 +2034,14 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
             if settings:
                 ok, reason = _validate_slot(settings, collected["scheduled_time"])
                 if not ok:
-                    # Reset invalid slot to avoid infinite confirmation loops.
-                    collected.pop("scheduled_time", None)
-                    state["status"] = "collecting"
-                    state.pop("proposed_slots", None)
-
-                    try:
-                        available_slots = _generate_available_slots(settings, client_id)
-                        state["proposed_slots"] = available_slots
-                    except Exception:
-                        state["proposed_slots"] = []
-
-                    state["collected"] = collected
-                    _persist_conversation_state(client_id, session_id, state, log_error=False)
-
-                    tz_name = (settings or {}).get("timezone") or "UTC"
-                    display_limit = _slot_display_limit_for_settings(settings)
-                    display_max_per_day = _slot_display_max_per_day_for_settings(settings)
-                    display_overflow_target_min = _slot_display_overflow_target_min_for_settings(settings)
-                    slot_text = _format_slot_list_for_lang(
-                        state.get("proposed_slots") or [],
-                        tz_name,
-                        lang,
-                        limit=display_limit,
-                        max_per_day=display_max_per_day,
-                        fill_overflow=(display_max_per_day > 1) or bool(display_overflow_target_min),
-                        overflow_target_min=display_overflow_target_min,
-                    )
-                    slot_text = _compact_slot_text_if_needed(
-                        slot_text,
-                        state.get("proposed_slots") or [],
-                        tz_name,
-                        lang,
-                    )
-                    if not slot_text:
-                        return (
-                            f"⚠️ Ese horario no cumple reglas: {reason}. No encontré horarios válidos por ahora."
-                            if lang == "es"
-                            else f"⚠️ That time violates rules: {reason}. I couldn't find valid slots right now."
-                        )
-
-                    return (
-                        f"⚠️ Ese horario no cumple reglas: {reason}.\n"
-                        "Te propongo estos horarios válidos:\n"
-                        f"{slot_text}\n"
-                        "Elige uno de esta lista."
-                        if lang == "es"
-                        else (
-                            f"⚠️ That time violates rules: {reason}.\n"
-                            "Here are valid slots:\n"
-                            f"{slot_text}\n"
-                            "Choose one from this list."
-                        )
+                    return _respond_with_valid_slot_options(
+                        client_id=client_id,
+                        session_id=session_id,
+                        state=state,
+                        collected=collected,
+                        settings=settings,
+                        lang=lang,
+                        reason=reason or "Ese horario no está disponible.",
                     )
 
 
@@ -1900,10 +2094,26 @@ async def handle_calendar_intent(client_id: str, message: str, session_id: str, 
                         if lang == "es"
                         else "⚠️ The phone number must include country code (e.g. +15551234567). What is your WhatsApp number?"
                     )
-                return (
-                    "❌ No pude registrar la cita. Intenta con otro horario."
-                    if lang == "es"
-                    else "❌ I couldn't register the appointment. Try another time."
+                _reset_scheduling_selection(
+                    client_id=client_id,
+                    session_id=session_id,
+                    state=state,
+                    collected=collected,
+                    settings=settings,
+                )
+                failure_message = str(booking_result.get("message") or "").strip()
+                return _render_collecting_slot_prompt(
+                    state=state,
+                    settings=settings,
+                    lang=lang,
+                    intro_es=(
+                        f"❌ No pude registrar la cita{': ' + failure_message if failure_message else ''}. "
+                        "Te muestro otros horarios disponibles:"
+                    ),
+                    intro_en=(
+                        f"❌ I couldn't register the appointment{': ' + failure_message if failure_message else ''}. "
+                        "Here are other available times:"
+                    ),
                 )
 
     # ============================================================

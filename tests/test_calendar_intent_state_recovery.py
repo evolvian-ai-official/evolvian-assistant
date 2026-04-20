@@ -441,6 +441,117 @@ def test_explicit_restart_in_english_resets_stale_state_and_keeps_english(monkey
     assert "Perfecto, Aldo Nicolas Benitez Cortes" not in answer
 
 
+def test_explicit_restart_in_spanish_me_gustaria_agendar_resets_stale_pending_confirmation(monkeypatch):
+    stale_history = [
+        _history_row("assistant", "Perfecto, Aldo Benítez. Tengo todo listo.", 10),
+    ]
+    data_source = _setup_calendar_handler(monkeypatch, stale_history, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "pending_confirmation",
+        "lang": "es",
+        "collected": {
+            "user_name": "Aldo Benitez",
+            "user_email": "aldo.benitez.cortes@gmail.com",
+            "user_phone": "+525525277660",
+            "scheduled_time": "2026-05-04T12:00:00-06:00",
+        },
+    }
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="me gustaría agendar",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "Con gusto te ayudo a agendar tu cita" in answer
+    assert "Tu cita sería" not in answer
+
+
+def test_pending_confirmation_no_clears_stale_slot_and_shows_fresh_options(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 10)]
+    data_source = _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "pending_confirmation",
+        "lang": "es",
+        "collected": {
+            "scheduled_time": "2026-05-04T12:00:00-06:00",
+            "user_name": "Aldo Benitez",
+            "user_email": "aldo.benitez.cortes@gmail.com",
+            "user_phone": "+525525277660",
+        },
+    }
+    monkeypatch.setattr(
+        module,
+        "_generate_available_slots",
+        lambda *_a, **_k: [
+            {"start_iso": "2026-03-10T15:00:00-06:00", "readable": "2026-03-10 15:00"},
+            {"start_iso": "2026-03-11T15:00:00-06:00", "readable": "2026-03-11 15:00"},
+        ],
+    )
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="no",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "No registraré ese horario" in answer
+    assert "Tu cita sería" not in answer
+    saved_state = data_source.get("conversation_state") or {}
+    assert saved_state.get("status") == "collecting"
+    assert not (saved_state.get("collected") or {}).get("scheduled_time")
+
+
+def test_pending_confirmation_days_available_message_resets_stale_slot(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 10)]
+    data_source = _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "pending_confirmation",
+        "lang": "es",
+        "collected": {
+            "scheduled_time": "2026-05-04T12:00:00-06:00",
+            "user_name": "Aldo Benitez",
+            "user_email": "aldo.benitez.cortes@gmail.com",
+            "user_phone": "+525525277660",
+        },
+    }
+    monkeypatch.setattr(
+        module,
+        "_generate_available_slots",
+        lambda *_a, **_k: [
+            {"start_iso": "2026-03-10T15:00:00-06:00", "readable": "2026-03-10 15:00"},
+            {"start_iso": "2026-03-11T15:00:00-06:00", "readable": "2026-03-11 15:00"},
+        ],
+    )
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="Dame días disponibles",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "Con gusto te ayudo a agendar tu cita" in answer
+    assert "Tu cita sería" not in answer
+    saved_state = data_source.get("conversation_state") or {}
+    assert saved_state.get("status") == "collecting"
+    assert not (saved_state.get("collected") or {}).get("scheduled_time")
+
+
 def test_recovery_keeps_spanish_and_does_not_loop_back_to_email_after_phone(monkeypatch):
     history_rows = [
         _history_row("user", "quiero agendar", 30),
@@ -469,6 +580,16 @@ def test_recovery_keeps_spanish_and_does_not_loop_back_to_email_after_phone(monk
 
 
 def test_pending_confirmation_invalid_phone_reasks_phone_instead_of_generic_error(monkeypatch):
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            base = cls(2026, 3, 16, 10, 0, 0)
+            if tz is not None:
+                return base.replace(tzinfo=tz)
+            return base
+
+    monkeypatch.setattr(module, "datetime", _FixedDatetime)
+
     history_rows = [
         _history_row("user", "quiero agendar", 30),
         _history_row("assistant", "Con gusto te ayudo a agendar tu cita. Indícame cuál prefieres.", 31),
@@ -502,6 +623,61 @@ def test_pending_confirmation_invalid_phone_reasks_phone_instead_of_generic_erro
     saved_state = data_source.get("conversation_state") or {}
     assert saved_state.get("status") == "collecting"
     assert not (saved_state.get("collected") or {}).get("user_phone")
+
+
+def test_pending_confirmation_generic_booking_failure_resets_slot_and_shows_options(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 30)]
+    data_source = _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+    data_source["conversation_state"] = {
+        "intent": "calendar",
+        "status": "pending_confirmation",
+        "lang": "es",
+        "collected": {
+            "scheduled_time": "2026-03-17T15:00:00-06:00",
+            "user_name": "Aldo Benitez",
+            "user_email": "aldo.benitez.cortes@gmail.com",
+            "user_phone": "+525525277660",
+        },
+    }
+    monkeypatch.setattr(
+        module,
+        "_generate_available_slots",
+        lambda *_a, **_k: [
+            {"start_iso": "2026-03-18T15:00:00-06:00", "readable": "2026-03-18 15:00"},
+            {"start_iso": "2026-03-19T15:00:00-06:00", "readable": "2026-03-19 15:00"},
+        ],
+    )
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            base = cls(2026, 3, 16, 10, 0, 0)
+            if tz is not None:
+                return base.replace(tzinfo=tz)
+            return base
+
+    monkeypatch.setattr(module, "datetime", _FixedDatetime)
+
+    async def _fake_book(_client_id, _session_id, _collected, _channel):
+        return {"ok": False, "message": "slot conflict"}
+
+    monkeypatch.setattr(module, "_book_appointment", _fake_book)
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="Si",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "No pude registrar la cita" in answer
+    assert "otros horarios disponibles" in answer
+    saved_state = data_source.get("conversation_state") or {}
+    assert saved_state.get("status") == "collecting"
+    assert not (saved_state.get("collected") or {}).get("scheduled_time")
 
 
 def test_phone_normalization_uses_whatsapp_session_country_code():
@@ -605,6 +781,43 @@ def test_slot_display_max_per_day_keeps_three_for_large_windows():
 def test_slot_display_overflow_target_min_is_none_for_large_windows():
     assert module._slot_display_overflow_target_min_for_settings({"max_days_ahead": 15}) is None
     assert module._slot_display_overflow_target_min_for_settings({"max_days_ahead": 7}) is None
+
+
+def test_generate_available_slots_trims_boundary_day_to_exact_max_days_cutoff(monkeypatch):
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            base = cls(2026, 4, 20, 10, 30, 0)
+            if tz is not None:
+                return base.replace(tzinfo=tz)
+            return base
+
+    monkeypatch.setattr(module, "datetime", _FixedDatetime)
+    monkeypatch.setattr(module, "_get_booked_slots", lambda *_a, **_k: [])
+
+    settings = {
+        "timezone": "America/Mexico_City",
+        "slot_duration_minutes": 60,
+        "buffer_minutes": 0,
+        "min_notice_hours": 0,
+        "max_days_ahead": 14,
+        "allow_same_day": True,
+        "start_time": "09:00",
+        "end_time": "13:00",
+        "selected_days": ["mon"],
+    }
+
+    slots = module._generate_available_slots(settings, "client-1")
+    boundary_slots = [
+        slot["start_iso"]
+        for slot in slots
+        if slot["start_iso"].startswith("2026-05-04")
+    ]
+
+    assert boundary_slots == [
+        "2026-05-04T09:00:00-06:00",
+        "2026-05-04T10:00:00-06:00",
+    ]
 
 
 def test_other_day_prompt_uses_selected_days_from_settings_in_spanish():
@@ -897,3 +1110,41 @@ def test_pending_replace_existing_success_reports_notification_failures(monkeypa
     )
 
     assert "No pude enviar las notificaciones" in answer
+
+
+def test_collecting_rejects_out_of_window_free_text_slot_before_asking_for_contact_details(monkeypatch):
+    history_rows = [_history_row("user", "quiero agendar", 10)]
+    _setup_calendar_handler(monkeypatch, history_rows, allow_slot_generation=True)
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            base = cls(2026, 3, 9, 21, 11, 0)
+            if tz is not None:
+                return base.replace(tzinfo=tz)
+            return base
+
+    monkeypatch.setattr(module, "datetime", _FixedDatetime)
+    monkeypatch.setattr(module, "_load_settings", lambda _client_id: {**COMMON_SETTINGS, "max_days_ahead": 10})
+    monkeypatch.setattr(
+        module,
+        "_generate_available_slots",
+        lambda *_a, **_k: [
+            {"start_iso": "2026-03-10T15:00:00-06:00", "readable": "2026-03-10 15:00"},
+            {"start_iso": "2026-03-11T15:00:00-06:00", "readable": "2026-03-11 15:00"},
+        ],
+    )
+
+    answer = asyncio.run(
+        module.handle_calendar_intent(
+            client_id="client-1",
+            message="20 de marzo a las 12PM",
+            session_id="whatsapp-5215512345678",
+            channel="whatsapp",
+            lang="es",
+        )
+    )
+
+    assert "10 días de anticipación" in answer
+    assert "Te propongo estos horarios válidos" in answer
+    assert "¿Cuál es tu nombre completo?" not in answer
