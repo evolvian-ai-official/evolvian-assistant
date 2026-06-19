@@ -60,6 +60,9 @@ const marketingCopyById = (id, isEs, requiredPlanLabel) => {
     "/services/clients": isEs
       ? `Consulta el historial completo de cada paciente: citas, conversaciones y contacto en una sola vista. Disponible en ${tier}.`
       : `View each patient's full history: appointments, conversations, and contact info in one place. Available on ${tier}.`,
+    "/services/evoin": isEs
+      ? `Conduce entrevistas Mom Test de forma asíncrona. Comparte un link, la IA profundiza respuestas y detecta pains, jobs-to-be-done y señales de compra entre múltiples entrevistas. Disponible en ${tier}.`
+      : `Run async Mom Test interviews. Share a link, the AI probes answers and surfaces pains, jobs-to-be-done, and buy signals across multiple interviews. Available on ${tier}.`,
     "/services/chat": isEs
       ? `Activa el asistente AI en tu sitio web para captar consultas y resolver preguntas frecuentes las 24 horas. Disponible en ${tier}.`
       : `Activate the AI assistant on your website to capture inquiries and resolve FAQs around the clock. Available on ${tier}.`,
@@ -209,6 +212,13 @@ export default function Sidebar({ mobile = false, onNavigate }) {
       label: "Marketing Campaigns",
       path: "/services/marketing-campaigns",
       feature: "marketing_campaigns",
+      fallbackRequiredPlan: "premium",
+    },
+    {
+      id: "/services/evoin",
+      label: "EvoIn · Discovery",
+      path: "/services/evoin",
+      feature: "evoin",
       fallbackRequiredPlan: "premium",
     },
     {

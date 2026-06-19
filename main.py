@@ -86,6 +86,10 @@ from api.widget_handoff_api import router as widget_handoff_router
 from api.blog.blog_router import router as blog_router
 from api.marketing_campaigns import router as marketing_campaigns_router
 
+# ✅ EvoIn — Discovery Agent
+from api.evoin.interviews import router as evoin_interviews_router
+from api.evoin.sessions import router as evoin_sessions_router
+from api.evoin.analyze import router as evoin_analyze_router
 
 
 # ✅ Stripe
@@ -504,6 +508,11 @@ try:
     print("✅ init_calendar_auth mounted under /api")
 except Exception as e:
     print(f"⚠️ init_calendar_auth import failed: {e}")
+
+# ✅ EvoIn routers
+app.include_router(evoin_interviews_router)
+app.include_router(evoin_sessions_router)
+app.include_router(evoin_analyze_router)
 
 @app.options("/{rest_of_path:path}")
 async def options_handler(rest_of_path: str):

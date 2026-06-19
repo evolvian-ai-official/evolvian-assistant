@@ -30,6 +30,10 @@ import Templates from "../features/services/Templates";
 import MarketingCampaigns from "../features/services/MarketingCampaigns";
 import ClientsHub from "../features/services/ClientsHub";
 
+/* ✅ EvoIn */
+import EvoInHub from "../features/services/EvoIn/EvoInHub";
+import EvoInDetail from "../features/services/EvoIn/EvoInDetail";
+
 export default function AppRouter() {
   return (
     <Routes>
@@ -200,6 +204,29 @@ export default function AppRouter() {
           <PrivateRoutes>
             <MainLayout>
               <ClientSettings />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+
+      {/* Catch all */}
+      {/* ✅ EvoIn — Discovery Agent */}
+      <Route
+        path="/services/evoin"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <EvoInHub />
+            </MainLayout>
+          </PrivateRoutes>
+        }
+      />
+      <Route
+        path="/services/evoin/:id"
+        element={
+          <PrivateRoutes>
+            <MainLayout>
+              <EvoInDetail />
             </MainLayout>
           </PrivateRoutes>
         }
