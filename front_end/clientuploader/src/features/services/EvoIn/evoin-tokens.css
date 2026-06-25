@@ -1,0 +1,34 @@
+/* EvoIn design tokens — extend Evolvian base palette */
+:root {
+  --ei-bg: #FAFAF8;
+  --ei-surface: #FFFFFF;
+  --ei-surface-2: #F3F2ED;
+  --ei-border: #E4E2D9;
+  --ei-text: #1F1E1B;
+  --ei-text-2: #6B6A63;
+  --ei-text-3: #A3A199;
+
+  --ei-green-50: #EAF3DE;
+  --ei-green-600: #3B6D11;
+  --ei-green-800: #27500A;
+
+  --ei-blue-50: #E6F1FB;
+  --ei-blue-600: #185FA5;
+  --ei-blue-800: #0C447C;
+
+  --ei-coral-50: #FAECE7;
+  --ei-coral-600: #993C1D;
+  --ei-coral-800: #712B13;
+
+  --ei-purple-50: #EEEDFE;
+  --ei-purple-600: #534AB7;
+  --ei-purple-800: #3C3489;
+
+  --ei-amber-50: #FAEEDA;
+  --ei-amber-600: #854F0B;
+  --ei-amber-800: #633806;
+
+  --ei-radius-sm: 8px;
+  --ei-radius-md: 12px;
+  --ei-radius-lg: 20px;
+}

@@ -20,6 +20,11 @@ class RespondPayload(BaseModel):
     is_followup: bool = False
 
 
+class CompleteSessionPayload(BaseModel):
+    participant_name: str | None = None
+    participant_email: str | None = None
+
+
 @router.post("/sessions")
 def start_session(payload: StartSessionPayload):
     # Verify interview exists and is active
@@ -96,10 +101,10 @@ Respuesta del entrevistado: {payload.answer}
 
 
 @router.post("/sessions/{session_id}/complete")
-def complete_session(session_id: str):
+def complete_session(session_id: str, payload: CompleteSessionPayload | None = None):
     sess = (
         supabase.table("evoin_sessions")
-        .select("id, interview_id, responses")
+        .select("id, interview_id, responses, completed_at")
         .eq("id", session_id)
         .single()
         .execute()
@@ -107,11 +112,22 @@ def complete_session(session_id: str):
     if not sess.data:
         raise HTTPException(404, "Session not found")
 
-    now = datetime.now(timezone.utc).isoformat()
-    supabase.table("evoin_sessions").update({"completed_at": now}).eq("id", session_id).execute()
+    already_completed = bool(sess.data.get("completed_at"))
 
-    # Trigger individual analysis async-ish (inline for MVP)
-    _run_individual_analysis(sess.data)
+    update_data = {}
+    if not already_completed:
+        update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
+    if payload:
+        if payload.participant_name:
+            update_data["participant_name"] = payload.participant_name
+        if payload.participant_email:
+            update_data["participant_email"] = payload.participant_email
+    if update_data:
+        supabase.table("evoin_sessions").update(update_data).eq("id", session_id).execute()
+
+    # Trigger individual analysis only the first time the session is completed
+    if not already_completed:
+        _run_individual_analysis(sess.data)
 
     return {"status": "completed"}
 
